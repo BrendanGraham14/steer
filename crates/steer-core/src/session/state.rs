@@ -309,6 +309,11 @@ pub enum UnapprovedBehavior {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolRule {
     Bash { patterns: Vec<String> },
+    DispatchAgent {
+        agent_patterns: Vec<String>,
+        #[serde(default)]
+        allow_resume: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
@@ -327,7 +332,20 @@ impl ApprovalRules {
     pub fn bash_patterns(&self) -> Option<&[String]> {
         self.per_tool.get("bash").map(|rule| match rule {
             ToolRule::Bash { patterns } => patterns.as_slice(),
+            ToolRule::DispatchAgent { .. } => &[],
         })
+    }
+
+    pub fn dispatch_agent_rule(&self) -> Option<(&[String], bool)> {
+        self.per_tool
+            .get("dispatch_agent")
+            .and_then(|rule| match rule {
+                ToolRule::DispatchAgent {
+                    agent_patterns,
+                    allow_resume,
+                } => Some((agent_patterns.as_slice(), *allow_resume)),
+                ToolRule::Bash { .. } => None,
+            })
     }
 }
 
@@ -378,6 +396,27 @@ impl ToolApprovalPolicy {
                 .map(|glob| glob.matches(command))
                 .unwrap_or(false)
         })
+    }
+
+    pub fn is_dispatch_agent_pattern_preapproved(&self, agent_id: &str) -> bool {
+        let Some((patterns, _)) = self.preapproved.dispatch_agent_rule() else {
+            return false;
+        };
+        patterns.iter().any(|pattern| {
+            if pattern == agent_id {
+                return true;
+            }
+            glob::Pattern::new(pattern)
+                .map(|glob| glob.matches(agent_id))
+                .unwrap_or(false)
+        })
+    }
+
+    pub fn dispatch_agent_allows_resume(&self) -> bool {
+        self.preapproved
+            .dispatch_agent_rule()
+            .map(|(_, allow_resume)| allow_resume)
+            .unwrap_or(false)
     }
 
     pub fn pre_approved_tools(&self) -> &HashSet<String> {
@@ -861,6 +900,30 @@ mod tests {
         assert!(!policy.is_bash_pattern_preapproved("git commit"));
         assert!(!policy.is_bash_pattern_preapproved("ls -l"));
         assert!(!policy.is_bash_pattern_preapproved("rm -rf /"));
+    }
+
+    #[test]
+    fn test_dispatch_agent_pattern_matching() {
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: HashSet::new(),
+                per_tool: [(
+                    "dispatch_agent".to_string(),
+                    ToolRule::DispatchAgent {
+                        agent_patterns: vec!["explore".to_string(), "explore-*".to_string()],
+                        allow_resume: true,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+        };
+
+        assert!(policy.is_dispatch_agent_pattern_preapproved("explore"));
+        assert!(policy.is_dispatch_agent_pattern_preapproved("explore-fast"));
+        assert!(!policy.is_dispatch_agent_pattern_preapproved("build"));
+        assert!(policy.dispatch_agent_allows_resume());
     }
 
     #[test]

@@ -83,11 +83,19 @@ pub struct PartialApprovalConfig {
     #[serde(default)]
     pub tools: HashSet<String>,
     pub bash: Option<PartialBashApproval>,
+    pub dispatch_agent: Option<PartialDispatchAgentApproval>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct PartialBashApproval {
     pub patterns: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct PartialDispatchAgentApproval {
+    pub agent_patterns: Vec<String>,
+    #[serde(default)]
+    pub allow_resume: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -228,6 +236,15 @@ impl SessionConfigLoader {
                         "bash".to_string(),
                         ToolRule::Bash {
                             patterns: bash.patterns,
+                        },
+                    );
+                }
+                if let Some(dispatch_agent) = approvals.dispatch_agent {
+                    per_tool.insert(
+                        "dispatch_agent".to_string(),
+                        ToolRule::DispatchAgent {
+                            agent_patterns: dispatch_agent.agent_patterns,
+                            allow_resume: dispatch_agent.allow_resume,
                         },
                     );
                 }
@@ -774,6 +791,7 @@ patterns = [
                 assert_eq!(patterns[2], "npm run*");
                 assert_eq!(patterns[3], "cargo build*");
             }
+            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
         }
     }
 
@@ -807,6 +825,7 @@ patterns = []
             ToolRule::Bash { patterns } => {
                 assert_eq!(patterns.len(), 0);
             }
+            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
         }
     }
 
@@ -854,6 +873,48 @@ patterns = ["ls -la", "pwd"]
                 assert_eq!(patterns[0], "ls -la");
                 assert_eq!(patterns[1], "pwd");
             }
+            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_agent_approval_patterns() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+[tool_config.approvals.dispatch_agent]
+agent_patterns = ["explore", "explore-*"]
+allow_resume = true
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
+        let config = loader.load().await.unwrap();
+
+        let dispatch_rule = config
+            .tool_config
+            .approval_policy
+            .preapproved
+            .per_tool
+            .get("dispatch_agent");
+        assert!(dispatch_rule.is_some(), "Dispatch agent rule should be present");
+
+        match dispatch_rule.unwrap() {
+            ToolRule::DispatchAgent {
+                agent_patterns,
+                allow_resume,
+            } => {
+                assert_eq!(agent_patterns.len(), 2);
+                assert_eq!(agent_patterns[0], "explore");
+                assert_eq!(agent_patterns[1], "explore-*");
+                assert!(*allow_resume);
+            }
+            ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
         }
     }
 
@@ -933,6 +994,10 @@ patterns = [
     "cargo check"
 ]
 
+[tool_config.approvals.dispatch_agent]
+agent_patterns = ["explore"]
+allow_resume = true
+
 [metadata]
 project = "test-project"
 "#
@@ -974,6 +1039,21 @@ project = "test-project"
                 assert_eq!(patterns[3], "npm test");
                 assert_eq!(patterns[4], "cargo check");
             }
+            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
+        }
+
+        let dispatch_rule = policy.preapproved.per_tool.get("dispatch_agent");
+        assert!(dispatch_rule.is_some());
+
+        match dispatch_rule.unwrap() {
+            ToolRule::DispatchAgent {
+                agent_patterns,
+                allow_resume,
+            } => {
+                assert_eq!(agent_patterns.as_slice(), ["explore"]);
+                assert!(*allow_resume);
+            }
+            ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
         }
     }
 }

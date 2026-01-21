@@ -1,18 +1,41 @@
 use once_cell::sync::Lazy;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use crate::config::model::ModelId;
 use crate::session::state::{
-    ApprovalRules, SessionConfig, ToolApprovalPolicy, ToolVisibility, UnapprovedBehavior,
+    ApprovalRules, SessionConfig, ToolApprovalPolicy, ToolRule, ToolVisibility, UnapprovedBehavior,
 };
+use crate::tools::DISPATCH_AGENT_TOOL_NAME;
+use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
 pub const DEFAULT_PRIMARY_AGENT_ID: &str = "normal";
 
-const PLANNER_SYSTEM_PROMPT: &str = "You are in planner mode. Provide a concise, step-by-step \
-plan only. Do not call tools or make changes. When ready to execute, ask the user to switch \
-back to 'normal' or 'yolo'.";
+const PLANNER_SYSTEM_PROMPT: &str = r#"You are in planner mode. Produce a concise, step-by-step plan only.
+
+Rules:
+- Use read-only tools to gather the context you need before planning.
+- When broader search is needed, use dispatch_agent with the "explore" sub-agent.
+- Do not make changes or write code/patches.
+- If key details are missing, ask up to three targeted questions and stop.
+
+When you can proceed, respond using this structure (omit empty sections):
+Plan:
+1. ...
+2. ...
+3. ...
+
+Assumptions:
+- ...
+
+Risks:
+- ...
+
+Validation:
+- ...
+
+Finish by asking the user to switch back to "normal" or "yolo" to execute."#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PrimaryAgentSpec {
@@ -73,6 +96,23 @@ pub fn apply_primary_agent_to_config(
 }
 
 fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
+    let planner_tool_visibility = ToolVisibility::Whitelist(
+        READ_ONLY_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .chain(std::iter::once(DISPATCH_AGENT_TOOL_NAME.to_string()))
+            .collect::<HashSet<_>>(),
+    );
+
+    let mut planner_approval_policy = ToolApprovalPolicy::default();
+    planner_approval_policy.preapproved.per_tool.insert(
+        DISPATCH_AGENT_TOOL_NAME.to_string(),
+        ToolRule::DispatchAgent {
+            agent_patterns: vec!["explore".to_string()],
+            allow_resume: true,
+        },
+    );
+
     vec![
         PrimaryAgentSpec {
             id: "normal".to_string(),
@@ -90,8 +130,8 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
             description: "Planning-only agent with read-only tools.".to_string(),
             model: None,
             system_prompt: Some(PLANNER_SYSTEM_PROMPT.to_string()),
-            tool_visibility: ToolVisibility::ReadOnly,
-            approval_policy: ToolApprovalPolicy::default(),
+            tool_visibility: planner_tool_visibility,
+            approval_policy: planner_approval_policy,
         },
         PrimaryAgentSpec {
             id: "yolo".to_string(),

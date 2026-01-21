@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use crate::agents::default_agent_spec_id;
 use crate::app::conversation::Message;
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::runtime::{RuntimeError, RuntimeHandle};
@@ -10,6 +11,7 @@ use crate::config::model::ModelId;
 use crate::error::{Error, Result};
 use crate::session::ToolApprovalPolicy;
 use crate::session::state::SessionConfig;
+use crate::tools::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams, DispatchAgentTarget};
 use steer_tools::ToolCall;
 use steer_tools::tools::BASH_TOOL_NAME;
 use steer_tools::tools::bash::BashParams;
@@ -274,6 +276,23 @@ fn tool_is_preapproved(tool_call: &ToolCall, policy: &ToolApprovalPolicy) -> boo
         return true;
     }
 
+    if tool_call.name == DISPATCH_AGENT_TOOL_NAME {
+        let params = serde_json::from_value::<DispatchAgentParams>(tool_call.parameters.clone());
+        if let Ok(params) = params {
+            return match params.target {
+                DispatchAgentTarget::Resume { .. } => policy.dispatch_agent_allows_resume(),
+                DispatchAgentTarget::New { agent, .. } => {
+                    let agent_id = agent
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| default_agent_spec_id().to_string());
+                    policy.is_dispatch_agent_pattern_preapproved(&agent_id)
+                }
+            };
+        }
+    }
+
     if tool_call.name == BASH_TOOL_NAME {
         let params = serde_json::from_value::<BashParams>(tool_call.parameters.clone());
         if let Ok(params) = params {
@@ -472,6 +491,41 @@ mod tests {
             id: "tc_bash".to_string(),
             name: BASH_TOOL_NAME.to_string(),
             parameters: json!({ "command": "echo hello" }),
+        };
+
+        assert!(tool_is_preapproved(&tool_call, &policy));
+    }
+
+    #[test]
+    fn tool_is_preapproved_allows_dispatch_agent_pattern() {
+        use crate::session::state::{ApprovalRules, ToolRule, UnapprovedBehavior};
+
+        let mut per_tool = HashMap::new();
+        per_tool.insert(
+            "dispatch_agent".to_string(),
+            ToolRule::DispatchAgent {
+                agent_patterns: vec!["explore".to_string()],
+                allow_resume: true,
+            },
+        );
+
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: HashSet::new(),
+                per_tool,
+            },
+        };
+
+        let tool_call = ToolCall {
+            id: "tc_dispatch".to_string(),
+            name: DISPATCH_AGENT_TOOL_NAME.to_string(),
+            parameters: json!({
+                "prompt": "find files",
+                "mode": "new",
+                "workspace": "current",
+                "agent": "explore"
+            }),
         };
 
         assert!(tool_is_preapproved(&tool_call, &policy));

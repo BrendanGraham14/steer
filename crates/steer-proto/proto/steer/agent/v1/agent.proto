@@ -925,11 +925,17 @@ enum UnapprovedBehavior {
 message ToolRule {
   oneof rule {
     BashRule bash = 1;
+    DispatchAgentRule dispatch_agent = 2;
   }
 }
 
 message BashRule {
   repeated string patterns = 1;
+}
+
+message DispatchAgentRule {
+  repeated string agent_patterns = 1;
+  bool allow_resume = 2;
 }
 
 message ApprovalRules {

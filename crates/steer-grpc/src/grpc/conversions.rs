@@ -499,6 +499,17 @@ fn tool_rule_to_proto(rule: &ToolRule) -> proto::ToolRule {
                 patterns: patterns.clone(),
             })),
         },
+        ToolRule::DispatchAgent {
+            agent_patterns,
+            allow_resume,
+        } => proto::ToolRule {
+            rule: Some(proto::tool_rule::Rule::DispatchAgent(
+                proto::DispatchAgentRule {
+                    agent_patterns: agent_patterns.clone(),
+                    allow_resume: *allow_resume,
+                },
+            )),
+        },
     }
 }
 
@@ -1295,6 +1306,10 @@ fn proto_to_tool_rule(proto_rule: proto::ToolRule) -> Option<ToolRule> {
     match proto_rule.rule? {
         proto::tool_rule::Rule::Bash(bash) => Some(ToolRule::Bash {
             patterns: bash.patterns,
+        }),
+        proto::tool_rule::Rule::DispatchAgent(dispatch_agent) => Some(ToolRule::DispatchAgent {
+            agent_patterns: dispatch_agent.agent_patterns,
+            allow_resume: dispatch_agent.allow_resume,
         }),
     }
 }

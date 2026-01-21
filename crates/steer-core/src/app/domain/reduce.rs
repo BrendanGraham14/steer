@@ -3,8 +3,10 @@ use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory, McpSe
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{CancellationInfo, SessionEvent};
 use crate::app::domain::state::{AppState, OperationKind, PendingApproval, QueuedApproval};
+use crate::agents::default_agent_spec_id;
 use crate::primary_agents::{apply_primary_agent_to_config, default_primary_agent_id, primary_agent_spec};
 use crate::session::state::{BackendConfig, ToolDecision};
+use crate::tools::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams, DispatchAgentTarget};
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
 use steer_tools::tools::BASH_TOOL_NAME;
@@ -678,6 +680,32 @@ fn process_next_queued_approval(
 fn get_tool_decision(state: &AppState, tool_call: &steer_tools::ToolCall) -> ToolDecision {
     if state.approved_tools.contains(&tool_call.name) {
         return ToolDecision::Allow;
+    }
+
+    if tool_call.name == DISPATCH_AGENT_TOOL_NAME
+        && let Ok(params) =
+            serde_json::from_value::<DispatchAgentParams>(tool_call.parameters.clone())
+    {
+        if let Some(config) = state.session_config.as_ref() {
+            let policy = &config.tool_config.approval_policy;
+            match params.target {
+                DispatchAgentTarget::Resume { .. } => {
+                    if policy.dispatch_agent_allows_resume() {
+                        return ToolDecision::Allow;
+                    }
+                }
+                DispatchAgentTarget::New { agent, .. } => {
+                    let agent_id = agent
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| default_agent_spec_id().to_string());
+                    if policy.is_dispatch_agent_pattern_preapproved(&agent_id) {
+                        return ToolDecision::Allow;
+                    }
+                }
+            }
+        }
     }
 
     if tool_call.name == BASH_TOOL_NAME
