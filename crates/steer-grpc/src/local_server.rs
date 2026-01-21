@@ -224,7 +224,7 @@ mod tests {
             &self,
             _model_id: &ModelId,
             _messages: Vec<steer_core::app::conversation::Message>,
-            _system: Option<String>,
+            _system: Option<steer_core::app::SystemContext>,
             _tools: Option<Vec<steer_tools::ToolSchema>>,
             _call_options: Option<steer_core::config::model::ModelParameters>,
             _token: CancellationToken,

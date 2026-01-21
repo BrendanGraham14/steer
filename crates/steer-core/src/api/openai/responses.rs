@@ -15,6 +15,7 @@ use crate::api::sse::parse_sse_stream;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
+use crate::app::SystemContext;
 use crate::auth::{
     AuthErrorAction, AuthErrorContext, AuthHeaderContext, InstructionPolicy, OpenAiResponsesAuth,
     RequestKind,
@@ -91,7 +92,7 @@ impl Client {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
     ) -> ResponsesRequest {
@@ -468,7 +469,7 @@ impl Client {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -635,7 +636,7 @@ impl Client {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -1108,53 +1109,52 @@ fn truncate_body(body: &str) -> String {
     }
 }
 
-fn extract_system_context(system: &str) -> Option<&str> {
-    if let Some(index) =
-        system.find("Here is useful information about the environment you are running in:")
-    {
-        return Some(&system[index..]);
-    }
-
-    system.find("<env>").map(|index| &system[index..])
-}
-
 fn apply_instruction_policy(
-    system: Option<String>,
+    system: Option<SystemContext>,
     policy: Option<&InstructionPolicy>,
 ) -> Option<String> {
-    let trimmed = system.as_ref().map(|s| s.trim()).unwrap_or("");
-    match policy {
-        None => {
-            if trimmed.is_empty() {
-                None
-            } else {
-                system
-            }
+    let base = system.as_ref().and_then(|context| {
+        let trimmed = context.prompt.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
         }
+    });
+
+    let context = system
+        .as_ref()
+        .and_then(|context| context.render_with_prompt(base.clone()));
+
+    match policy {
+        None => context,
         Some(InstructionPolicy::Prefix(prefix)) => {
-            if trimmed.is_empty() {
-                Some(prefix.clone())
+            if let Some(context) = context {
+                Some(format!("{prefix}\n{context}"))
             } else {
-                Some(format!("{prefix}\n{}", system.unwrap_or_default()))
+                Some(prefix.clone())
             }
         }
         Some(InstructionPolicy::DefaultIfEmpty(default)) => {
-            if trimmed.is_empty() {
-                Some(default.clone())
+            if context.is_some() {
+                context
             } else {
-                system
+                Some(default.clone())
             }
         }
         Some(InstructionPolicy::Override(override_text)) => {
-            let context = system
-                .as_deref()
-                .and_then(extract_system_context)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            match context {
-                Some(context) => Some(format!("{override_text}\n\n{context}")),
-                None => Some(override_text.clone()),
+            if let Some(system) = system.as_ref() {
+                let env = system
+                    .environment
+                    .as_ref()
+                    .map(|env| env.as_context())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+                if let Some(env) = env {
+                    return Some(format!("{override_text}\n\n{env}"));
+                }
             }
+            Some(override_text.clone())
         }
     }
 }
@@ -1164,6 +1164,8 @@ mod tests {
     use super::*;
 
     use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+    use crate::app::SystemContext;
+    use crate::workspace::EnvironmentInfo;
 
     use steer_tools::ToolSchema;
 
@@ -1252,7 +1254,9 @@ mod tests {
         let request = client.build_request(
             &model_id,
             messages,
-            Some("You are a weather assistant".to_string()),
+            Some(SystemContext::new(
+                "You are a weather assistant".to_string(),
+            )),
             Some(tools),
             None, // No call options for this test
         );
@@ -1264,6 +1268,30 @@ mod tests {
         assert!(!tools[0].strict);
 
         assert!(request.tool_choice.is_some());
+    }
+
+    #[test]
+    fn test_override_preserves_env_context_without_marker() {
+        let env = EnvironmentInfo {
+            working_directory: std::path::PathBuf::from("/tmp"),
+            vcs: None,
+            platform: "linux".to_string(),
+            date: "2025-01-01".to_string(),
+            directory_structure: "".to_string(),
+            readme_content: None,
+            memory_file_name: None,
+            memory_file_content: None,
+        };
+
+        let system = SystemContext::with_environment("Custom prompt".to_string(), Some(env));
+        let rendered = apply_instruction_policy(
+            Some(system),
+            Some(&InstructionPolicy::Override("Override".to_string())),
+        )
+        .expect("expected rendered instructions");
+
+        assert!(rendered.starts_with("Override"));
+        assert!(rendered.contains("Here is useful information about the environment"));
     }
 
     #[test]
@@ -1292,7 +1320,13 @@ mod tests {
                 ..Default::default()
             }),
         });
-        let request = client.build_request(&model_id, messages.clone(), None, None, call_options);
+        let request = client.build_request(
+            &model_id,
+            messages.clone(),
+            None,
+            None,
+            call_options,
+        );
 
         assert!(request.reasoning.is_some());
         let reasoning = request.reasoning.unwrap();

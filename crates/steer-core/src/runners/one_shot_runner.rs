@@ -361,7 +361,7 @@ mod tests {
             &self,
             _model_id: &crate::config::model::ModelId,
             _messages: Vec<Message>,
-            _system: Option<String>,
+            _system: Option<crate::app::SystemContext>,
             _tools: Option<Vec<steer_tools::ToolSchema>>,
             _call_options: Option<crate::config::model::ModelParameters>,
             _token: CancellationToken,

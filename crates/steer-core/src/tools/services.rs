@@ -7,6 +7,7 @@ use crate::api::Client as ApiClient;
 use crate::app::conversation::Message;
 use crate::app::domain::session::EventStore;
 use crate::app::domain::types::SessionId;
+use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use crate::session::state::BackendConfig;
 use crate::workspace::{RepoManager, RepoRef, Workspace, WorkspaceId, WorkspaceManager, WorkspaceRef};
@@ -29,7 +30,7 @@ pub struct SubAgentConfig {
     pub prompt: String,
     pub allowed_tools: Vec<String>,
     pub model: ModelId,
-    pub system_prompt: Option<String>,
+    pub system_context: Option<SystemContext>,
     pub workspace: Option<Arc<dyn Workspace>>,
     pub workspace_ref: Option<WorkspaceRef>,
     pub workspace_id: Option<WorkspaceId>,
@@ -66,7 +67,7 @@ pub trait ModelCaller: Send + Sync {
         &self,
         model: &ModelId,
         messages: Vec<Message>,
-        system_prompt: Option<String>,
+        system_context: Option<SystemContext>,
         cancel_token: CancellationToken,
     ) -> Result<Message, ModelCallError>;
 }

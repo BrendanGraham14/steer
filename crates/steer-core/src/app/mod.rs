@@ -7,10 +7,12 @@ use std::sync::Arc;
 
 pub mod conversation;
 pub mod domain;
+pub mod system_context;
 pub mod validation;
 
 pub use conversation::{Message, MessageData, MessageGraph};
 pub use steer_workspace::EnvironmentInfo;
+pub use system_context::SystemContext;
 
 #[derive(Clone)]
 pub struct AppConfig {

@@ -258,7 +258,7 @@ fn handle_user_input(
             .into_iter()
             .cloned()
             .collect(),
-        system_prompt: state.cached_system_prompt.clone(),
+        system_context: state.cached_system_context.clone(),
         tools: state.tools.clone(),
     });
 
@@ -336,7 +336,7 @@ fn handle_user_edited_message(
             .into_iter()
             .cloned()
             .collect(),
-        system_prompt: state.cached_system_prompt.clone(),
+        system_context: state.cached_system_context.clone(),
         tools: state.tools.clone(),
     });
 
@@ -431,7 +431,7 @@ fn handle_tool_approval_requested(
                         .into_iter()
                         .cloned()
                         .collect(),
-                    system_prompt: state.cached_system_prompt.clone(),
+                    system_context: state.cached_system_context.clone(),
                     tools: state.tools.clone(),
                 });
             }
@@ -659,7 +659,7 @@ fn process_next_queued_approval(
                         .into_iter()
                         .cloned()
                         .collect(),
-                    system_prompt: state.cached_system_prompt.clone(),
+                    system_context: state.cached_system_context.clone(),
                     tools: state.tools.clone(),
                 });
             }
@@ -907,7 +907,7 @@ fn handle_tool_result(
                 .into_iter()
                 .cloned()
                 .collect(),
-            system_prompt: state.cached_system_prompt.clone(),
+            system_context: state.cached_system_context.clone(),
             tools: state.tools.clone(),
         });
     }
@@ -1203,7 +1203,7 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     match event {
         SessionEvent::SessionCreated { config, .. } => {
             state.session_config = Some((**config).clone());
-            state.cached_system_prompt = config.system_prompt.clone();
+            state.cached_system_context = None;
 
             state.approved_tools = config
                 .tool_config

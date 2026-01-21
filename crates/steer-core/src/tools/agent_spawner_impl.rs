@@ -110,7 +110,10 @@ impl AgentSpawner for DefaultAgentSpawner {
         session_config.repo_ref = config.repo_ref.clone();
         session_config.workspace_name = config.workspace_name.clone();
         session_config.parent_session_id = Some(config.parent_session_id);
-        session_config.system_prompt = config.system_prompt.clone();
+        session_config.system_prompt = config
+            .system_context
+            .as_ref()
+            .map(|context| context.prompt.clone());
         session_config.tool_config = tool_config;
 
         let tool_executor = self.build_tool_executor(workspace);
@@ -198,7 +201,7 @@ mod tests {
             &self,
             _model_id: &crate::config::model::ModelId,
             _messages: Vec<crate::app::conversation::Message>,
-            system: Option<String>,
+            system: Option<crate::app::SystemContext>,
             _tools: Option<Vec<steer_tools::ToolSchema>>,
             _call_options: Option<crate::config::model::ModelParameters>,
             _token: CancellationToken,
@@ -206,7 +209,7 @@ mod tests {
             *self
                 .last_system
                 .lock()
-                .expect("system prompt lock poisoned") = system;
+                .expect("system prompt lock poisoned") = system.and_then(|context| context.render());
 
             Ok(CompletionResponse {
                 content: vec![AssistantContent::Text {
@@ -305,7 +308,7 @@ mod tests {
             prompt: "hello".to_string(),
             allowed_tools: allowed_tools.clone(),
             model: model.clone(),
-            system_prompt: Some(system_prompt.clone()),
+            system_context: Some(crate::app::SystemContext::new(system_prompt.clone())),
             workspace: Some(workspace),
             workspace_ref: None,
             workspace_id: None,

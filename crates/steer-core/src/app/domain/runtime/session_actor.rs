@@ -319,7 +319,7 @@ impl SessionActor {
                 op_id,
                 model,
                 messages,
-                system_prompt,
+                system_context,
                 tools,
                 ..
             } => {
@@ -351,7 +351,7 @@ impl SessionActor {
                         .call_model_with_deltas(
                             model,
                             messages,
-                            system_prompt,
+                            system_context,
                             tools,
                             cancel_token,
                             delta_stream,

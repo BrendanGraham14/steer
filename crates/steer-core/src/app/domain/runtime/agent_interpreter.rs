@@ -128,7 +128,7 @@ impl AgentInterpreter {
         let initial_outputs = vec![AgentOutput::CallModel {
             model: agent_config.model.clone(),
             messages: initial_messages,
-            system_prompt: agent_config.system_prompt.clone(),
+            system_context: agent_config.system_context.clone(),
             tools: agent_config.tools.clone(),
         }];
 
@@ -192,7 +192,7 @@ impl AgentInterpreter {
                 AgentOutput::CallModel {
                     model,
                     messages,
-                    system_prompt,
+                    system_context,
                     tools,
                 } => {
                     let result = self
@@ -200,7 +200,7 @@ impl AgentInterpreter {
                         .call_model(
                             model.clone(),
                             messages,
-                            system_prompt,
+                            system_context,
                             tools,
                             cancel_token.clone(),
                         )

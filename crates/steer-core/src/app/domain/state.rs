@@ -1,6 +1,7 @@
 use crate::app::conversation::MessageGraph;
 use crate::app::domain::action::McpServerState;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
+use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ pub struct AppState {
 
     pub message_graph: MessageGraph,
 
-    pub cached_system_prompt: Option<String>,
+    pub cached_system_context: Option<SystemContext>,
 
     pub tools: Vec<ToolSchema>,
 
@@ -96,7 +97,7 @@ impl AppState {
             session_id,
             session_config: None,
             message_graph: MessageGraph::new(),
-            cached_system_prompt: None,
+            cached_system_context: None,
             tools: Vec::new(),
             approved_tools: HashSet::new(),
             approved_bash_patterns: HashSet::new(),

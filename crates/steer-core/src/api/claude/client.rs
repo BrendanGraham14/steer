@@ -13,6 +13,7 @@ use crate::api::{CompletionResponse, Provider, error::ApiError};
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
+use crate::app::SystemContext;
 use crate::auth::{
     AnthropicAuth, AuthErrorAction, AuthErrorContext, AuthHeaderContext, InstructionPolicy,
     RequestKind,
@@ -670,7 +671,7 @@ impl Provider for AnthropicClient {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -891,7 +892,7 @@ impl Provider for AnthropicClient {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -1112,33 +1113,52 @@ fn truncate_body(body: &str) -> String {
 }
 
 fn apply_instruction_policy(
-    system: Option<String>,
+    system: Option<SystemContext>,
     policy: Option<&InstructionPolicy>,
 ) -> Option<String> {
-    let trimmed = system.as_ref().map(|s| s.trim()).unwrap_or("");
-    match policy {
-        None => {
-            if trimmed.is_empty() {
-                None
-            } else {
-                system
-            }
+    let base = system.as_ref().and_then(|context| {
+        let trimmed = context.prompt.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
         }
+    });
+
+    let context = system
+        .as_ref()
+        .and_then(|context| context.render_with_prompt(base.clone()));
+
+    match policy {
+        None => context,
         Some(InstructionPolicy::Prefix(prefix)) => {
-            if trimmed.is_empty() {
-                Some(prefix.clone())
+            if let Some(context) = context {
+                Some(format!("{prefix}\n{context}"))
             } else {
-                Some(format!("{prefix}\n{}", system.unwrap_or_default()))
+                Some(prefix.clone())
             }
         }
         Some(InstructionPolicy::DefaultIfEmpty(default)) => {
-            if trimmed.is_empty() {
-                Some(default.clone())
+            if context.is_some() {
+                context
             } else {
-                system
+                Some(default.clone())
             }
         }
-        Some(InstructionPolicy::Override(override_text)) => Some(override_text.clone()),
+        Some(InstructionPolicy::Override(override_text)) => {
+            if let Some(system) = system.as_ref() {
+                let env = system
+                    .environment
+                    .as_ref()
+                    .map(|env| env.as_context())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+                if let Some(env) = env {
+                    return Some(format!("{override_text}\n\n{env}"));
+                }
+            }
+            Some(override_text.clone())
+        }
     }
 }
 

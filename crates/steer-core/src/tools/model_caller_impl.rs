@@ -5,6 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
 use crate::app::conversation::{Message, MessageData};
+use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use crate::tools::services::{ModelCallError, ModelCaller};
 
@@ -24,12 +25,12 @@ impl ModelCaller for DefaultModelCaller {
         &self,
         model: &ModelId,
         messages: Vec<Message>,
-        system_prompt: Option<String>,
+        system_context: Option<SystemContext>,
         cancel_token: CancellationToken,
     ) -> Result<Message, ModelCallError> {
         let response = self
             .api_client
-            .complete(model, messages, system_prompt, None, None, cancel_token)
+            .complete(model, messages, system_context, None, None, cancel_token)
             .await
             .map_err(|e| ModelCallError::Api(e.to_string()))?;
 

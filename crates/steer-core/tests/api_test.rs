@@ -2,6 +2,7 @@ use dotenvy::dotenv;
 use futures::StreamExt;
 use steer_core::api::{ApiError, Client, Provider, StreamChunk};
 use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+use steer_core::app::SystemContext;
 use steer_core::config::model::{ModelId, builtin};
 
 use steer_core::test_utils;
@@ -570,8 +571,9 @@ async fn test_gemini_system_instructions() {
         parent_message_id: None,
     }];
 
-    let system =
-        Some("Your name is GeminiHelper. Always introduce yourself as GeminiHelper.".to_string());
+    let system = Some(SystemContext::new(
+        "Your name is GeminiHelper. Always introduce yourself as GeminiHelper.".to_string(),
+    ));
 
     let response = client
         .complete(

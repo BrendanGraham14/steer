@@ -13,6 +13,7 @@ use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ThoughtSignature, ToolResult,
     UserContent,
 };
+use crate::app::SystemContext;
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
@@ -764,7 +765,7 @@ impl Provider for GeminiClient {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         _call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -777,9 +778,11 @@ impl Provider for GeminiClient {
 
         let gemini_contents = convert_messages(messages);
 
-        let system_instruction = system.map(|instructions| GeminiSystemInstruction {
-            parts: vec![GeminiRequestPart::Text { text: instructions }],
-        });
+        let system_instruction = system
+            .and_then(|context| context.render())
+            .map(|instructions| GeminiSystemInstruction {
+                parts: vec![GeminiRequestPart::Text { text: instructions }],
+            });
 
         let gemini_tools = tools.map(convert_tools);
 
@@ -887,7 +890,7 @@ impl Provider for GeminiClient {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         _call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -900,9 +903,11 @@ impl Provider for GeminiClient {
 
         let gemini_contents = convert_messages(messages);
 
-        let system_instruction = system.map(|instructions| GeminiSystemInstruction {
-            parts: vec![GeminiRequestPart::Text { text: instructions }],
-        });
+        let system_instruction = system
+            .and_then(|context| context.render())
+            .map(|instructions| GeminiSystemInstruction {
+                parts: vec![GeminiRequestPart::Text { text: instructions }],
+            });
 
         let gemini_tools = tools.map(convert_tools);
 

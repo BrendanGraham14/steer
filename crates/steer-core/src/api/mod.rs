@@ -27,6 +27,7 @@ use tracing::debug;
 use tracing::warn;
 
 use crate::app::conversation::Message;
+use crate::app::SystemContext;
 
 #[derive(Clone)]
 pub struct Client {
@@ -183,7 +184,7 @@ impl Client {
         &self,
         model_id: &ModelId,
         messages: Vec<Message>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<crate::config::model::ModelParameters>,
         token: CancellationToken,
@@ -261,7 +262,7 @@ impl Client {
         &self,
         model_id: &ModelId,
         messages: Vec<Message>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<crate::config::model::ModelParameters>,
         token: CancellationToken,
@@ -344,7 +345,7 @@ impl Client {
         &self,
         model_id: &ModelId,
         messages: &[Message],
-        system_prompt: &Option<String>,
+        system_prompt: &Option<SystemContext>,
         tools: &Option<Vec<ToolSchema>>,
         token: CancellationToken,
         max_attempts: usize,
@@ -514,7 +515,7 @@ mod tests {
             &self,
             _model_id: &ModelId,
             _messages: Vec<Message>,
-            _system: Option<String>,
+            _system: Option<SystemContext>,
             _tools: Option<Vec<ToolSchema>>,
             _call_options: Option<crate::config::model::ModelParameters>,
             _token: CancellationToken,

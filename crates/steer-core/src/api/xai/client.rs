@@ -11,6 +11,7 @@ use crate::api::provider::{CompletionResponse, CompletionStream, Provider, Strea
 use crate::api::sse::parse_sse_stream;
 use crate::api::util::normalize_chat_url;
 use crate::app::conversation::{AssistantContent, Message as AppMessage, ToolResult, UserContent};
+use crate::app::SystemContext;
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
@@ -343,12 +344,12 @@ impl XAIClient {
     fn convert_messages(
         &self,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
     ) -> Vec<XAIMessage> {
         let mut xai_messages = Vec::new();
 
         // Add system message if provided
-        if let Some(system_content) = system {
+        if let Some(system_content) = system.and_then(|context| context.render()) {
             xai_messages.push(XAIMessage::System {
                 content: system_content,
                 name: None,
@@ -489,7 +490,7 @@ impl Provider for XAIClient {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -670,7 +671,7 @@ impl Provider for XAIClient {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,

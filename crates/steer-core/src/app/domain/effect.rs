@@ -1,5 +1,6 @@
 use crate::app::conversation::Message;
 use crate::app::domain::types::{OpId, RequestId, SessionId};
+use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use steer_tools::{ToolCall, ToolSchema};
 
@@ -29,7 +30,7 @@ pub enum Effect {
         op_id: OpId,
         model: ModelId,
         messages: Vec<Message>,
-        system_prompt: Option<String>,
+        system_context: Option<SystemContext>,
         tools: Vec<ToolSchema>,
     },
 

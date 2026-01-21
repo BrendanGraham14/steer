@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::app::conversation::{AssistantContent, Message, MessageData};
 use crate::app::domain::types::{MessageId, ToolCallId};
+use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use steer_tools::{ToolCall, ToolError, ToolResult, ToolSchema};
 
@@ -67,7 +68,7 @@ pub enum AgentOutput {
     CallModel {
         model: ModelId,
         messages: Vec<Message>,
-        system_prompt: Option<String>,
+        system_context: Option<SystemContext>,
         tools: Vec<ToolSchema>,
     },
     RequestApproval {
@@ -91,7 +92,7 @@ pub enum AgentOutput {
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
     pub model: ModelId,
-    pub system_prompt: Option<String>,
+    pub system_context: Option<SystemContext>,
     pub tools: Vec<ToolSchema>,
 }
 
@@ -409,7 +410,7 @@ impl AgentStepper {
             outputs.push(AgentOutput::CallModel {
                 model: self.config.model.clone(),
                 messages: context.messages.clone(),
-                system_prompt: self.config.system_prompt.clone(),
+                system_context: self.config.system_context.clone(),
                 tools: self.config.tools.clone(),
             });
 
@@ -460,7 +461,7 @@ mod tests {
     fn test_config() -> AgentConfig {
         AgentConfig {
             model: builtin::claude_sonnet_4_5(),
-            system_prompt: None,
+            system_context: None,
             tools: vec![],
         }
     }

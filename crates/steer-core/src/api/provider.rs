@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::error::{ApiError, StreamError};
 use crate::app::conversation::{AssistantContent, Message};
+use crate::app::SystemContext;
 use crate::auth::{AuthStorage, DynAuthenticationFlow};
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::{ToolCall, ToolSchema};
@@ -75,7 +76,7 @@ pub trait Provider: Send + Sync + 'static {
         &self,
         model_id: &ModelId,
         messages: Vec<Message>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -85,7 +86,7 @@ pub trait Provider: Send + Sync + 'static {
         &self,
         model_id: &ModelId,
         messages: Vec<Message>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,

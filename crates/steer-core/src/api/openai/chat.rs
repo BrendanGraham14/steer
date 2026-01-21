@@ -11,6 +11,7 @@ use crate::api::sse::parse_sse_stream;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
+use crate::app::SystemContext;
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
@@ -58,14 +59,15 @@ impl Client {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
         let mut openai_messages = Vec::new();
 
-        if let Some(system_content) = system {
+        let system_text = system.and_then(|context| context.render());
+        if let Some(system_content) = system_text {
             openai_messages.push(OpenAIMessage::System {
                 content: OpenAIContent::String(system_content),
                 name: None,
@@ -341,14 +343,15 @@ impl Client {
         &self,
         model_id: &ModelId,
         messages: Vec<AppMessage>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionStream, ApiError> {
         let mut openai_messages = Vec::new();
 
-        if let Some(system_content) = system {
+        let system_text = system.and_then(|context| context.render());
+        if let Some(system_content) = system_text {
             openai_messages.push(OpenAIMessage::System {
                 content: OpenAIContent::String(system_content),
                 name: None,

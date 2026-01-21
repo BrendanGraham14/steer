@@ -209,8 +209,9 @@ impl RuntimeSupervisor {
         self.event_store.create_session(session_id).await?;
 
         let mut config = config;
-        if let Some(system_prompt) = self.resolve_system_prompt(&config).await {
-            config.system_prompt = Some(system_prompt);
+        let system_context = self.resolve_system_context(&config).await;
+        if let Some(context) = &system_context {
+            config.system_prompt = Some(context.prompt.clone());
         }
 
         let session_created_event = SessionEvent::SessionCreated {
@@ -223,12 +224,8 @@ impl RuntimeSupervisor {
             .await?;
 
         let mut state = AppState::new(session_id);
-        state.cached_system_prompt = config.system_prompt.clone();
-        state.session_config = Some(config);
-        state.cached_system_prompt = state
-            .session_config
-            .as_ref()
-            .and_then(|config| config.system_prompt.clone());
+        state.session_config = Some(config.clone());
+        state.cached_system_context = system_context;
 
         let handle = spawn_session_actor(
             session_id,
@@ -263,10 +260,11 @@ impl RuntimeSupervisor {
         }
 
         if let Some(config) = state.session_config.as_mut() {
-            if let Some(system_prompt) = self.resolve_system_prompt(config).await {
-                config.system_prompt = Some(system_prompt.clone());
-                state.cached_system_prompt = Some(system_prompt);
+            let system_context = self.resolve_system_context(config).await;
+            if let Some(context) = &system_context {
+                config.system_prompt = Some(context.prompt.clone());
             }
+            state.cached_system_context = system_context;
         }
 
         let handle = spawn_session_actor(
@@ -288,8 +286,8 @@ impl RuntimeSupervisor {
         Ok(())
     }
 
-    async fn resolve_system_prompt(&self, config: &SessionConfig) -> Option<String> {
-        let mut prompt = config
+    async fn resolve_system_context(&self, config: &SessionConfig) -> Option<crate::app::SystemContext> {
+        let prompt = config
             .system_prompt
             .as_ref()
             .and_then(|prompt| {
@@ -301,29 +299,20 @@ impl RuntimeSupervisor {
             })
             .unwrap_or_else(|| system_prompt_for_model(&config.default_model));
 
-        if prompt.contains("<env>") {
-            return Some(prompt);
-        }
-
         let workspace = match self.tool_executor.workspace() {
             Some(workspace) => workspace,
-            None => return Some(prompt),
+            None => return Some(crate::app::SystemContext::new(prompt)),
         };
 
-        match workspace.environment().await {
-            Ok(env_info) => {
-                let context = env_info.as_context();
-                if !context.is_empty() {
-                    prompt.push_str("\n\n");
-                    prompt.push_str(&context);
-                }
-            }
+        let environment = match workspace.environment().await {
+            Ok(env_info) => Some(env_info),
             Err(error) => {
-                warn!(error = %error, "Failed to collect environment info for system prompt");
+                warn!(error = %error, "Failed to collect environment info for system context");
+                None
             }
-        }
+        };
 
-        Some(prompt)
+        Some(crate::app::SystemContext::with_environment(prompt, environment))
     }
 
     async fn suspend_session(&mut self, session_id: SessionId) -> Result<(), RuntimeError> {

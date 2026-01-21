@@ -4,6 +4,7 @@ use super::responses;
 use crate::api::error::ApiError;
 use crate::api::provider::{CompletionResponse, CompletionStream, Provider};
 use crate::app::conversation::Message;
+use crate::app::SystemContext;
 use crate::auth::OpenAiResponsesAuth;
 use crate::config::model::{ModelId, ModelParameters};
 use async_trait::async_trait;
@@ -58,7 +59,7 @@ impl Provider for OpenAIClient {
         &self,
         model_id: &ModelId,
         messages: Vec<Message>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
@@ -86,7 +87,7 @@ impl Provider for OpenAIClient {
         &self,
         model_id: &ModelId,
         messages: Vec<Message>,
-        system: Option<String>,
+        system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
         token: CancellationToken,
