@@ -84,7 +84,11 @@ prop_compose! {
     fn arb_session_tool_config()(
         backends in prop::collection::vec(arb_backend_config(), 0..3),
         visibility in prop::sample::select(vec![ToolVisibility::All, ToolVisibility::ReadOnly]),
-        default_behavior in prop::sample::select(vec![UnapprovedBehavior::Prompt, UnapprovedBehavior::Deny]),
+        default_behavior in prop::sample::select(vec![
+            UnapprovedBehavior::Prompt,
+            UnapprovedBehavior::Deny,
+            UnapprovedBehavior::Allow,
+        ]),
         pre_approved_tools in prop::collection::vec("[a-z]+", 0..5),
         metadata_key in "[a-z]+",
         metadata_value in "[a-z0-9]+",

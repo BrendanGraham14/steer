@@ -899,5 +899,12 @@ mod tests {
         assert_eq!(proto_policy.default_behavior, ProtoBehavior::Deny as i32);
         let preapproved = proto_policy.preapproved.unwrap();
         assert!(preapproved.tools.contains(&"bash".to_string()));
+
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Allow,
+            preapproved: ApprovalRules::default(),
+        };
+        let proto_policy = tool_approval_policy_to_proto(&policy);
+        assert_eq!(proto_policy.default_behavior, ProtoBehavior::Allow as i32);
     }
 }

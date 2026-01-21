@@ -475,6 +475,7 @@ pub(crate) fn tool_approval_policy_to_proto(
         default_behavior: match policy.default_behavior {
             UnapprovedBehavior::Prompt => proto::UnapprovedBehavior::Prompt.into(),
             UnapprovedBehavior::Deny => proto::UnapprovedBehavior::Deny.into(),
+            UnapprovedBehavior::Allow => proto::UnapprovedBehavior::Allow.into(),
         },
         preapproved: Some(approval_rules_to_proto(&policy.preapproved)),
     }
@@ -1170,6 +1171,7 @@ pub(crate) fn proto_to_tool_approval_policy(
             let default_behavior =
                 match proto::UnapprovedBehavior::try_from(policy.default_behavior) {
                     Ok(proto::UnapprovedBehavior::Deny) => UnapprovedBehavior::Deny,
+                    Ok(proto::UnapprovedBehavior::Allow) => UnapprovedBehavior::Allow,
                     _ => UnapprovedBehavior::Prompt,
                 };
             let preapproved = policy

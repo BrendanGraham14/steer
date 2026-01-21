@@ -302,6 +302,7 @@ pub enum UnapprovedBehavior {
     #[default]
     Prompt,
     Deny,
+    Allow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -354,6 +355,7 @@ impl ToolApprovalPolicy {
             match self.default_behavior {
                 UnapprovedBehavior::Prompt => ToolDecision::Ask,
                 UnapprovedBehavior::Deny => ToolDecision::Deny,
+                UnapprovedBehavior::Allow => ToolDecision::Allow,
             }
         }
     }
@@ -803,6 +805,23 @@ mod tests {
 
         assert_eq!(policy.tool_decision("read_file"), ToolDecision::Ask);
         assert_eq!(policy.tool_decision("write_file"), ToolDecision::Ask);
+    }
+
+    #[test]
+    fn test_tool_approval_policy_allow_unapproved() {
+        let policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Allow,
+            preapproved: ApprovalRules {
+                tools: ["read_file", "list_files"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                per_tool: HashMap::new(),
+            },
+        };
+
+        assert_eq!(policy.tool_decision("read_file"), ToolDecision::Allow);
+        assert_eq!(policy.tool_decision("write_file"), ToolDecision::Allow);
     }
 
     #[test]
