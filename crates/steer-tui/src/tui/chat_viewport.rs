@@ -702,10 +702,7 @@ fn create_widget_for_flattened_item(
                     )
                 }
                 MessageData::Assistant { .. } => Box::new(RowWidget::new(body)),
-                MessageData::Tool { .. } => {
-                    let accent_style = theme.style(Component::ToolAccent);
-                    Box::new(RowWidget::new(body).with_accent(accent_style))
-                }
+                MessageData::Tool { .. } => Box::new(RowWidget::new(body)),
             }
         }
         FlattenedItem::ToolInteraction { call, result, .. } => {
@@ -714,8 +711,7 @@ fn create_widget_for_flattened_item(
                 result: result.clone(),
             };
             let body = Box::new(DynamicChatWidget::from_block(chat_block, theme));
-            let accent_style = theme.style(Component::ToolAccent);
-            Box::new(RowWidget::new(body).with_accent(accent_style))
+            Box::new(RowWidget::new(body))
         }
         FlattenedItem::Meta { item, .. } => {
             let accent_style = theme.style(Component::SystemMessageAccent);
@@ -725,7 +721,7 @@ fn create_widget_for_flattened_item(
                     level, text, ts, ..
                 } => {
                     let body = Box::new(SystemNoticeWidget::new(*level, text.clone(), *ts));
-                    Box::new(RowWidget::new(body).with_accent(accent_style))
+                    Box::new(RowWidget::new(body))
                 }
                 ChatItemData::CoreCmdResponse {
                     command: cmd,
