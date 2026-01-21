@@ -11,6 +11,7 @@ use crate::tui::{
 
 const ACCENT_WIDTH: u16 = 1;
 const PADDING: u16 = 2;
+const OUTER_MARGIN: u16 = PADDING;
 
 pub struct RowWidget {
     body: Box<dyn ChatRenderable + Send + Sync>,
@@ -65,8 +66,12 @@ impl ChatRenderable for RowWidget {
         } else {
             0
         };
+        let bg_color = self.row_background.and_then(|s| s.bg);
+        let has_row_bg = bg_color.is_some();
+        let outer_margin = if has_row_bg { OUTER_MARGIN } else { 0 };
+        let bubble_width = width.saturating_sub(outer_margin * 2);
 
-        let body_width = width
+        let body_width = bubble_width
             .saturating_sub(accent_width)
             .saturating_sub(PADDING * 2);
         let body_lines = self.body.lines(body_width, mode, theme);
@@ -99,7 +104,6 @@ impl ChatRenderable for RowWidget {
 
         let has_accent = self.accent_style.is_some();
         let accent_width = if has_accent { ACCENT_WIDTH as usize } else { 0 };
-        let bg_color = self.row_background.and_then(|s| s.bg);
         let padding_style = if let Some(bg) = bg_color {
             Style::default().bg(bg)
         } else {
@@ -107,15 +111,31 @@ impl ChatRenderable for RowWidget {
         };
 
         let make_padding_line = |w: u16| -> Line<'static> {
-            let mut acc = Vec::with_capacity(3);
-            acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            let mut acc = Vec::with_capacity(4);
+            if has_row_bg && outer_margin > 0 {
+                acc.push(Span::styled(
+                    " ".repeat(outer_margin as usize),
+                    Style::default(),
+                ));
+            } else {
+                acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            }
             if let Some(accent) = self.accent_style {
                 acc.push(Span::styled("▌", accent));
             }
-            let fill_width = w
-                .saturating_sub(PADDING)
-                .saturating_sub(accent_width as u16) as usize;
+            let fill_width = if has_row_bg {
+                bubble_width.saturating_sub(accent_width as u16) as usize
+            } else {
+                w.saturating_sub(PADDING)
+                    .saturating_sub(accent_width as u16) as usize
+            };
             acc.push(Span::styled(" ".repeat(fill_width), padding_style));
+            if has_row_bg && outer_margin > 0 {
+                acc.push(Span::styled(
+                    " ".repeat(outer_margin as usize),
+                    Style::default(),
+                ));
+            }
             Line::from(acc)
         };
 
@@ -128,9 +148,16 @@ impl ChatRenderable for RowWidget {
 
         for line in body_lines.iter() {
             let spans = line.spans.clone();
-            let mut acc = Vec::with_capacity(5 + spans.len());
+            let mut acc = Vec::with_capacity(6 + spans.len());
 
-            acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            if has_row_bg && outer_margin > 0 {
+                acc.push(Span::styled(
+                    " ".repeat(outer_margin as usize),
+                    Style::default(),
+                ));
+            } else {
+                acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            }
             if let Some(accent) = self.accent_style {
                 acc.push(Span::styled("▌", accent));
             }
@@ -151,14 +178,30 @@ impl ChatRenderable for RowWidget {
                 acc.push(styled_span);
             }
 
-            let used_width = (PADDING as usize) + accent_width + (PADDING as usize) + content_width;
-            let remaining = (width as usize).saturating_sub(used_width);
+            let used_width = if has_row_bg {
+                accent_width + (PADDING as usize) + content_width
+            } else {
+                (PADDING as usize) + accent_width + (PADDING as usize) + content_width
+            };
+            let remaining = if has_row_bg {
+                bubble_width as usize
+            } else {
+                width as usize
+            }
+            .saturating_sub(used_width);
             let right_padding = PADDING as usize;
             let fill = remaining.saturating_sub(right_padding);
             if fill > 0 {
                 acc.push(Span::styled(" ".repeat(fill), padding_style));
             }
             acc.push(Span::styled(" ".repeat(right_padding), padding_style));
+
+            if has_row_bg && outer_margin > 0 {
+                acc.push(Span::styled(
+                    " ".repeat(outer_margin as usize),
+                    Style::default(),
+                ));
+            }
 
             lines.push(Line::from(acc));
         }
