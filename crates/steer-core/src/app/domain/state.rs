@@ -180,12 +180,16 @@ impl AppState {
         });
     }
 
-    pub fn complete_operation(&mut self) {
-        if let Some(ref op) = self.current_operation {
-            self.operation_models.remove(&op.op_id);
-            self.operation_messages.remove(&op.op_id);
+    pub fn complete_operation(&mut self, op_id: OpId) {
+        self.operation_models.remove(&op_id);
+        self.operation_messages.remove(&op_id);
+        if self
+            .current_operation
+            .as_ref()
+            .is_some_and(|op| op.op_id == op_id)
+        {
+            self.current_operation = None;
         }
-        self.current_operation = None;
     }
 
     pub fn add_pending_tool_call(&mut self, tool_call_id: ToolCallId) {

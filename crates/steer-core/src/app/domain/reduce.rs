@@ -824,7 +824,7 @@ fn handle_tool_result(
                 })
         });
 
-        state.complete_operation();
+        state.complete_operation(op_id);
 
         if let Some(message) = updated {
             effects.push(Effect::EmitEvent {
@@ -973,7 +973,7 @@ fn handle_model_response_complete(
     });
 
     if tool_calls.is_empty() {
-        state.complete_operation();
+        state.complete_operation(op_id);
         effects.push(Effect::EmitEvent {
             session_id,
             event: SessionEvent::OperationCompleted { op_id },
@@ -1002,7 +1002,7 @@ fn handle_model_response_error(
         return effects;
     }
 
-    state.complete_operation();
+    state.complete_operation(op_id);
 
     effects.push(Effect::EmitEvent {
         session_id,
@@ -1179,7 +1179,7 @@ fn handle_cancel(
         op_id: op.op_id,
     });
 
-    state.complete_operation();
+    state.complete_operation(op.op_id);
 
     effects
 }
@@ -1247,12 +1247,12 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
             }
             state.pending_approval = None;
         }
-        SessionEvent::OperationCompleted { .. } => {
-            state.complete_operation();
+        SessionEvent::OperationCompleted { op_id } => {
+            state.complete_operation(*op_id);
         }
         SessionEvent::OperationCancelled { op_id, .. } => {
             state.record_cancelled_op(*op_id);
-            state.complete_operation();
+            state.complete_operation(*op_id);
         }
         SessionEvent::McpServerStateChanged {
             server_name,
@@ -1323,7 +1323,7 @@ fn handle_compaction_complete(
     let model = match state.operation_models.get(&op_id).cloned() {
         Some(model) => model,
         None => {
-            state.complete_operation();
+            state.complete_operation(op_id);
             return vec![Effect::EmitEvent {
                 session_id,
                 event: SessionEvent::Error {
@@ -1333,7 +1333,7 @@ fn handle_compaction_complete(
         }
     };
 
-    state.complete_operation();
+    state.complete_operation(op_id);
 
     vec![
         Effect::EmitEvent {
@@ -1366,7 +1366,7 @@ fn handle_compaction_failed(
     op_id: crate::app::domain::types::OpId,
     error: String,
 ) -> Vec<Effect> {
-    state.complete_operation();
+    state.complete_operation(op_id);
 
     vec![
         Effect::EmitEvent {
@@ -1793,7 +1793,7 @@ mod tests {
     }
 
     #[test]
-    fn test_out_of_order_completion_missing_model_error() {
+    fn test_out_of_order_completion_preserves_newer_operation() {
         let mut state = test_state();
         let session_id = state.session_id;
         let model = builtin::claude_sonnet_4_5();
@@ -1838,6 +1838,13 @@ mod tests {
             },
         );
 
+        assert!(state
+            .current_operation
+            .as_ref()
+            .is_some_and(|op| op.op_id == op_b));
+        assert!(state.operation_models.contains_key(&op_b));
+        assert!(!state.operation_models.contains_key(&op_a));
+
         let effects = reduce(
             &mut state,
             Action::ModelResponseComplete {
@@ -1852,6 +1859,13 @@ mod tests {
         );
 
         assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::OperationCompleted { op_id },
+                ..
+            } if *op_id == op_b
+        )));
+        assert!(!effects.iter().any(|e| matches!(
             e,
             Effect::EmitEvent {
                 event: SessionEvent::Error { message },
