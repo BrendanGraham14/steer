@@ -405,13 +405,13 @@ impl Tui {
             return Ok(false);
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
-            self.cancel_edit_mode();
-            return Ok(false);
-        }
-
         match key.code {
             KeyCode::Esc => {
+                if self.editing_message_id.is_some() {
+                    self.cancel_edit_mode();
+                    self.double_tap_tracker.clear_key(&KeyCode::Esc);
+                    return Ok(false);
+                }
                 // Check for double-tap to clear
                 if self
                     .double_tap_tracker

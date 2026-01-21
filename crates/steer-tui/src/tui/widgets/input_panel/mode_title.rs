@@ -165,7 +165,7 @@ impl<'a> ModeTitleWidget<'a> {
         };
 
         if self.is_editing {
-            keybinds.insert(0, ("Ctrl+E", "cancel edit"));
+            keybinds.insert(0, ("Esc", "cancel edit"));
         }
 
         keybinds
