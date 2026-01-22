@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, EventStream, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
@@ -83,6 +83,8 @@ mod test_utils;
 
 /// How often to update the spinner animation (when processing)
 const SPINNER_UPDATE_INTERVAL: Duration = Duration::from_millis(100);
+const SCROLL_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
+const MOUSE_SCROLL_STEP: usize = 1;
 
 /// Input modes for the TUI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +115,28 @@ enum VimOperator {
     Delete,
     Change,
     Yank,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollDirection {
+    Up,
+    Down,
+}
+
+impl ScrollDirection {
+    fn from_mouse_event(event: &MouseEvent) -> Option<Self> {
+        match event.kind {
+            event::MouseEventKind::ScrollUp => Some(Self::Up),
+            event::MouseEventKind::ScrollDown => Some(Self::Down),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingScroll {
+    direction: ScrollDirection,
+    steps: usize,
 }
 
 /// State for tracking vim key sequences
@@ -526,10 +550,13 @@ impl Tui {
         let mut needs_redraw = true; // Force initial draw
         let mut last_spinner_char = String::new();
         let mut update_rx_closed = false;
+        let mut pending_scroll: Option<PendingScroll> = None;
 
         // Create a tick interval for spinner updates
         let mut tick = tokio::time::interval(SPINNER_UPDATE_INTERVAL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut scroll_flush = tokio::time::interval(SCROLL_FLUSH_INTERVAL);
+        scroll_flush.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         while !should_exit {
             // Determine if we need to redraw
@@ -553,68 +580,22 @@ impl Tui {
                 }
                 event_res = term_event_stream.next() => {
                     match event_res {
-                        Some(Ok(evt)) => match evt {
-                            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                                match self.handle_key_event(key_event).await {
-                                    Ok(exit) => {
-                                        if exit {
-                                            should_exit = true;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        // Display error as a system notice
-                                        use crate::tui::model::{ChatItem, ChatItemData, NoticeLevel, generate_row_id};
-                                        self.chat_store.push(ChatItem {
-                                            parent_chat_item_id: None,
-                                            data: ChatItemData::SystemNotice {
-                                                id: generate_row_id(),
-                                                level: NoticeLevel::Error,
-                                                text: e.to_string(),
-                                                ts: time::OffsetDateTime::now_utc(),
-                                            },
-                                        });
-                                    }
-                                }
+                        Some(Ok(evt)) => {
+                            let (event_needs_redraw, event_should_exit) = self
+                                .handle_terminal_event(
+                                    evt,
+                                    term_event_stream,
+                                    &mut pending_scroll,
+                                    &mut scroll_flush,
+                                )
+                                .await?;
+                            if event_needs_redraw {
                                 needs_redraw = true;
                             }
-                            Event::Mouse(mouse_event) => {
-                                if self.handle_mouse_event(mouse_event)? {
-                                    needs_redraw = true;
-                                }
+                            if event_should_exit {
+                                should_exit = true;
                             }
-                            Event::Resize(width, height) => {
-                                self.terminal_size = (width, height);
-                                // Terminal was resized, force redraw
-                                needs_redraw = true;
-                            }
-                            Event::Paste(data) => {
-                                // Handle paste in modes that accept text input
-                                if self.is_text_input_mode() {
-                                    if self.input_mode == InputMode::Setup {
-                                        // Handle paste in setup mode
-                                        if let Some(setup_state) = &mut self.setup_state {
-                                            match &setup_state.current_step {
-                                                crate::tui::state::SetupStep::Authentication(_) => {
-                                                    setup_state.auth_input.push_str(&data);
-                                                    debug!(target:"tui.run", "Pasted {} chars in Setup mode", data.len());
-                                                    needs_redraw = true;
-                                                }
-                                                _ => {
-                                                    // Other setup steps don't accept paste
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        let normalized_data =
-                                            data.replace("\r\n", "\n").replace('\r', "\n");
-                                        self.input_panel_state.insert_str(&normalized_data);
-                                        debug!(target:"tui.run", "Pasted {} chars in {:?} mode", normalized_data.len(), self.input_mode);
-                                        needs_redraw = true;
-                                    }
-                                }
-                            }
-                            _ => {}
-                        },
+                        }
                         Some(Err(e)) => {
                             if e.kind() == io::ErrorKind::Interrupted {
                                 debug!(target: "tui.input", "Ignoring interrupted syscall");
@@ -663,41 +644,218 @@ impl Tui {
                             needs_redraw = true;
                         }
                 }
+                _ = scroll_flush.tick(), if pending_scroll.is_some() => {
+                    if let Some(pending) = pending_scroll.take()
+                        && self.apply_scroll_steps(pending.direction, pending.steps) {
+                            needs_redraw = true;
+                        }
+                }
             }
         }
 
         Ok(())
     }
 
+    async fn handle_terminal_event(
+        &mut self,
+        event: Event,
+        term_event_stream: &mut EventStream,
+        pending_scroll: &mut Option<PendingScroll>,
+        scroll_flush: &mut tokio::time::Interval,
+    ) -> Result<(bool, bool)> {
+        let mut needs_redraw = false;
+        let mut should_exit = false;
+        let mut pending_events = VecDeque::new();
+        pending_events.push_back(event);
+
+        while let Some(event) = pending_events.pop_front() {
+            match event {
+                Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                    match self.handle_key_event(key_event).await {
+                        Ok(exit) => {
+                            if exit {
+                                should_exit = true;
+                            }
+                        }
+                        Err(e) => {
+                            // Display error as a system notice
+                            use crate::tui::model::{
+                                ChatItem, ChatItemData, NoticeLevel, generate_row_id,
+                            };
+                            self.chat_store.push(ChatItem {
+                                parent_chat_item_id: None,
+                                data: ChatItemData::SystemNotice {
+                                    id: generate_row_id(),
+                                    level: NoticeLevel::Error,
+                                    text: e.to_string(),
+                                    ts: time::OffsetDateTime::now_utc(),
+                                },
+                            });
+                        }
+                    }
+                    needs_redraw = true;
+                }
+                Event::Mouse(mouse_event) => {
+                    let (scroll_pending, mouse_needs_redraw, mouse_exit, deferred_event) =
+                        self.handle_mouse_event_coalesced(mouse_event, term_event_stream)?;
+                    if let Some(scroll) = scroll_pending {
+                        let pending_was_empty = pending_scroll.is_none();
+                        match pending_scroll {
+                            Some(pending) if pending.direction == scroll.direction => {
+                                pending.steps = pending.steps.saturating_add(scroll.steps);
+                            }
+                            _ => {
+                                *pending_scroll = Some(scroll);
+                            }
+                        }
+                        if pending_was_empty {
+                            scroll_flush.reset_after(SCROLL_FLUSH_INTERVAL);
+                        }
+                    }
+                    needs_redraw |= mouse_needs_redraw;
+                    should_exit |= mouse_exit;
+                    if let Some(deferred_event) = deferred_event {
+                        pending_events.push_front(deferred_event);
+                    }
+                }
+                Event::Resize(width, height) => {
+                    self.terminal_size = (width, height);
+                    // Terminal was resized, force redraw
+                    needs_redraw = true;
+                }
+                Event::Paste(data) => {
+                    // Handle paste in modes that accept text input
+                    if self.is_text_input_mode() {
+                        if self.input_mode == InputMode::Setup {
+                            // Handle paste in setup mode
+                            if let Some(setup_state) = &mut self.setup_state {
+                                match &setup_state.current_step {
+                                    crate::tui::state::SetupStep::Authentication(_) => {
+                                        setup_state.auth_input.push_str(&data);
+                                        debug!(
+                                            target:"tui.run",
+                                            "Pasted {} chars in Setup mode",
+                                            data.len()
+                                        );
+                                        needs_redraw = true;
+                                    }
+                                    _ => {
+                                        // Other setup steps don't accept paste
+                                    }
+                                }
+                            }
+                        } else {
+                            let normalized_data = data.replace("\r\n", "\n").replace('\r', "\n");
+                            self.input_panel_state.insert_str(&normalized_data);
+                            debug!(
+                                target:"tui.run",
+                                "Pasted {} chars in {:?} mode",
+                                normalized_data.len(),
+                                self.input_mode
+                            );
+                            needs_redraw = true;
+                        }
+                    }
+                }
+                Event::Key(_) | Event::FocusGained | Event::FocusLost => {}
+            }
+
+            if should_exit {
+                break;
+            }
+        }
+
+        Ok((needs_redraw, should_exit))
+    }
+
+    fn handle_mouse_event_coalesced(
+        &mut self,
+        mouse_event: MouseEvent,
+        term_event_stream: &mut EventStream,
+    ) -> Result<(Option<PendingScroll>, bool, bool, Option<Event>)> {
+        let Some(mut last_direction) = ScrollDirection::from_mouse_event(&mouse_event) else {
+            let needs_redraw = self.handle_mouse_event(mouse_event)?;
+            return Ok((None, needs_redraw, false, None));
+        };
+
+        let mut steps = 1usize;
+        let mut deferred_event = None;
+        let mut should_exit = false;
+
+        loop {
+            let next_event = term_event_stream.next().now_or_never();
+            let Some(next_event) = next_event else {
+                break;
+            };
+
+            match next_event {
+                Some(Ok(Event::Mouse(next_mouse))) => {
+                    if let Some(next_direction) = ScrollDirection::from_mouse_event(&next_mouse) {
+                        if next_direction == last_direction {
+                            steps = steps.saturating_add(1);
+                        } else {
+                            last_direction = next_direction;
+                            steps = 1;
+                        }
+                        continue;
+                    }
+                    deferred_event = Some(Event::Mouse(next_mouse));
+                    break;
+                }
+                Some(Ok(other_event)) => {
+                    deferred_event = Some(other_event);
+                    break;
+                }
+                Some(Err(e)) => {
+                    if e.kind() == io::ErrorKind::Interrupted {
+                        debug!(target: "tui.input", "Ignoring interrupted syscall");
+                    } else {
+                        error!(target: "tui.run", "Fatal input error: {}. Exiting.", e);
+                        should_exit = true;
+                    }
+                    break;
+                }
+                None => {
+                    should_exit = true;
+                    break;
+                }
+            }
+        }
+
+        Ok((
+            Some(PendingScroll {
+                direction: last_direction,
+                steps,
+            }),
+            false,
+            should_exit,
+            deferred_event,
+        ))
+    }
+
     /// Handle mouse events
     fn handle_mouse_event(&mut self, event: MouseEvent) -> Result<bool> {
-        let needs_redraw = match event.kind {
-            event::MouseEventKind::ScrollUp => {
-                // In vim normal mode or simple mode (when not typing), allow scrolling
-                if !self.is_text_input_mode()
-                    || (self.input_mode == InputMode::Simple
-                        && self.input_panel_state.content().is_empty())
-                {
-                    self.chat_viewport.state_mut().scroll_up(3)
-                } else {
-                    false
-                }
-            }
-            event::MouseEventKind::ScrollDown => {
-                // In vim normal mode or simple mode (when not typing), allow scrolling
-                if !self.is_text_input_mode()
-                    || (self.input_mode == InputMode::Simple
-                        && self.input_panel_state.content().is_empty())
-                {
-                    self.chat_viewport.state_mut().scroll_down(3)
-                } else {
-                    false
-                }
-            }
-            _ => false,
+        let needs_redraw = match ScrollDirection::from_mouse_event(&event) {
+            Some(direction) => self.apply_scroll_steps(direction, 1),
+            None => false,
         };
 
         Ok(needs_redraw)
+    }
+
+    fn apply_scroll_steps(&mut self, direction: ScrollDirection, steps: usize) -> bool {
+        // In vim normal mode or simple mode (when not typing), allow scrolling
+        if !self.is_text_input_mode()
+            || (self.input_mode == InputMode::Simple && self.input_panel_state.content().is_empty())
+        {
+            let amount = steps.saturating_mul(MOUSE_SCROLL_STEP);
+            match direction {
+                ScrollDirection::Up => self.chat_viewport.state_mut().scroll_up(amount),
+                ScrollDirection::Down => self.chat_viewport.state_mut().scroll_down(amount),
+            }
+        } else {
+            false
+        }
     }
 
     /// Draw the UI
@@ -1042,11 +1200,7 @@ impl Tui {
             self.chat_viewport.mark_dirty();
             if content.starts_with('!') && content.len() > 1 {
                 let command = content[1..].trim().to_string();
-                if let Err(e) = self
-                    .client
-                    .execute_bash_command(command)
-                    .await
-                {
+                if let Err(e) = self.client.execute_bash_command(command).await {
                     self.push_notice(NoticeLevel::Error, format!("Cannot run command: {e}"));
                 }
             } else if let Err(e) = self
@@ -1377,10 +1531,7 @@ impl Tui {
                             );
                         }
                     } else {
-                        self.push_notice(
-                            NoticeLevel::Error,
-                            "Usage: /agent <mode>".to_string(),
-                        );
+                        self.push_notice(NoticeLevel::Error, "Usage: /agent <mode>".to_string());
                     }
                 }
                 crate::tui::core_commands::CoreCommandType::Model { target } => {
