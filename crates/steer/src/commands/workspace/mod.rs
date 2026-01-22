@@ -51,8 +51,7 @@ async fn connect_client(remote: Option<&str>) -> Result<steer_grpc::AgentClient>
             .map_err(|e| eyre!("Failed to connect to remote server at {addr}: {e}"));
     }
 
-    let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
-    steer_grpc::AgentClient::local(default_model)
+    steer_grpc::AgentClient::local(steer_core::config::model::builtin::default_model())
         .await
         .map_err(|e| eyre!("Failed to start local gRPC server: {e}"))
 }

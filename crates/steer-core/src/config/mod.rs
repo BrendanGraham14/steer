@@ -36,7 +36,7 @@ impl Default for NotificationSettings {
 impl Config {
     fn new() -> Self {
         Self {
-            model: Some(crate::config::model::builtin::opus().id),
+            model: Some(crate::config::model::builtin::default_model().id),
             history_size: Some(10),
             system_prompt: None,
             notifications: Some(NotificationSettings::default()),

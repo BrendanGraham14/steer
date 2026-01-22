@@ -31,6 +31,7 @@ service AgentService {
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc ResolveModel(ResolveModelRequest) returns (ResolveModelResponse);
+  rpc GetDefaultModel(GetDefaultModelRequest) returns (GetDefaultModelResponse);
   rpc GetProviderAuthStatus(GetProviderAuthStatusRequest) returns (GetProviderAuthStatusResponse);
 
   rpc StartAuth(StartAuthRequest) returns (StartAuthResponse);
@@ -418,6 +419,12 @@ message ResolveModelRequest {
 }
 
 message ResolveModelResponse {
+  ModelSpec model = 1;
+}
+
+message GetDefaultModelRequest {}
+
+message GetDefaultModelResponse {
   ModelSpec model = 1;
 }
 

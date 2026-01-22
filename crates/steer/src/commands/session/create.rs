@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
+use tracing::warn;
 
 use super::super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
@@ -15,6 +16,7 @@ pub struct CreateSessionCommand {
     pub session_db: Option<std::path::PathBuf>,
     pub model: Option<String>,
     pub catalogs: Vec<std::path::PathBuf>,
+    pub preferred_model: Option<String>,
 }
 
 #[async_trait]
@@ -48,7 +50,7 @@ impl Command for CreateSessionCommand {
             let catalog_config = CatalogConfig::with_catalogs(catalog_paths);
 
             let setup = steer_grpc::local_server::setup_local_grpc_with_catalog(
-                steer_core::config::model::builtin::opus(),
+                steer_core::config::model::builtin::default_model(),
                 Some(db_path),
                 catalog_config,
                 None,
@@ -63,11 +65,35 @@ impl Command for CreateSessionCommand {
             client
         };
 
-        let model_input = self.model.as_deref().unwrap_or("opus");
-        let default_model = client
-            .resolve_model(model_input)
+        let server_default = client
+            .get_default_model()
             .await
-            .map_err(|e| eyre!("Failed to resolve model '{}': {}", model_input, e))?;
+            .map_err(|e| eyre!("Failed to fetch server default model: {}", e))?;
+
+        let model_input = self.model.as_deref().or(self.preferred_model.as_deref());
+        let default_model = if let Some(input) = model_input {
+            match client.resolve_model(input).await {
+                Ok(model_id) => model_id,
+                Err(e) => {
+                    let fallback = format!(
+                        "{}/{}",
+                        server_default.provider.storage_key(),
+                        server_default.id
+                    );
+                    warn!(
+                        "Failed to resolve preferred model '{}': {}. Using server default {}.",
+                        input, e, fallback
+                    );
+                    eprintln!(
+                        "Warning: preferred model '{}' is invalid. Using server default {}.",
+                        input, fallback
+                    );
+                    server_default.clone()
+                }
+            }
+        } else {
+            server_default.clone()
+        };
 
         let loader = SessionConfigLoader::new(default_model, self.session_config.clone())
             .with_overrides(overrides);

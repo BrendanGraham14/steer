@@ -7,6 +7,7 @@ use steer::commands::{
     Command, headless::HeadlessCommand, serve::ServeCommand, session::SessionCommand,
     workspace::WorkspaceCommand,
 };
+use steer::model_resolver::resolve_model_selection;
 use steer::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use tracing::{debug, warn};
 
@@ -55,14 +56,12 @@ async fn main() -> Result<()> {
     // Load preferences to get default model
     let preferences = steer_core::preferences::Preferences::load().unwrap_or_default();
 
-    // Determine which model to use:
+    // Determine preferred model source:
     // 1. CLI argument (if provided)
     // 2. Preferences default_model (if set)
-    // 3. System default
-    let preferred_model = cli.model.clone().or(preferences.default_model.clone());
-    let chosen_model = preferred_model
-        .clone()
-        .unwrap_or_else(|| "opus".to_string());
+    let cli_model = cli.model.clone();
+    let preference_model = preferences.default_model.clone();
+    let preferred_model = cli_model.clone().or(preference_model.clone());
 
     // Set up signal handlers for terminal cleanup if using TUI
     #[cfg(feature = "ui")]
@@ -95,21 +94,18 @@ async fn main() -> Result<()> {
                 let session_config_path = session_config.or(cli.session_config.clone());
                 // Use subcommand theme if provided, otherwise fall back to global
                 let theme_name = theme.or(cli.theme.clone());
-                // Merge catalogs: use subcommand if provided, otherwise fall back to global
-                let catalogs = if !subcommand_catalogs.is_empty() {
-                    subcommand_catalogs
-                } else {
-                    cli.catalogs.clone()
-                };
-
-                // Normalize and warn for invalid catalog paths
-                let catalogs = normalize_catalogs(&catalogs);
-
                 // Set panic hook for terminal cleanup
                 setup_panic_hook();
 
                 // Launch TUI with appropriate backend
                 if let Some(addr) = remote_addr {
+                    // Merge catalogs: use subcommand if provided, otherwise fall back to global
+                    let catalogs = if !subcommand_catalogs.is_empty() {
+                        subcommand_catalogs
+                    } else {
+                        cli.catalogs.clone()
+                    };
+
                     // Connect to remote server
                     run_tui_remote(RemoteTuiParams {
                         remote_addr: addr,
@@ -119,11 +115,21 @@ async fn main() -> Result<()> {
                         system_prompt: cli.system_prompt,
                         session_config_path,
                         theme: theme_name.clone(),
-                        catalogs: catalogs.iter().map(PathBuf::from).collect(),
+                        catalogs,
                         force_setup,
                     })
                     .await
                 } else {
+                    // Merge catalogs: use subcommand if provided, otherwise fall back to global
+                    let catalogs = if !subcommand_catalogs.is_empty() {
+                        subcommand_catalogs
+                    } else {
+                        cli.catalogs.clone()
+                    };
+
+                    // Normalize and warn for invalid catalog paths
+                    let catalogs = normalize_catalogs(&catalogs);
+
                     // Launch with in-process server
                     run_tui_local(TuiParams {
                         session_id: cli.session,
@@ -167,14 +173,23 @@ async fn main() -> Result<()> {
             remote,
             catalogs,
         } => {
-            // Parse headless model if provided, otherwise use global model
-            let effective_model = headless_model.as_ref().unwrap_or(&chosen_model);
             let remote_addr = remote.or(cli.remote.clone());
+            let catalog_paths: Vec<String> = catalogs
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            let global_model = if let Some(model) = cli_model.clone() {
+                model
+            } else {
+                let selection =
+                    resolve_model_selection(preference_model.as_deref(), &catalog_paths);
+                selection.default_model.to_string()
+            };
 
             let command = HeadlessCommand {
-                model: Some(effective_model.clone()),
+                model: headless_model,
                 messages_json,
-                global_model: effective_model.clone(),
+                global_model,
                 session,
                 session_config,
                 system_prompt: system_prompt.or(cli.system_prompt),
@@ -211,6 +226,7 @@ async fn main() -> Result<()> {
                 remote: cli.remote.clone(),
                 session_db: cli.session_db.clone(),
                 catalogs: cli.catalogs.clone(),
+                preferred_model: preferred_model.clone(),
             };
             command.execute().await
         }
@@ -251,45 +267,13 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
     // Normalize and warn for invalid catalog paths
     let catalog_paths: Vec<String> = normalize_catalogs(&params.catalogs);
 
-    // Prefer the requested model (CLI or preferences) as the server default so we
-    // don't immediately try to use the Anthropic builtin when the user wants
-    // something else.
-    let preferred_default_model = match (
-        &params.model,
-        steer_core::model_registry::ModelRegistry::load(&catalog_paths),
-    ) {
-        (Some(model_str), Ok(registry)) => match registry.resolve(model_str) {
-            Ok(id) => Some(id),
-            Err(e) => {
-                warn!(
-                    "Failed to resolve preferred model '{}': {}. Falling back to builtin default.",
-                    model_str, e
-                );
-                None
-            }
-        },
-        (None, Ok(_)) => None,
-        (_, Err(e)) => {
-            warn!(
-                "Failed to load model registry for catalogs {:?}: {}. Falling back to builtin default.",
-                catalog_paths, e
-            );
-            None
-        }
-    };
-
-    // Use the preferred model if we resolved it, otherwise fall back to builtin default
-    let default_model = preferred_default_model
-        .clone()
-        .unwrap_or_else(steer_core::config::model::builtin::opus);
-
     let session_db_path = match params.session_db.clone() {
         Some(path) => path,
         None => steer_core::utils::session::create_session_store_path()?,
     };
 
     let local_grpc_setup = local_server::setup_local_grpc_with_catalog(
-        default_model.clone(),
+        steer_core::config::model::builtin::default_model(),
         Some(session_db_path),
         steer_core::catalog::CatalogConfig::with_catalogs(catalog_paths),
         None,
@@ -303,21 +287,29 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         .await
         .map_err(|e| eyre::eyre!("Failed to create gRPC client: {}", e))?;
 
-    let model_id = if let Some(model) = preferred_default_model {
-        model
-    } else if let Some(model_str) = params.model.as_deref() {
+    let server_default = client
+        .get_default_model()
+        .await
+        .map_err(|e| eyre::eyre!("Failed to fetch server default model: {}", e))?;
+
+    let model_id = if let Some(model_str) = params.model.as_deref() {
         match client.resolve_model(model_str).await {
             Ok(id) => id,
             Err(e) => {
+                let fallback = server_default.to_string();
                 warn!(
-                    "Failed to resolve model '{}': {}. Falling back to default.",
-                    model_str, e
+                    "Failed to resolve preferred model '{}': {}. Using server default {}.",
+                    model_str, e, fallback
                 );
-                default_model
+                eprintln!(
+                    "Warning: preferred model '{}' is invalid. Using server default {}.",
+                    model_str, fallback
+                );
+                server_default.clone()
             }
         }
     } else {
-        default_model
+        server_default.clone()
     };
 
     // Resolve "latest" alias
@@ -388,6 +380,10 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
         .await
         .map_err(|e| eyre::eyre!("Failed to connect to remote server: {}", e))?;
 
+    if !params.catalogs.is_empty() {
+        warn!("Ignoring --catalog for remote TUI");
+    }
+
     // Resolve "latest" alias
     if matches!(session_id.as_deref(), Some("latest")) {
         let mut sessions = client
@@ -407,33 +403,29 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
         }
     }
 
-    // Use builtin default model for TUI initially
-    let default_model = steer_core::config::model::builtin::opus();
+    let server_default = client
+        .get_default_model()
+        .await
+        .map_err(|e| eyre::eyre!("Failed to fetch server default model: {}", e))?;
 
-    // Try resolving via local catalogs first (if provided), then fall back to server
     let model_id = if let Some(model_str) = params.model.as_deref() {
-        // Attempt local resolution using provided catalogs
-        let catalog_paths: Vec<String> = normalize_catalogs(&params.catalogs);
-        let locally_resolved: Option<steer_core::config::model::ModelId> =
-            resolve_model_locally(model_str, &catalog_paths);
-
-        if let Some(id) = locally_resolved {
-            id
-        } else {
-            match client.resolve_model(model_str).await {
-                Ok(resolved) => resolved,
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to resolve model '{}' via server: {}, using default",
-                        model_str,
-                        e
-                    );
-                    default_model
-                }
+        match client.resolve_model(model_str).await {
+            Ok(resolved) => resolved,
+            Err(e) => {
+                let fallback = server_default.to_string();
+                warn!(
+                    "Failed to resolve preferred model '{}': {}. Using server default {}.",
+                    model_str, e, fallback
+                );
+                eprintln!(
+                    "Warning: preferred model '{}' is invalid. Using server default {}.",
+                    model_str, fallback
+                );
+                server_default.clone()
             }
         }
     } else {
-        default_model
+        server_default.clone()
     };
 
     // If no session_id, we need to create a new session
@@ -535,6 +527,7 @@ fn normalize_catalogs(paths: &[PathBuf]) -> Vec<String> {
 }
 
 /// Try to resolve a model locally using provided catalog paths. Falls back to discovered catalogs.
+#[cfg(test)]
 fn resolve_model_locally(
     model: &str,
     catalog_paths: &[String],

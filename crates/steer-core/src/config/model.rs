@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use super::provider::ProviderId;
 use super::toml_types::ModelData;
@@ -20,6 +21,12 @@ impl ModelId {
             provider,
             id: id.into(),
         }
+    }
+}
+
+impl fmt::Display for ModelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.provider.storage_key(), self.id)
     }
 }
 

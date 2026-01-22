@@ -1,8 +1,9 @@
 use crate::grpc::conversions::{
-    environment_descriptor_to_proto, message_to_proto, proto_to_model, proto_to_tool_config,
-    proto_to_workspace_config, repo_info_to_proto, session_event_to_proto, stream_delta_to_proto,
-    workspace_info_to_proto, workspace_status_to_proto,
+    environment_descriptor_to_proto, message_to_proto, model_to_proto, proto_to_model,
+    proto_to_tool_config, proto_to_workspace_config, repo_info_to_proto, session_event_to_proto,
+    stream_delta_to_proto, workspace_info_to_proto, workspace_status_to_proto,
 };
+use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -123,6 +124,33 @@ impl RuntimeAgentService {
         let id = Uuid::parse_str(repo_id)
             .map_err(|_| Status::invalid_argument(format!("Invalid repo ID: {repo_id}")))?;
         Ok(steer_workspace::RepoId::from_uuid(id))
+    }
+
+    fn select_default_model(&self) -> steer_core::config::model::ModelId {
+        let builtin_default = steer_core::config::model::builtin::default_model();
+
+        if let Some(config) = self.model_registry.get(&builtin_default)
+            && config.recommended
+        {
+            return builtin_default;
+        }
+
+        let mut recommended: Vec<_> = self.model_registry.recommended().collect();
+        if recommended.is_empty() {
+            return builtin_default;
+        }
+
+        recommended.sort_by(|a, b| {
+            let provider_cmp = a.provider.as_str().cmp(b.provider.as_str());
+            if provider_cmp == CmpOrdering::Equal {
+                a.id.cmp(&b.id)
+            } else {
+                provider_cmp
+            }
+        });
+
+        let chosen = recommended[0];
+        steer_core::config::model::ModelId::new(chosen.provider.clone(), chosen.id.clone())
     }
 
     fn proto_to_workspace_ref(
@@ -1286,6 +1314,16 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                 req.input, e
             ))),
         }
+    }
+
+    async fn get_default_model(
+        &self,
+        _request: Request<proto::GetDefaultModelRequest>,
+    ) -> Result<Response<proto::GetDefaultModelResponse>, Status> {
+        let model = self.select_default_model();
+        Ok(Response::new(proto::GetDefaultModelResponse {
+            model: Some(model_to_proto(model)),
+        }))
     }
 
     async fn create_workspace(

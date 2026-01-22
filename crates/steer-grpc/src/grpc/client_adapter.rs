@@ -18,9 +18,9 @@ use steer_core::app::conversation::Message;
 use steer_core::session::{McpServerInfo, SessionConfig};
 use steer_proto::agent::v1::{
     self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
-    GetMcpServersRequest, GetSessionRequest, GetWorkspaceStatusRequest, ListReposRequest,
-    ListSessionsRequest, ListWorkspacesRequest, ResolveRepoRequest, SessionInfo, SessionState,
-    agent_service_client::AgentServiceClient,
+    GetDefaultModelRequest, GetMcpServersRequest, GetSessionRequest, GetWorkspaceStatusRequest,
+    ListReposRequest, ListSessionsRequest, ListWorkspacesRequest, ResolveRepoRequest, SessionInfo,
+    SessionState, agent_service_client::AgentServiceClient,
 };
 
 pub struct AgentClient {
@@ -638,6 +638,37 @@ impl AgentClient {
         let inner = response.into_inner();
         let model_spec = inner.model.ok_or_else(|| GrpcError::InvalidSessionState {
             reason: format!("Server returned no model for input '{input}'"),
+        })?;
+
+        let provider_id: steer_core::config::provider::ProviderId =
+            serde_json::from_value(serde_json::Value::String(model_spec.provider_id.clone()))
+                .map_err(|_| GrpcError::InvalidSessionState {
+                    reason: format!(
+                        "Invalid provider ID from server: {}",
+                        model_spec.provider_id
+                    ),
+                })?;
+
+        Ok(steer_core::config::model::ModelId::new(
+            provider_id,
+            model_spec.model_id,
+        ))
+    }
+
+    pub async fn get_default_model(&self) -> GrpcResult<steer_core::config::model::ModelId> {
+        let request = Request::new(GetDefaultModelRequest {});
+
+        let response = self
+            .client
+            .lock()
+            .await
+            .get_default_model(request)
+            .await
+            .map_err(Box::new)?;
+
+        let inner = response.into_inner();
+        let model_spec = inner.model.ok_or_else(|| GrpcError::InvalidSessionState {
+            reason: "Server returned no default model".to_string(),
         })?;
 
         let provider_id: steer_core::config::provider::ProviderId =
