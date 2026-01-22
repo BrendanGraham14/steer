@@ -690,9 +690,7 @@ fn get_tool_decision(state: &AppState, tool_call: &steer_tools::ToolCall) -> Too
             let policy = &config.tool_config.approval_policy;
             match params.target {
                 DispatchAgentTarget::Resume { .. } => {
-                    if policy.dispatch_agent_allows_resume() {
-                        return ToolDecision::Allow;
-                    }
+                    return ToolDecision::Allow;
                 }
                 DispatchAgentTarget::New { agent, .. } => {
                     let agent_id = agent
@@ -1595,8 +1593,11 @@ mod tests {
     use crate::session::state::{
         ApprovalRules, SessionConfig, ToolApprovalPolicy, ToolVisibility, UnapprovedBehavior,
     };
+    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+    use crate::tools::DISPATCH_AGENT_TOOL_NAME;
+    use serde_json::json;
     use std::collections::HashSet;
-    use steer_tools::{InputSchema, ToolError, ToolSchema};
+    use steer_tools::{InputSchema, ToolCall, ToolError, ToolSchema};
 
     fn test_state() -> AppState {
         AppState::new(SessionId::new())
@@ -1666,7 +1667,16 @@ mod tests {
         );
 
         let updated = state.session_config.as_ref().expect("config");
-        assert!(matches!(updated.tool_config.visibility, ToolVisibility::ReadOnly));
+        match &updated.tool_config.visibility {
+            ToolVisibility::Whitelist(allowed) => {
+                assert!(allowed.contains(DISPATCH_AGENT_TOOL_NAME));
+                for name in READ_ONLY_TOOL_NAMES {
+                    assert!(allowed.contains(*name));
+                }
+                assert_eq!(allowed.len(), READ_ONLY_TOOL_NAMES.len() + 1);
+            }
+            other => panic!("Unexpected tool visibility: {other:?}"),
+        }
         assert_eq!(state.primary_agent_id.as_deref(), Some("planner"));
         assert!(effects.iter().any(|e| matches!(
             e,
@@ -1700,6 +1710,28 @@ mod tests {
             updated.tool_config.approval_policy.default_behavior,
             UnapprovedBehavior::Allow
         );
+    }
+
+    #[test]
+    fn dispatch_agent_resume_is_auto_approved() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let config = base_session_config();
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
+
+        let tool_call = ToolCall {
+            id: "tc_dispatch_resume".to_string(),
+            name: DISPATCH_AGENT_TOOL_NAME.to_string(),
+            parameters: json!({
+                "prompt": "resume work",
+                "mode": "resume",
+                "session_id": SessionId::new().to_string()
+            }),
+        };
+
+        let decision = get_tool_decision(&state, &tool_call);
+        assert_eq!(decision, ToolDecision::Allow);
+        assert_eq!(state.session_id, session_id);
     }
 
     #[test]

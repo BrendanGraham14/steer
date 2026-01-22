@@ -935,7 +935,6 @@ message BashRule {
 
 message DispatchAgentRule {
   repeated string agent_patterns = 1;
-  bool allow_resume = 2;
 }
 
 message ApprovalRules {

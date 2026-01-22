@@ -280,7 +280,7 @@ fn tool_is_preapproved(tool_call: &ToolCall, policy: &ToolApprovalPolicy) -> boo
         let params = serde_json::from_value::<DispatchAgentParams>(tool_call.parameters.clone());
         if let Ok(params) = params {
             return match params.target {
-                DispatchAgentTarget::Resume { .. } => policy.dispatch_agent_allows_resume(),
+                DispatchAgentTarget::Resume { .. } => true,
                 DispatchAgentTarget::New { agent, .. } => {
                     let agent_id = agent
                         .as_deref()
@@ -505,7 +505,6 @@ mod tests {
             "dispatch_agent".to_string(),
             ToolRule::DispatchAgent {
                 agent_patterns: vec!["explore".to_string()],
-                allow_resume: true,
             },
         );
 

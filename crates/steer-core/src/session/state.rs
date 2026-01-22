@@ -309,11 +309,7 @@ pub enum UnapprovedBehavior {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolRule {
     Bash { patterns: Vec<String> },
-    DispatchAgent {
-        agent_patterns: Vec<String>,
-        #[serde(default)]
-        allow_resume: bool,
-    },
+    DispatchAgent { agent_patterns: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
@@ -330,20 +326,17 @@ impl ApprovalRules {
     }
 
     pub fn bash_patterns(&self) -> Option<&[String]> {
-        self.per_tool.get("bash").map(|rule| match rule {
-            ToolRule::Bash { patterns } => patterns.as_slice(),
-            ToolRule::DispatchAgent { .. } => &[],
+        self.per_tool.get("bash").and_then(|rule| match rule {
+            ToolRule::Bash { patterns } => Some(patterns.as_slice()),
+            ToolRule::DispatchAgent { .. } => None,
         })
     }
 
-    pub fn dispatch_agent_rule(&self) -> Option<(&[String], bool)> {
+    pub fn dispatch_agent_rule(&self) -> Option<&[String]> {
         self.per_tool
             .get("dispatch_agent")
             .and_then(|rule| match rule {
-                ToolRule::DispatchAgent {
-                    agent_patterns,
-                    allow_resume,
-                } => Some((agent_patterns.as_slice(), *allow_resume)),
+                ToolRule::DispatchAgent { agent_patterns } => Some(agent_patterns.as_slice()),
                 ToolRule::Bash { .. } => None,
             })
     }
@@ -399,7 +392,7 @@ impl ToolApprovalPolicy {
     }
 
     pub fn is_dispatch_agent_pattern_preapproved(&self, agent_id: &str) -> bool {
-        let Some((patterns, _)) = self.preapproved.dispatch_agent_rule() else {
+        let Some(patterns) = self.preapproved.dispatch_agent_rule() else {
             return false;
         };
         patterns.iter().any(|pattern| {
@@ -410,13 +403,6 @@ impl ToolApprovalPolicy {
                 .map(|glob| glob.matches(agent_id))
                 .unwrap_or(false)
         })
-    }
-
-    pub fn dispatch_agent_allows_resume(&self) -> bool {
-        self.preapproved
-            .dispatch_agent_rule()
-            .map(|(_, allow_resume)| allow_resume)
-            .unwrap_or(false)
     }
 
     pub fn pre_approved_tools(&self) -> &HashSet<String> {
@@ -778,6 +764,7 @@ mod tests {
     use super::*;
     use crate::app::conversation::{Message, MessageData, UserContent};
     use crate::config::model::builtin::claude_sonnet_4_5 as test_model;
+    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use steer_tools::tools::{BASH_TOOL_NAME, EDIT_TOOL_NAME};
 
     #[test]
@@ -848,8 +835,11 @@ mod tests {
     fn test_tool_approval_policy_default() {
         let policy = ToolApprovalPolicy::default();
 
-        assert_eq!(policy.tool_decision("read_file"), ToolDecision::Ask);
-        assert_eq!(policy.tool_decision("write_file"), ToolDecision::Ask);
+        assert_eq!(
+            policy.tool_decision(READ_ONLY_TOOL_NAMES[0]),
+            ToolDecision::Allow
+        );
+        assert_eq!(policy.tool_decision(BASH_TOOL_NAME), ToolDecision::Ask);
     }
 
     #[test]
@@ -912,7 +902,6 @@ mod tests {
                     "dispatch_agent".to_string(),
                     ToolRule::DispatchAgent {
                         agent_patterns: vec!["explore".to_string(), "explore-*".to_string()],
-                        allow_resume: true,
                     },
                 )]
                 .into_iter()
@@ -923,7 +912,6 @@ mod tests {
         assert!(policy.is_dispatch_agent_pattern_preapproved("explore"));
         assert!(policy.is_dispatch_agent_pattern_preapproved("explore-fast"));
         assert!(!policy.is_dispatch_agent_pattern_preapproved("build"));
-        assert!(policy.dispatch_agent_allows_resume());
     }
 
     #[test]

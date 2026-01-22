@@ -94,8 +94,6 @@ pub struct PartialBashApproval {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct PartialDispatchAgentApproval {
     pub agent_patterns: Vec<String>,
-    #[serde(default)]
-    pub allow_resume: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -244,7 +242,6 @@ impl SessionConfigLoader {
                         "dispatch_agent".to_string(),
                         ToolRule::DispatchAgent {
                             agent_patterns: dispatch_agent.agent_patterns,
-                            allow_resume: dispatch_agent.allow_resume,
                         },
                     );
                 }
@@ -888,7 +885,6 @@ patterns = ["ls -la", "pwd"]
             r#"
 [tool_config.approvals.dispatch_agent]
 agent_patterns = ["explore", "explore-*"]
-allow_resume = true
 "#
         )
         .unwrap();
@@ -905,14 +901,10 @@ allow_resume = true
         assert!(dispatch_rule.is_some(), "Dispatch agent rule should be present");
 
         match dispatch_rule.unwrap() {
-            ToolRule::DispatchAgent {
-                agent_patterns,
-                allow_resume,
-            } => {
+            ToolRule::DispatchAgent { agent_patterns } => {
                 assert_eq!(agent_patterns.len(), 2);
                 assert_eq!(agent_patterns[0], "explore");
                 assert_eq!(agent_patterns[1], "explore-*");
-                assert!(*allow_resume);
             }
             ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
         }
@@ -996,7 +988,6 @@ patterns = [
 
 [tool_config.approvals.dispatch_agent]
 agent_patterns = ["explore"]
-allow_resume = true
 
 [metadata]
 project = "test-project"
@@ -1046,12 +1037,8 @@ project = "test-project"
         assert!(dispatch_rule.is_some());
 
         match dispatch_rule.unwrap() {
-            ToolRule::DispatchAgent {
-                agent_patterns,
-                allow_resume,
-            } => {
+            ToolRule::DispatchAgent { agent_patterns } => {
                 assert_eq!(agent_patterns.as_slice(), ["explore"]);
-                assert!(*allow_resume);
             }
             ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
         }

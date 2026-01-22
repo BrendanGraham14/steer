@@ -109,7 +109,6 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
         DISPATCH_AGENT_TOOL_NAME.to_string(),
         ToolRule::DispatchAgent {
             agent_patterns: vec!["explore".to_string()],
-            allow_resume: true,
         },
     );
 
@@ -152,7 +151,9 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
 mod tests {
     use super::*;
     use crate::config::model::builtin;
-    use crate::session::state::{SessionToolConfig, WorkspaceConfig};
+    use crate::session::state::{SessionToolConfig, ToolRule, WorkspaceConfig};
+    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+    use crate::tools::DISPATCH_AGENT_TOOL_NAME;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -211,5 +212,35 @@ mod tests {
         let updated = apply_primary_agent_to_config(&spec, &config);
         assert_eq!(updated.system_prompt, Some("override prompt".to_string()));
         assert_eq!(updated.tool_config.approval_policy, spec.approval_policy);
+    }
+
+    #[test]
+    fn planner_spec_limits_tools_and_dispatch_agent() {
+        let spec = primary_agent_spec("planner").expect("planner spec");
+
+        match &spec.tool_visibility {
+            ToolVisibility::Whitelist(allowed) => {
+                assert!(allowed.contains(DISPATCH_AGENT_TOOL_NAME));
+                for name in READ_ONLY_TOOL_NAMES {
+                    assert!(allowed.contains(*name));
+                }
+                assert_eq!(allowed.len(), READ_ONLY_TOOL_NAMES.len() + 1);
+            }
+            other => panic!("Unexpected tool visibility: {other:?}"),
+        }
+
+        let rule = spec
+            .approval_policy
+            .preapproved
+            .per_tool
+            .get(DISPATCH_AGENT_TOOL_NAME)
+            .expect("dispatch agent rule");
+
+        match rule {
+            ToolRule::DispatchAgent { agent_patterns } => {
+                assert_eq!(agent_patterns.as_slice(), ["explore"]);
+            }
+            ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
+        }
     }
 }
