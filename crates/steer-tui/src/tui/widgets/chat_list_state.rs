@@ -142,3 +142,27 @@ impl ChatListState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scroll_noop_at_bottom() {
+        let mut state = ChatListState::new();
+        state.total_content_height = 100;
+        state.last_viewport_height = 10;
+        state.offset = 90;
+        state.user_scrolled = false;
+
+        let moved_down = state.scroll_down(5);
+        assert!(!moved_down, "Scrolling down at bottom should be a no-op");
+        assert_eq!(state.offset, 90, "Offset should remain at max");
+        assert!(!state.user_scrolled, "No-op scroll should not mark user_scrolled");
+
+        let moved_up = state.scroll_up(1);
+        assert!(moved_up, "Scrolling up should move");
+        assert_eq!(state.offset, 89, "Offset should decrease");
+        assert!(state.user_scrolled, "User scroll should be tracked when moving");
+    }
+}

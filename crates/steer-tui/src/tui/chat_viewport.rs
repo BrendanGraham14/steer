@@ -1351,6 +1351,124 @@ mod tests {
     }
 
     #[test]
+    fn test_gap_rows_in_measure_visible_rows() {
+        let mut viewport = ChatViewport::new();
+        let theme = Theme::default();
+
+        let messages = vec![
+            create_assistant_message("First message", "msg1"),
+            create_assistant_message("Second message", "msg2"),
+        ];
+
+        let area = Rect::new(0, 0, 80, 3);
+        let chat_store = create_test_chat_store();
+
+        viewport.rebuild(
+            &messages.iter().collect(),
+            area.width,
+            ViewMode::Compact,
+            &theme,
+            &chat_store,
+            None,
+        );
+
+        let _rows = viewport.measure_visible_rows(area, &theme);
+        let first_height = viewport.items[0]
+            .cached_heights
+            .get_height(ViewMode::Compact)
+            .unwrap_or(0);
+
+        viewport.state.offset = first_height;
+        let rows = viewport.measure_visible_rows(area, &theme);
+
+        assert!(
+            rows.iter().any(|row| matches!(row.kind, RowKind::Gap)),
+            "Gap rows should be represented when offset is inside spacing"
+        );
+    }
+
+    #[test]
+    fn test_total_height_includes_spacing() {
+        let mut viewport = ChatViewport::new();
+        let theme = Theme::default();
+
+        let messages = vec![
+            create_assistant_message("First message", "msg1"),
+            create_assistant_message("Second message", "msg2"),
+        ];
+
+        let area = Rect::new(0, 0, 80, 10);
+        let chat_store = create_test_chat_store();
+
+        viewport.rebuild(
+            &messages.iter().collect(),
+            area.width,
+            ViewMode::Compact,
+            &theme,
+            &chat_store,
+            None,
+        );
+
+        let _rows = viewport.measure_visible_rows(area, &theme);
+        let h1 = viewport.items[0]
+            .cached_heights
+            .get_height(ViewMode::Compact)
+            .unwrap_or(0);
+        let h2 = viewport.items[1]
+            .cached_heights
+            .get_height(ViewMode::Compact)
+            .unwrap_or(0);
+        let spacing = theme.message_spacing() as usize;
+
+        assert_eq!(
+            viewport.state.total_content_height,
+            h1.saturating_add(spacing).saturating_add(h2),
+            "Total height should include spacing between message rows"
+        );
+    }
+
+    #[test]
+    fn test_scroll_to_item_out_of_range_clamps() {
+        let mut viewport = ChatViewport::new();
+        let theme = Theme::default();
+
+        let large_content = (0..20)
+            .map(|i| format!("Line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let messages = vec![
+            create_assistant_message(&large_content, "msg1"),
+            create_assistant_message("Second message", "msg2"),
+        ];
+
+        let area = Rect::new(0, 0, 80, 5);
+        let chat_store = create_test_chat_store();
+
+        viewport.rebuild(
+            &messages.iter().collect(),
+            area.width,
+            ViewMode::Compact,
+            &theme,
+            &chat_store,
+            None,
+        );
+
+        let _rows = viewport.measure_visible_rows(area, &theme);
+        let max_offset = viewport
+            .state
+            .total_content_height
+            .saturating_sub(area.height as usize);
+
+        viewport.state.scroll_to_item(usize::MAX);
+        let _rows = viewport.measure_visible_rows(area, &theme);
+
+        assert!(
+            viewport.state.offset <= max_offset,
+            "Offset should stay clamped even for invalid item targets"
+        );
+    }
+
+    #[test]
     fn test_build_lineage_set_basic_chain() {
         let mut store = create_test_chat_store();
 
