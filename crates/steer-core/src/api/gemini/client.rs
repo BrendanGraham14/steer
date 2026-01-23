@@ -579,9 +579,10 @@ fn convert_tools(tools: Vec<ToolSchema>) -> Vec<GeminiTool> {
     let function_declarations = tools
         .into_iter()
         .map(|tool| {
+            let summary = tool.input_schema.summary();
+
             // Simplify properties schema for Gemini using the helper function
-            let simplified_properties = tool
-                .input_schema
+            let simplified_properties = summary
                 .properties
                 .iter()
                 .map(|(key, value)| {
@@ -594,9 +595,9 @@ fn convert_tools(tools: Vec<ToolSchema>) -> Vec<GeminiTool> {
 
             // Construct the parameters object using the specific struct
             let parameters = GeminiParameterSchema {
-                schema_type: tool.input_schema.schema_type, // Use schema_type field (usually "object")
+                schema_type: summary.schema_type, // Use schema_type field (usually "object")
                 properties: simplified_properties,          // Use simplified properties
-                required: tool.input_schema.required,       // Use required field
+                required: summary.required,                 // Use required field
             };
 
             GeminiFunctionDeclaration {
@@ -1275,9 +1276,8 @@ mod tests {
             name: "create_issue".to_string(),
             display_name: "Create Issue".to_string(),
             description: "Create an issue".to_string(),
-            input_schema: InputSchema {
-                schema_type: "object".to_string(),
-                properties: {
+            input_schema: InputSchema::object(
+                {
                     let mut props = serde_json::Map::new();
                     props.insert(
                         "title".to_string(),
@@ -1304,8 +1304,8 @@ mod tests {
                     );
                     props
                 },
-                required: vec!["title".to_string()],
-            },
+                vec!["title".to_string()],
+            ),
         };
 
         let expected_tools = vec![GeminiTool {

@@ -86,11 +86,7 @@ impl Client {
                     function: OpenAIFunction {
                         name: tool.name,
                         description: tool.description,
-                        parameters: serde_json::json!({
-                            "type": tool.input_schema.schema_type,
-                            "properties": tool.input_schema.properties,
-                            "required": tool.input_schema.required
-                        }),
+                        parameters: tool.input_schema.as_value().clone(),
                     },
                 })
                 .collect()
@@ -370,11 +366,7 @@ impl Client {
                     function: OpenAIFunction {
                         name: tool.name,
                         description: tool.description,
-                        parameters: serde_json::json!({
-                            "type": tool.input_schema.schema_type,
-                            "properties": tool.input_schema.properties,
-                            "required": tool.input_schema.required
-                        }),
+                        parameters: tool.input_schema.as_value().clone(),
                     },
                 })
                 .collect()

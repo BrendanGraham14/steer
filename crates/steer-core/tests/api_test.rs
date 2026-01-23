@@ -704,9 +704,8 @@ async fn test_gemini_api_complex_tool_schema() {
         name: "complex_operation".to_string(),
         display_name: "Complex Operation".to_string(),
         description: "Performs a complex operation with nested parameters.".to_string(),
-        input_schema: InputSchema {
-            schema_type: "object".to_string(),
-            properties: serde_json::map::Map::from_iter(vec![
+        input_schema: InputSchema::object(
+            serde_json::map::Map::from_iter(vec![
                 (
                     "config".to_string(),
                     json!({
@@ -734,8 +733,8 @@ async fn test_gemini_api_complex_tool_schema() {
                     }),
                 ),
             ]),
-            required: vec!["config".to_string(), "items".to_string()],
-        },
+            vec!["config".to_string(), "items".to_string()],
+        ),
     };
 
     let timestamp = Message::current_timestamp();
@@ -958,14 +957,13 @@ async fn test_gemini_api_with_multiple_tool_responses() {
         name: "get_weather".to_string(),
         display_name: "Get Weather".to_string(),
         description: "Gets the weather for a location".to_string(),
-        input_schema: InputSchema {
-            schema_type: "object".to_string(),
-            properties: serde_json::map::Map::from_iter(vec![(
+        input_schema: InputSchema::object(
+            serde_json::map::Map::from_iter(vec![(
                 "location".to_string(),
                 json!({"type": "string", "description": "The location to get weather for"}),
             )]),
-            required: vec!["location".to_string()],
-        },
+            vec!["location".to_string()],
+        ),
     };
     // Get available tools
     let mut tools = default_tool_schemas().await;

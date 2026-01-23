@@ -79,6 +79,7 @@ tokio-stream = "0.1"
 gethostname = "0.5"
 lazy_static = "1.5.0"
 schemars = { version = "1.0" }
+jsonschema = "0.17"
 fuzzy-matcher = "0.3.7"
 nix = { version = "0.30.1", features = ["signal"] }
 sqlx = { version = "0.8.6", features = [

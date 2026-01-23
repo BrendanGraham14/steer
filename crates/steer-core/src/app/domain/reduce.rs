@@ -459,119 +459,34 @@ fn validate_tool_call(
         return Ok(());
     };
 
-    if schema.input_schema.schema_type != "object" {
-        return Ok(());
-    }
+    validate_against_json_schema(
+        &tool_call.name,
+        schema.input_schema.as_value(),
+        &tool_call.parameters,
+    )
+}
 
-    let params = tool_call.parameters.as_object().ok_or_else(|| {
-        ToolError::invalid_params(
-            tool_call.name.clone(),
-            "Malformed tool call: parameters must be an object",
-        )
+fn validate_against_json_schema(
+    tool_name: &str,
+    schema: &Value,
+    params: &Value,
+) -> Result<(), ToolError> {
+    let validator = jsonschema::JSONSchema::compile(schema).map_err(|e| {
+        ToolError::InternalError(format!(
+            "Invalid schema for tool '{tool_name}': {e}"
+        ))
     })?;
 
-    let missing_required: Vec<String> = schema
-        .input_schema
-        .required
-        .iter()
-        .filter(|key| !params.contains_key(*key))
-        .cloned()
-        .collect();
-
-    if !missing_required.is_empty() {
-        return Err(ToolError::invalid_params(
-            tool_call.name.clone(),
-            format!(
-                "Malformed tool call: missing required parameter(s): {}",
-                missing_required.join(", ")
-            ),
-        ));
-    }
-
-    for key in &schema.input_schema.required {
-        let Some(value) = params.get(key) else {
-            continue;
-        };
-        let Some(expected_types) = schema_property_types(&schema.input_schema, key) else {
-            continue;
-        };
-        if expected_types
-            .iter()
-            .any(|expected| value_matches_type(value, expected))
-        {
-            continue;
-        }
-
-        return Err(ToolError::invalid_params(
-            tool_call.name.clone(),
-            format!(
-                "Malformed tool call: parameter '{key}' has invalid type (expected {}, got {})",
-                expected_types.join(" or "),
-                json_value_type(value)
-            ),
-        ));
+    if let Err(errors) = validator.validate(params) {
+        let message = errors
+            .into_iter()
+            .map(|error| error.to_string())
+            .next()
+            .unwrap_or_else(|| "Parameters do not match schema".to_string());
+        return Err(ToolError::invalid_params(tool_name.to_string(), message));
     }
 
     Ok(())
-}
-
-fn schema_property_types(
-    input_schema: &steer_tools::InputSchema,
-    key: &str,
-) -> Option<Vec<String>> {
-    let property = input_schema.properties.get(key)?;
-    let property = property.as_object()?;
-    let type_value = property.get("type")?;
-
-    match type_value {
-        Value::String(value) => Some(vec![value.clone()]),
-        Value::Array(values) => {
-            let types = values
-                .iter()
-                .filter_map(|value| value.as_str().map(|t| t.to_string()))
-                .collect::<Vec<_>>();
-            if types.is_empty() {
-                None
-            } else {
-                Some(types)
-            }
-        }
-        _ => None,
-    }
-}
-
-fn value_matches_type(value: &Value, expected: &str) -> bool {
-    match expected {
-        "string" => value.is_string(),
-        "number" => value.is_number(),
-        "integer" => {
-            value.as_i64().is_some()
-                || value.as_u64().is_some()
-                || value.as_f64().is_some_and(|v| v.fract() == 0.0)
-        }
-        "boolean" => value.is_boolean(),
-        "object" => value.is_object(),
-        "array" => value.is_array(),
-        "null" => value.is_null(),
-        _ => true,
-    }
-}
-
-fn json_value_type(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(n) => {
-            if n.is_i64() || n.is_u64() {
-                "integer"
-            } else {
-                "number"
-            }
-        }
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
 }
 
 fn fail_tool_call_without_execution(
@@ -1772,6 +1687,7 @@ mod tests {
     };
     use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
+    use schemars::schema_for;
     use serde_json::json;
     use std::collections::HashSet;
     use steer_tools::{InputSchema, ToolCall, ToolError, ToolSchema};
@@ -1785,11 +1701,7 @@ mod tests {
             name: name.to_string(),
             display_name: name.to_string(),
             description: String::new(),
-            input_schema: InputSchema {
-                properties: Default::default(),
-                required: Vec::new(),
-                schema_type: "object".to_string(),
-            },
+            input_schema: InputSchema::empty_object(),
         }
     }
 
@@ -2167,11 +2079,7 @@ mod tests {
             name: "test_tool".to_string(),
             display_name: "test_tool".to_string(),
             description: String::new(),
-            input_schema: InputSchema {
-                properties,
-                required: vec!["command".to_string()],
-                schema_type: "object".to_string(),
-            },
+            input_schema: InputSchema::object(properties, vec!["command".to_string()]),
         });
 
         let tool_call = ToolCall {
@@ -2272,6 +2180,79 @@ mod tests {
         );
 
         assert_eq!(state.approval_queue.len(), 1);
+    }
+
+    #[test]
+    fn test_dispatch_agent_missing_mode_auto_denies() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let input_schema: InputSchema =
+            schema_for!(steer_tools::tools::dispatch_agent::DispatchAgentParams).into();
+        state.tools.push(ToolSchema {
+            name: DISPATCH_AGENT_TOOL_NAME.to_string(),
+            display_name: "Dispatch Agent".to_string(),
+            description: String::new(),
+            input_schema,
+        });
+
+        let tool_call = ToolCall {
+            id: "tc_dispatch".to_string(),
+            name: DISPATCH_AGENT_TOOL_NAME.to_string(),
+            parameters: json!({ "prompt": "hello world" }),
+        };
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolApprovalRequested {
+                session_id,
+                request_id: RequestId::new(),
+                tool_call,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolCallFailed { .. },
+                ..
+            }
+        )));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolMessageAdded { .. },
+                ..
+            }
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestUserApproval { .. }))
+        );
+        assert!(state.pending_approval.is_none());
+        assert!(state.approval_queue.is_empty());
+
+        match &state.message_graph.messages[0].data {
+            MessageData::Tool { result, .. } => match result {
+                ToolResult::Error(error) => {
+                    assert!(matches!(error, ToolError::InvalidParams { .. }))
+                }
+                _ => panic!("expected invalid params tool error"),
+            },
+            _ => panic!("expected tool message"),
+        }
     }
 
     #[test]

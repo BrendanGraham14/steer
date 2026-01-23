@@ -2079,11 +2079,7 @@ pub(crate) fn proto_to_mcp_server_state(
                     name: name.clone(),
                     display_name: name,
                     description: String::new(),
-                    input_schema: steer_tools::InputSchema {
-                        properties: Default::default(),
-                        required: Vec::new(),
-                        schema_type: "object".to_string(),
-                    },
+                    input_schema: steer_tools::InputSchema::empty_object(),
                 })
                 .collect();
             Ok(McpServerState::Connected { tools })

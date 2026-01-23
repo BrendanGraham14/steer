@@ -108,15 +108,10 @@ impl Client {
             tools
                 .into_iter()
                 .map(|tool| ResponsesFunctionTool {
+                    parameters: tool.input_schema.as_value().clone(),
                     tool_type: "function".to_string(),
                     name: tool.name,
                     description: Some(tool.description),
-                    parameters: serde_json::json!({
-                        "type": tool.input_schema.schema_type,
-                        "properties": tool.input_schema.properties,
-                        "required": tool.input_schema.required,
-                        "additionalProperties": false
-                    }),
                     strict: false,
                 })
                 .collect()
@@ -1234,9 +1229,8 @@ mod tests {
             name: "get_weather".to_string(),
             display_name: "Get Weather".to_string(),
             description: "Get the weather".to_string(),
-            input_schema: steer_tools::InputSchema {
-                schema_type: "object".to_string(),
-                properties: serde_json::json!({
+            input_schema: steer_tools::InputSchema::object(
+                serde_json::json!({
                     "location": {
                         "type": "string",
                         "description": "City name"
@@ -1245,8 +1239,8 @@ mod tests {
                 .as_object()
                 .unwrap()
                 .clone(),
-                required: vec!["location".to_string()],
-            },
+                vec!["location".to_string()],
+            ),
         }];
 
         let messages = vec![Message {
@@ -1284,8 +1278,7 @@ mod tests {
     fn test_responses_api_dispatch_agent_schema_includes_mode() {
         let client = Client::new("test_key".to_string());
 
-        let input_schema: steer_tools::InputSchema =
-            schema_for!(DispatchAgentParams).into();
+        let input_schema: steer_tools::InputSchema = schema_for!(DispatchAgentParams).into();
         let tools = vec![ToolSchema {
             name: "dispatch_agent".to_string(),
             display_name: "Dispatch Agent".to_string(),
@@ -1308,26 +1301,17 @@ mod tests {
         let request = client.build_request(&model_id, messages, None, Some(tools), None);
 
         let tool = request.tools.expect("expected tools").into_iter().next().unwrap();
-        let properties = tool
-            .parameters
-            .get("properties")
-            .and_then(|v| v.as_object())
-            .expect("properties should be an object");
+        let summary = steer_tools::InputSchema::from(tool.parameters.clone()).summary();
 
-        assert!(properties.contains_key("prompt"));
-        assert!(properties.contains_key("mode"));
-        assert!(properties.contains_key("workspace"));
-        assert!(properties.contains_key("session_id"));
+        assert!(summary.properties.contains_key("prompt"));
+        assert!(summary.properties.contains_key("mode"));
+        assert!(summary.properties.contains_key("workspace"));
+        assert!(summary.properties.contains_key("session_id"));
+        assert!(summary.required.contains(&"prompt".to_string()));
+        assert!(summary.required.contains(&"mode".to_string()));
 
-        let required = tool
-            .parameters
-            .get("required")
-            .and_then(|v| v.as_array())
-            .expect("required should be an array");
-        assert!(required.contains(&serde_json::Value::String("prompt".to_string())));
-        assert!(required.contains(&serde_json::Value::String("mode".to_string())));
-
-        let mode_schema = properties
+        let mode_schema = summary
+            .properties
             .get("mode")
             .and_then(|v| v.get("enum"))
             .and_then(|v| v.as_array())

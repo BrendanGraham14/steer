@@ -287,25 +287,7 @@ impl McpBackend {
 
         // Convert Arc<Map> to InputSchema
         let properties = (*tool.input_schema).clone();
-        let required = properties
-            .get("required")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let input_schema = InputSchema {
-            properties: properties
-                .get("properties")
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default(),
-            required,
-            schema_type: "object".to_string(),
-        };
+        let input_schema = InputSchema::from(serde_json::Value::Object(properties.clone()));
 
         ToolSchema {
             name: format!("mcp__{}__{}", self.server_name, tool.name),

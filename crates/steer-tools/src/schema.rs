@@ -6,44 +6,83 @@ use schemars::JsonSchema;
 use crate::error::ToolExecutionError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputSchema {
-    pub properties: serde_json::Map<String, Value>,
-    pub required: Vec<String>,
-    #[serde(rename = "type")]
-    pub schema_type: String,
+#[serde(transparent)]
+pub struct InputSchema(Value);
+
+impl InputSchema {
+    pub fn new(schema: Value) -> Self {
+        Self(schema)
+    }
+
+    pub fn as_value(&self) -> &Value {
+        &self.0
+    }
+
+    pub fn into_value(self) -> Value {
+        self.0
+    }
+
+    pub fn summary(&self) -> InputSchemaSummary {
+        InputSchemaSummary::from_value(&self.0)
+    }
+
+    pub fn object(properties: serde_json::Map<String, Value>, required: Vec<String>) -> Self {
+        let mut schema = serde_json::Map::new();
+        schema.insert("type".to_string(), Value::String("object".to_string()));
+        schema.insert("properties".to_string(), Value::Object(properties));
+        if !required.is_empty() {
+            let required_values = required
+                .into_iter()
+                .map(Value::String)
+                .collect::<Vec<_>>();
+            schema.insert("required".to_string(), Value::Array(required_values));
+        }
+        Self(Value::Object(schema))
+    }
+
+    pub fn empty_object() -> Self {
+        Self::object(Default::default(), Vec::new())
+    }
+}
+
+impl From<Value> for InputSchema {
+    fn from(schema: Value) -> Self {
+        Self(schema)
+    }
 }
 
 impl From<schemars::Schema> for InputSchema {
     fn from(schema: schemars::Schema) -> Self {
         let schema_value =
             serde_json::to_value(&schema).unwrap_or_else(|_| serde_json::Value::Null);
-        let summary = SchemaSummary::from_value(&schema_value);
-        Self {
-            properties: summary.properties,
-            required: summary.required,
-            schema_type: summary.schema_type,
-        }
+        Self(schema_value)
     }
 }
 
-struct SchemaSummary {
-    properties: serde_json::Map<String, Value>,
-    required: Vec<String>,
-    schema_type: String,
+#[derive(Debug, Clone)]
+pub struct InputSchemaSummary {
+    pub properties: serde_json::Map<String, Value>,
+    pub required: Vec<String>,
+    pub schema_type: String,
 }
 
-impl SchemaSummary {
+impl InputSchemaSummary {
     fn from_value(schema: &Value) -> Self {
         let mut properties = serde_json::Map::new();
         let mut required = std::collections::BTreeSet::new();
-        let schema_type = schema
+
+        Self::merge_schema(schema, &mut properties, &mut required);
+
+        let mut schema_type = schema
             .as_object()
             .and_then(|obj| obj.get("type"))
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
 
-        Self::merge_schema(schema, &mut properties, &mut required);
+        if schema_type.is_empty() && (!properties.is_empty() || !required.is_empty()) {
+            schema_type = "object".to_string();
+        }
 
         Self {
             properties,
@@ -77,7 +116,7 @@ impl SchemaSummary {
 
         if let Some(all_of) = obj.get("allOf").and_then(|v| v.as_array()) {
             for sub in all_of {
-                let summary = SchemaSummary::from_value(sub);
+                let summary = InputSchemaSummary::from_value(sub);
                 for (key, value) in summary.properties {
                     merge_property(properties, &key, &value);
                 }
@@ -102,7 +141,7 @@ impl SchemaSummary {
         let mut intersection: Option<std::collections::BTreeSet<String>> = None;
 
         for sub in subschemas {
-            let summary = SchemaSummary::from_value(sub);
+            let summary = InputSchemaSummary::from_value(sub);
             for (key, value) in summary.properties {
                 merge_property(properties, &key, &value);
             }
@@ -190,15 +229,17 @@ mod tests {
     fn dispatch_agent_schema_includes_mode() {
         let schema = schema_for!(crate::tools::dispatch_agent::DispatchAgentParams);
         let input_schema: InputSchema = schema.into();
+        let summary = input_schema.summary();
 
-        assert!(input_schema.properties.contains_key("prompt"));
-        assert!(input_schema.properties.contains_key("mode"));
-        assert!(input_schema.properties.contains_key("workspace"));
-        assert!(input_schema.properties.contains_key("session_id"));
-        assert!(input_schema.required.contains(&"prompt".to_string()));
-        assert!(input_schema.required.contains(&"mode".to_string()));
+        assert!(summary.properties.contains_key("prompt"));
+        assert!(summary.properties.contains_key("mode"));
+        assert!(summary.properties.contains_key("workspace"));
+        assert!(summary.properties.contains_key("session_id"));
+        assert!(summary.required.contains(&"prompt".to_string()));
+        assert!(summary.required.contains(&"mode".to_string()));
+        assert_eq!(summary.schema_type, "object");
 
-        let mode_schema = input_schema
+        let mode_schema = summary
             .properties
             .get("mode")
             .and_then(|v| v.get("enum"))
