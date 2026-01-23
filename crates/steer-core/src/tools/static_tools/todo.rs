@@ -1,11 +1,9 @@
 use async_trait::async_trait;
-use std::fs;
-use std::path::PathBuf;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::{TodoListResult, TodoWriteResult};
-use steer_tools::tools::todo::{TodoItem, TodoWriteFileOperation};
+use steer_tools::tools::todo::TodoWriteFileOperation;
 use steer_tools::tools::todo::read::{TodoReadError, TodoReadParams, TodoReadToolSpec};
 use steer_tools::tools::todo::write::{TodoWriteError, TodoWriteParams, TodoWriteToolSpec};
 
@@ -71,11 +69,18 @@ impl StaticTool for TodoReadTool {
             return Err(StaticToolError::Cancelled);
         }
 
-        let todos = read_todos().map_err(|e| {
-            StaticToolError::execution(TodoReadError::Io {
-                message: e.to_string(),
-            })
-        })?;
+        let todos = ctx
+            .services
+            .event_store
+            .load_todos(ctx.session_id)
+            .await
+            .map_err(|e| {
+                StaticToolError::execution(TodoReadError::Io {
+                    message: e.to_string(),
+                })
+            })?
+            .unwrap_or_default();
+
         Ok(TodoListResult { todos })
     }
 }
@@ -101,67 +106,36 @@ impl StaticTool for TodoWriteTool {
             return Err(StaticToolError::Cancelled);
         }
 
-        let operation = write_todos(&params.todos).map_err(|e| {
-            StaticToolError::execution(TodoWriteError::Io {
-                message: e.to_string(),
-            })
-        })?;
+        let existing = ctx
+            .services
+            .event_store
+            .load_todos(ctx.session_id)
+            .await
+            .map_err(|e| {
+                StaticToolError::execution(TodoWriteError::Io {
+                    message: e.to_string(),
+                })
+            })?;
+
+        ctx.services
+            .event_store
+            .save_todos(ctx.session_id, &params.todos)
+            .await
+            .map_err(|e| {
+                StaticToolError::execution(TodoWriteError::Io {
+                    message: e.to_string(),
+                })
+            })?;
+
+        let operation = if existing.is_some() {
+            TodoWriteFileOperation::Modified
+        } else {
+            TodoWriteFileOperation::Created
+        };
 
         Ok(TodoWriteResult {
             todos: params.todos,
             operation,
         })
     }
-}
-
-fn get_todos_dir() -> Result<PathBuf, std::io::Error> {
-    let home_dir = dirs::home_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "Home directory not found")
-    })?;
-    let todos_dir = home_dir.join(".steer").join("todos");
-
-    if !todos_dir.exists() {
-        fs::create_dir_all(&todos_dir)?;
-    }
-
-    Ok(todos_dir)
-}
-
-fn get_todo_file_path() -> Result<PathBuf, std::io::Error> {
-    let workspace_id = match std::env::var("STEER_WORKSPACE_ID") {
-        Ok(id) => id,
-        Err(_) => {
-            let current_dir = std::env::current_dir()?;
-            hex::encode(current_dir.to_string_lossy().as_bytes())
-        }
-    };
-    let dir = get_todos_dir()?;
-    Ok(dir.join(format!("{workspace_id}.json")))
-}
-
-fn read_todos() -> Result<Vec<TodoItem>, std::io::Error> {
-    let file_path = get_todo_file_path()?;
-
-    if !file_path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let content = fs::read_to_string(&file_path)?;
-    serde_json::from_str(&content)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-}
-
-fn write_todos(todos: &[TodoItem]) -> Result<TodoWriteFileOperation, std::io::Error> {
-    let file_path = get_todo_file_path()?;
-    let file_existed = file_path.exists();
-
-    let content = serde_json::to_string_pretty(todos)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    fs::write(&file_path, content)?;
-
-    Ok(if file_existed {
-        TodoWriteFileOperation::Modified
-    } else {
-        TodoWriteFileOperation::Created
-    })
 }

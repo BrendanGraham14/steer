@@ -14,6 +14,7 @@ use super::event_store::{EventStore, EventStoreError};
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::types::SessionId;
 use crate::session::state::SessionConfig;
+use steer_tools::tools::todo::TodoItem;
 
 pub struct SqliteEventStore {
     pool: SqlitePool,
@@ -118,6 +119,22 @@ impl SqliteEventStore {
         .await
         .map_err(|e| EventStoreError::Migration {
             message: format!("Failed to create index: {e}"),
+        })?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS session_todos (
+                session_id TEXT PRIMARY KEY,
+                todos_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (session_id) REFERENCES domain_sessions(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| EventStoreError::Migration {
+            message: format!("Failed to create todos table: {e}"),
         })?;
 
         self.migrate_add_catalog_columns().await?;
@@ -378,6 +395,59 @@ impl EventStore for SqliteEventStore {
 
         Ok(session_ids)
     }
+
+    async fn load_todos(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<Vec<TodoItem>>, EventStoreError> {
+        let session_id_str = session_id.0.to_string();
+
+        let row = sqlx::query("SELECT todos_json FROM session_todos WHERE session_id = ?1")
+            .bind(&session_id_str)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| EventStoreError::database(format!("Failed to load todos: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let todos_json: String = row
+            .try_get("todos_json")
+            .map_err(|e| EventStoreError::database(format!("Failed to read todos row: {e}")))?;
+
+        let todos: Vec<TodoItem> = serde_json::from_str(&todos_json)
+            .map_err(|e| EventStoreError::serialization(format!("Invalid todos JSON: {e}")))?;
+
+        Ok(Some(todos))
+    }
+
+    async fn save_todos(
+        &self,
+        session_id: SessionId,
+        todos: &[TodoItem],
+    ) -> Result<(), EventStoreError> {
+        let session_id_str = session_id.0.to_string();
+        let todos_json = serde_json::to_string(todos)
+            .map_err(|e| EventStoreError::serialization(format!("Failed to serialize todos: {e}")))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO session_todos (session_id, todos_json, updated_at)
+            VALUES (?1, ?2, datetime('now'))
+            ON CONFLICT(session_id) DO UPDATE SET
+                todos_json = excluded.todos_json,
+                updated_at = datetime('now')
+            "#,
+        )
+        .bind(&session_id_str)
+        .bind(&todos_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| EventStoreError::database(format!("Failed to save todos: {e}")))?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -577,7 +647,25 @@ mod tests {
     use crate::app::domain::event::SessionEvent;
     use crate::config::model::builtin;
     use crate::session::state::{SessionConfig, ToolVisibility};
+    use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
     use std::collections::{HashMap, HashSet};
+
+    fn sample_todos() -> Vec<TodoItem> {
+        vec![
+            TodoItem {
+                content: "first".to_string(),
+                status: TodoStatus::Pending,
+                priority: TodoPriority::High,
+                id: "todo-1".to_string(),
+            },
+            TodoItem {
+                content: "second".to_string(),
+                status: TodoStatus::InProgress,
+                priority: TodoPriority::Low,
+                id: "todo-2".to_string(),
+            },
+        ]
+    }
 
     #[tokio::test]
     async fn test_sqlite_store_append_and_load() {
@@ -601,6 +689,44 @@ mod tests {
             SessionEvent::Error { message } => assert_eq!(message, "test error"),
             _ => panic!("Expected Error event"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_todos_roundtrip() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+        let todos = sample_todos();
+
+        store.create_session(session_id).await.unwrap();
+        store.save_todos(session_id, &todos).await.unwrap();
+
+        let loaded = store.load_todos(session_id).await.unwrap();
+        assert_eq!(loaded, Some(todos));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_todos_missing_is_none() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let loaded = store.load_todos(session_id).await.unwrap();
+        assert_eq!(loaded, None);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_todos_delete_session_clears() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+        let todos = sample_todos();
+
+        store.create_session(session_id).await.unwrap();
+        store.save_todos(session_id, &todos).await.unwrap();
+        store.delete_session(session_id).await.unwrap();
+
+        let loaded = store.load_todos(session_id).await.unwrap();
+        assert_eq!(loaded, None);
     }
 
     #[tokio::test]

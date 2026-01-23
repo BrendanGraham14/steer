@@ -25,7 +25,7 @@ pub enum TodoPriority {
     Low = 2,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, JsonSchema, Hash)]
+#[derive(Deserialize, Serialize, Debug, Clone, Eq, PartialEq, JsonSchema, Hash)]
 pub struct TodoItem {
     pub content: String,
     pub status: TodoStatus,

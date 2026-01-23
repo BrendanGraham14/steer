@@ -5,6 +5,7 @@ use thiserror::Error;
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::types::SessionId;
 use crate::session::state::SessionConfig;
+use steer_tools::tools::todo::TodoItem;
 
 use super::catalog::{SessionCatalog, SessionCatalogError, SessionFilter, SessionSummary};
 
@@ -74,11 +75,23 @@ pub trait EventStore: Send + Sync {
     async fn delete_session(&self, session_id: SessionId) -> Result<(), EventStoreError>;
 
     async fn list_session_ids(&self) -> Result<Vec<SessionId>, EventStoreError>;
+
+    async fn load_todos(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<Vec<TodoItem>>, EventStoreError>;
+
+    async fn save_todos(
+        &self,
+        session_id: SessionId,
+        todos: &[TodoItem],
+    ) -> Result<(), EventStoreError>;
 }
 
 pub struct InMemoryEventStore {
     events: std::sync::RwLock<std::collections::HashMap<SessionId, Vec<(u64, SessionEvent)>>>,
     catalog: std::sync::RwLock<std::collections::HashMap<SessionId, InMemoryCatalogEntry>>,
+    todos: std::sync::RwLock<std::collections::HashMap<SessionId, Vec<TodoItem>>>,
 }
 
 struct InMemoryCatalogEntry {
@@ -94,6 +107,7 @@ impl InMemoryEventStore {
         Self {
             events: std::sync::RwLock::new(std::collections::HashMap::new()),
             catalog: std::sync::RwLock::new(std::collections::HashMap::new()),
+            todos: std::sync::RwLock::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -192,12 +206,34 @@ impl EventStore for InMemoryEventStore {
 
         let mut catalog = self.catalog.write().unwrap();
         catalog.remove(&session_id);
+        drop(catalog);
+
+        let mut todos = self.todos.write().unwrap();
+        todos.remove(&session_id);
         Ok(())
     }
 
     async fn list_session_ids(&self) -> Result<Vec<SessionId>, EventStoreError> {
         let events = self.events.read().unwrap();
         Ok(events.keys().cloned().collect())
+    }
+
+    async fn load_todos(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<Vec<TodoItem>>, EventStoreError> {
+        let todos = self.todos.read().unwrap();
+        Ok(todos.get(&session_id).cloned())
+    }
+
+    async fn save_todos(
+        &self,
+        session_id: SessionId,
+        todos: &[TodoItem],
+    ) -> Result<(), EventStoreError> {
+        let mut store = self.todos.write().unwrap();
+        store.insert(session_id, todos.to_vec());
+        Ok(())
     }
 }
 
@@ -297,7 +333,25 @@ mod tests {
     use crate::app::domain::event::SessionEvent;
     use crate::config::model::builtin;
     use crate::session::state::SessionConfig;
+    use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
     use std::collections::HashMap;
+
+    fn sample_todos() -> Vec<TodoItem> {
+        vec![
+            TodoItem {
+                content: "first".to_string(),
+                status: TodoStatus::Pending,
+                priority: TodoPriority::High,
+                id: "todo-1".to_string(),
+            },
+            TodoItem {
+                content: "second".to_string(),
+                status: TodoStatus::InProgress,
+                priority: TodoPriority::Medium,
+                id: "todo-2".to_string(),
+            },
+        ]
+    }
 
     #[tokio::test]
     async fn test_in_memory_store_append_and_load() {
@@ -316,6 +370,46 @@ mod tests {
         let events = store.load_events(session_id).await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_todos_roundtrip() {
+        let store = InMemoryEventStore::new();
+        let session_id = SessionId::new();
+        let todos = sample_todos();
+
+        store.save_todos(session_id, &todos).await.unwrap();
+
+        let loaded = store.load_todos(session_id).await.unwrap();
+        assert_eq!(loaded, Some(todos));
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_todos_isolation() {
+        let store = InMemoryEventStore::new();
+        let session_a = SessionId::new();
+        let session_b = SessionId::new();
+        let todos = sample_todos();
+
+        store.save_todos(session_a, &todos).await.unwrap();
+
+        let loaded_a = store.load_todos(session_a).await.unwrap();
+        let loaded_b = store.load_todos(session_b).await.unwrap();
+        assert_eq!(loaded_a, Some(todos));
+        assert_eq!(loaded_b, None);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_delete_session_clears_todos() {
+        let store = InMemoryEventStore::new();
+        let session_id = SessionId::new();
+        let todos = sample_todos();
+
+        store.save_todos(session_id, &todos).await.unwrap();
+        store.delete_session(session_id).await.unwrap();
+
+        let loaded = store.load_todos(session_id).await.unwrap();
+        assert_eq!(loaded, None);
     }
 
     #[tokio::test]
