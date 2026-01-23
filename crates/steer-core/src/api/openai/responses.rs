@@ -1176,6 +1176,8 @@ mod tests {
     use crate::workspace::EnvironmentInfo;
 
     use steer_tools::ToolSchema;
+    use steer_tools::tools::dispatch_agent::DispatchAgentParams;
+    use schemars::schema_for;
 
     #[test]
     fn test_responses_api_message_conversion() {
@@ -1276,6 +1278,63 @@ mod tests {
         assert!(!tools[0].strict);
 
         assert!(request.tool_choice.is_some());
+    }
+
+    #[test]
+    fn test_responses_api_dispatch_agent_schema_includes_mode() {
+        let client = Client::new("test_key".to_string());
+
+        let input_schema: steer_tools::InputSchema =
+            schema_for!(DispatchAgentParams).into();
+        let tools = vec![ToolSchema {
+            name: "dispatch_agent".to_string(),
+            display_name: "Dispatch Agent".to_string(),
+            description: "Dispatch agent".to_string(),
+            input_schema,
+        }];
+
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Launch an agent".to_string(),
+                }],
+            },
+            timestamp: 1000,
+            id: "msg1".to_string(),
+            parent_message_id: None,
+        }];
+
+        let model_id = ModelId::new(crate::config::provider::openai(), "gpt-4.1-2025-04-14");
+        let request = client.build_request(&model_id, messages, None, Some(tools), None);
+
+        let tool = request.tools.expect("expected tools").into_iter().next().unwrap();
+        let properties = tool
+            .parameters
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("properties should be an object");
+
+        assert!(properties.contains_key("prompt"));
+        assert!(properties.contains_key("mode"));
+        assert!(properties.contains_key("workspace"));
+        assert!(properties.contains_key("session_id"));
+
+        let required = tool
+            .parameters
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("required should be an array");
+        assert!(required.contains(&serde_json::Value::String("prompt".to_string())));
+        assert!(required.contains(&serde_json::Value::String("mode".to_string())));
+
+        let mode_schema = properties
+            .get("mode")
+            .and_then(|v| v.get("enum"))
+            .and_then(|v| v.as_array())
+            .expect("mode enum should exist");
+
+        assert!(mode_schema.contains(&serde_json::Value::String("new".to_string())));
+        assert!(mode_schema.contains(&serde_json::Value::String("resume".to_string())));
     }
 
     #[test]
