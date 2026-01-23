@@ -136,6 +136,7 @@ You are running Codex inside Steer, an open-source terminal coding assistant.
 - Exec: `{bash_tool}`
 - Web: `{fetch_tool}`
 - Agents: `{dispatch_tool}`
+- Todos: `{todo_read_tool}`, `{todo_write_tool}`
 
 Tool names are case-sensitive; use exact casing.
 
@@ -149,6 +150,9 @@ Tool names are case-sensitive; use exact casing.
 
 ### Search guidance
 - Prefer `{grep_tool}`/`{astgrep_tool}`/`{glob_tool}`/`{ls_tool}` over shelling out to `rg` via `{bash_tool}`.
+
+### Todo guidance
+- Use `{todo_read_tool}`/`{todo_write_tool}` for complex or multi-step tasks; skip them for simple, single-step work unless the user asks.
 "#,
         edit_tool = EDIT_TOOL_NAME,
         todo_write_tool = TODO_WRITE_TOOL_NAME,
