@@ -7,6 +7,7 @@ use crate::agents::default_agent_spec_id;
 use crate::primary_agents::{apply_primary_agent_to_config, default_primary_agent_id, primary_agent_spec};
 use crate::session::state::{BackendConfig, ToolDecision};
 use crate::tools::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams, DispatchAgentTarget};
+use serde_json::Value;
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
 use steer_tools::tools::BASH_TOOL_NAME;
@@ -359,6 +360,18 @@ fn handle_tool_approval_requested(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
+    if let Err(error) = validate_tool_call(state, &tool_call) {
+        let error_message = error.to_string();
+        return fail_tool_call_without_execution(
+            state,
+            session_id,
+            tool_call,
+            error,
+            error_message,
+            "invalid",
+        );
+    }
+
     let decision = get_tool_decision(state, &tool_call);
 
     match decision {
@@ -379,70 +392,16 @@ fn handle_tool_approval_requested(
             });
         }
         ToolDecision::Deny => {
-            let op_id = state
-                .current_operation
-                .as_ref()
-                .map(|o| o.op_id)
-                .expect("Operation should exist");
-            let model = state
-                .operation_models
-                .get(&op_id)
-                .cloned()
-                .expect("Model should exist for operation");
-
-            let tool_result = ToolResult::Error(ToolError::DeniedByPolicy(tool_call.name.clone()));
-            let parent_id = state.message_graph.active_message_id.clone();
-            let tool_message = Message {
-                data: MessageData::Tool {
-                    tool_use_id: tool_call.id.clone(),
-                    result: tool_result.clone(),
-                },
-                timestamp: 0,
-                id: format!("denied_{}", tool_call.id),
-                parent_message_id: parent_id,
-            };
-            state.message_graph.add_message(tool_message.clone());
-
-            effects.push(Effect::EmitEvent {
+            let error = ToolError::DeniedByPolicy(tool_call.name.clone());
+            let tool_name = tool_call.name.clone();
+            effects.extend(fail_tool_call_without_execution(
+                state,
                 session_id,
-                event: SessionEvent::ToolCallFailed {
-                    id: tool_call.id.clone().into(),
-                    name: tool_call.name.clone(),
-                    error: format!("Tool '{}' denied by policy", tool_call.name),
-                    model: model.clone(),
-                },
-            });
-
-            effects.push(Effect::EmitEvent {
-                session_id,
-                event: SessionEvent::ToolMessageAdded {
-                    message: tool_message,
-                },
-            });
-
-            let all_tools_complete = state
-                .current_operation
-                .as_ref()
-                .map(|op| op.pending_tool_calls.is_empty())
-                .unwrap_or(true);
-            let no_pending_approvals =
-                state.pending_approval.is_none() && state.approval_queue.is_empty();
-
-            if all_tools_complete && no_pending_approvals {
-                effects.push(Effect::CallModel {
-                    session_id,
-                    op_id,
-                    model,
-                    messages: state
-                        .message_graph
-                        .get_thread_messages()
-                        .into_iter()
-                        .cloned()
-                        .collect(),
-                    system_context: state.cached_system_context.clone(),
-                    tools: state.tools.clone(),
-                });
-            }
+                tool_call,
+                error,
+                format!("Tool '{}' denied by policy", tool_name),
+                "denied",
+            ));
         }
         ToolDecision::Ask => {
             if state.pending_approval.is_some() {
@@ -469,6 +428,224 @@ fn handle_tool_approval_requested(
                 tool_call,
             });
         }
+    }
+
+    effects
+}
+
+fn validate_tool_call(
+    state: &AppState,
+    tool_call: &steer_tools::ToolCall,
+) -> Result<(), ToolError> {
+    if tool_call.name.trim().is_empty() {
+        return Err(ToolError::invalid_params(
+            "unknown",
+            "Malformed tool call: missing tool name",
+        ));
+    }
+
+    if tool_call.id.trim().is_empty() {
+        return Err(ToolError::invalid_params(
+            tool_call.name.clone(),
+            "Malformed tool call: missing tool call id",
+        ));
+    }
+
+    if state.tools.is_empty() {
+        return Ok(());
+    }
+
+    let Some(schema) = state.tools.iter().find(|s| s.name == tool_call.name) else {
+        return Ok(());
+    };
+
+    if schema.input_schema.schema_type != "object" {
+        return Ok(());
+    }
+
+    let params = tool_call.parameters.as_object().ok_or_else(|| {
+        ToolError::invalid_params(
+            tool_call.name.clone(),
+            "Malformed tool call: parameters must be an object",
+        )
+    })?;
+
+    let missing_required: Vec<String> = schema
+        .input_schema
+        .required
+        .iter()
+        .filter(|key| !params.contains_key(*key))
+        .cloned()
+        .collect();
+
+    if !missing_required.is_empty() {
+        return Err(ToolError::invalid_params(
+            tool_call.name.clone(),
+            format!(
+                "Malformed tool call: missing required parameter(s): {}",
+                missing_required.join(", ")
+            ),
+        ));
+    }
+
+    for key in &schema.input_schema.required {
+        let Some(value) = params.get(key) else {
+            continue;
+        };
+        let Some(expected_types) = schema_property_types(&schema.input_schema, key) else {
+            continue;
+        };
+        if expected_types
+            .iter()
+            .any(|expected| value_matches_type(value, expected))
+        {
+            continue;
+        }
+
+        return Err(ToolError::invalid_params(
+            tool_call.name.clone(),
+            format!(
+                "Malformed tool call: parameter '{key}' has invalid type (expected {}, got {})",
+                expected_types.join(" or "),
+                json_value_type(value)
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+fn schema_property_types(
+    input_schema: &steer_tools::InputSchema,
+    key: &str,
+) -> Option<Vec<String>> {
+    let property = input_schema.properties.get(key)?;
+    let property = property.as_object()?;
+    let type_value = property.get("type")?;
+
+    match type_value {
+        Value::String(value) => Some(vec![value.clone()]),
+        Value::Array(values) => {
+            let types = values
+                .iter()
+                .filter_map(|value| value.as_str().map(|t| t.to_string()))
+                .collect::<Vec<_>>();
+            if types.is_empty() {
+                None
+            } else {
+                Some(types)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn value_matches_type(value: &Value, expected: &str) -> bool {
+    match expected {
+        "string" => value.is_string(),
+        "number" => value.is_number(),
+        "integer" => {
+            value.as_i64().is_some()
+                || value.as_u64().is_some()
+                || value.as_f64().is_some_and(|v| v.fract() == 0.0)
+        }
+        "boolean" => value.is_boolean(),
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "null" => value.is_null(),
+        _ => true,
+    }
+}
+
+fn json_value_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                "integer"
+            } else {
+                "number"
+            }
+        }
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn fail_tool_call_without_execution(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    tool_call: steer_tools::ToolCall,
+    tool_error: ToolError,
+    event_error: String,
+    message_id_prefix: &str,
+) -> Vec<Effect> {
+    let mut effects = Vec::new();
+
+    let op_id = state
+        .current_operation
+        .as_ref()
+        .map(|o| o.op_id)
+        .expect("Operation should exist");
+    let model = state
+        .operation_models
+        .get(&op_id)
+        .cloned()
+        .expect("Model should exist for operation");
+
+    let tool_result = ToolResult::Error(tool_error);
+    let parent_id = state.message_graph.active_message_id.clone();
+    let tool_message = Message {
+        data: MessageData::Tool {
+            tool_use_id: tool_call.id.clone(),
+            result: tool_result.clone(),
+        },
+        timestamp: 0,
+        id: format!("{message_id_prefix}_{}", tool_call.id),
+        parent_message_id: parent_id,
+    };
+    state.message_graph.add_message(tool_message.clone());
+
+    effects.push(Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::ToolCallFailed {
+            id: tool_call.id.clone().into(),
+            name: tool_call.name.clone(),
+            error: event_error,
+            model: model.clone(),
+        },
+    });
+
+    effects.push(Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::ToolMessageAdded {
+            message: tool_message,
+        },
+    });
+
+    let all_tools_complete = state
+        .current_operation
+        .as_ref()
+        .map(|op| op.pending_tool_calls.is_empty())
+        .unwrap_or(true);
+    let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
+
+    if all_tools_complete && no_pending_approvals {
+        effects.push(Effect::CallModel {
+            session_id,
+            op_id,
+            model,
+            messages: state
+                .message_graph
+                .get_thread_messages()
+                .into_iter()
+                .cloned()
+                .collect(),
+            system_context: state.cached_system_context.clone(),
+            tools: state.tools.clone(),
+        });
     }
 
     effects
@@ -1962,6 +2139,90 @@ mod tests {
                     assert!(matches!(error, ToolError::DeniedByPolicy(name) if name == "test_tool"))
                 }
                 _ => panic!("expected denied tool error"),
+            },
+            _ => panic!("expected tool message"),
+        }
+    }
+
+    #[test]
+    fn test_malformed_tool_call_auto_denies() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let mut properties = serde_json::Map::new();
+        properties.insert("command".to_string(), json!({ "type": "string" }));
+
+        state.tools.push(ToolSchema {
+            name: "test_tool".to_string(),
+            display_name: "test_tool".to_string(),
+            description: String::new(),
+            input_schema: InputSchema {
+                properties,
+                required: vec!["command".to_string()],
+                schema_type: "object".to_string(),
+            },
+        });
+
+        let tool_call = ToolCall {
+            id: "tc_1".to_string(),
+            name: "test_tool".to_string(),
+            parameters: json!({}),
+        };
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolApprovalRequested {
+                session_id,
+                request_id: RequestId::new(),
+                tool_call,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolCallFailed { .. },
+                ..
+            }
+        )));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolMessageAdded { .. },
+                ..
+            }
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::ExecuteTool { .. }))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestUserApproval { .. }))
+        );
+        assert!(state.pending_approval.is_none());
+        assert!(state.approval_queue.is_empty());
+        assert_eq!(state.message_graph.messages.len(), 1);
+
+        match &state.message_graph.messages[0].data {
+            MessageData::Tool { result, .. } => match result {
+                ToolResult::Error(error) => {
+                    assert!(matches!(error, ToolError::InvalidParams { .. }))
+                }
+                _ => panic!("expected invalid params tool error"),
             },
             _ => panic!("expected tool message"),
         }
