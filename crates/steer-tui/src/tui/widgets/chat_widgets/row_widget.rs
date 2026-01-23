@@ -61,19 +61,21 @@ impl ChatRenderable for RowWidget {
         use std::hash::{Hash, Hasher};
 
         let theme_key = theme.name.clone();
-        let accent_width = if self.accent_style.is_some() {
-            ACCENT_WIDTH
-        } else {
-            0
-        };
+        let has_accent = self.accent_style.is_some();
+        let accent_width = if has_accent { ACCENT_WIDTH } else { 0 };
         let bg_color = self.row_background.and_then(|s| s.bg);
         let has_row_bg = bg_color.is_some();
         let outer_margin = if has_row_bg { OUTER_MARGIN } else { 0 };
         let bubble_width = width.saturating_sub(outer_margin * 2);
+        let left_inset = if has_row_bg { 0 } else { PADDING };
+        let gap_after_accent = if has_accent { PADDING } else { 0 };
+        let right_padding_width = PADDING;
 
         let body_width = bubble_width
+            .saturating_sub(left_inset)
             .saturating_sub(accent_width)
-            .saturating_sub(PADDING * 2);
+            .saturating_sub(gap_after_accent)
+            .saturating_sub(right_padding_width);
         let body_lines = self.body.lines(body_width, mode, theme);
 
         let mut hasher = DefaultHasher::new();
@@ -102,7 +104,6 @@ impl ChatRenderable for RowWidget {
             }
         }
 
-        let has_accent = self.accent_style.is_some();
         let accent_width = if has_accent { ACCENT_WIDTH as usize } else { 0 };
         let padding_style = if let Some(bg) = bg_color {
             Style::default().bg(bg)
@@ -117,17 +118,29 @@ impl ChatRenderable for RowWidget {
                     " ".repeat(outer_margin as usize),
                     Style::default(),
                 ));
-            } else {
-                acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            } else if left_inset > 0 {
+                acc.push(Span::styled(
+                    " ".repeat(left_inset as usize),
+                    padding_style,
+                ));
             }
             if let Some(accent) = self.accent_style {
                 acc.push(Span::styled("▌", accent));
             }
+            if gap_after_accent > 0 {
+                acc.push(Span::styled(
+                    " ".repeat(gap_after_accent as usize),
+                    padding_style,
+                ));
+            }
             let fill_width = if has_row_bg {
-                bubble_width.saturating_sub(accent_width as u16) as usize
+                bubble_width
+                    .saturating_sub(accent_width as u16)
+                    .saturating_sub(gap_after_accent) as usize
             } else {
-                w.saturating_sub(PADDING)
-                    .saturating_sub(accent_width as u16) as usize
+                w.saturating_sub(left_inset)
+                    .saturating_sub(accent_width as u16)
+                    .saturating_sub(gap_after_accent) as usize
             };
             acc.push(Span::styled(" ".repeat(fill_width), padding_style));
             if has_row_bg && outer_margin > 0 {
@@ -155,13 +168,21 @@ impl ChatRenderable for RowWidget {
                     " ".repeat(outer_margin as usize),
                     Style::default(),
                 ));
-            } else {
-                acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            } else if left_inset > 0 {
+                acc.push(Span::styled(
+                    " ".repeat(left_inset as usize),
+                    padding_style,
+                ));
             }
             if let Some(accent) = self.accent_style {
                 acc.push(Span::styled("▌", accent));
             }
-            acc.push(Span::styled(" ".repeat(PADDING as usize), padding_style));
+            if gap_after_accent > 0 {
+                acc.push(Span::styled(
+                    " ".repeat(gap_after_accent as usize),
+                    padding_style,
+                ));
+            }
 
             let content_width: usize = spans.iter().map(|s| s.content.width()).sum();
 
@@ -179,9 +200,12 @@ impl ChatRenderable for RowWidget {
             }
 
             let used_width = if has_row_bg {
-                accent_width + (PADDING as usize) + content_width
+                accent_width + (gap_after_accent as usize) + content_width
             } else {
-                (PADDING as usize) + accent_width + (PADDING as usize) + content_width
+                (left_inset as usize)
+                    + accent_width
+                    + (gap_after_accent as usize)
+                    + content_width
             };
             let remaining = if has_row_bg {
                 bubble_width as usize
@@ -189,12 +213,14 @@ impl ChatRenderable for RowWidget {
                 width as usize
             }
             .saturating_sub(used_width);
-            let right_padding = PADDING as usize;
-            let fill = remaining.saturating_sub(right_padding);
+            let fill = remaining.saturating_sub(right_padding_width as usize);
             if fill > 0 {
                 acc.push(Span::styled(" ".repeat(fill), padding_style));
             }
-            acc.push(Span::styled(" ".repeat(right_padding), padding_style));
+            acc.push(Span::styled(
+                " ".repeat(right_padding_width as usize),
+                padding_style,
+            ));
 
             if has_row_bg && outer_margin > 0 {
                 acc.push(Span::styled(
