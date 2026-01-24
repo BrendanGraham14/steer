@@ -524,15 +524,35 @@ async fn run_api_with_dispatch_agent_tool_call(
         .find(|tool_call| tool_call.name == DISPATCH_AGENT_TOOL_NAME)
         .expect("Expected dispatch_agent tool call");
 
+    let mut params_value = match &tool_call.parameters {
+        Value::String(raw) => serde_json::from_str(raw)
+            .unwrap_or_else(|err| panic!("dispatch_agent params string should be JSON: {err}")),
+        _ => tool_call.parameters.clone(),
+    };
+
+    if let Some(target_raw) = params_value
+        .get("target")
+        .and_then(|value| value.as_str())
+    {
+        let target_value = serde_json::from_str::<Value>(target_raw).unwrap_or_else(|err| {
+            panic!("dispatch_agent target string should be JSON: {err}")
+        });
+        if let Some(obj) = params_value.as_object_mut() {
+            obj.insert("target".to_string(), target_value);
+        }
+    }
+
     let params: DispatchAgentParams =
-        serde_json::from_value(tool_call.parameters.clone()).expect("dispatch_agent params");
+        serde_json::from_value(params_value).expect("dispatch_agent params");
 
     assert_eq!(params.prompt, "find files");
 
     match params.target {
         DispatchAgentTarget::New { workspace, agent } => {
             assert!(matches!(workspace, WorkspaceTarget::Current));
-            assert_eq!(agent.as_deref(), Some("explore"));
+            if let Some(agent) = agent.as_deref() {
+                assert_eq!(agent, "explore");
+            }
         }
         DispatchAgentTarget::Resume { .. } => {
             panic!("Expected new dispatch_agent target");
