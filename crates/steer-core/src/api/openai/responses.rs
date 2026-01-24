@@ -1143,7 +1143,14 @@ fn apply_instruction_policy(
             }
         }
         Some(InstructionPolicy::Override(override_text)) => {
+            let mut combined = override_text.clone();
             if let Some(system) = system.as_ref() {
+                let overlay = system.prompt.trim();
+                if !overlay.is_empty() {
+                    combined.push_str("\n\n## Operating Mode\n");
+                    combined.push_str(overlay);
+                }
+
                 let env = system
                     .environment
                     .as_ref()
@@ -1151,10 +1158,11 @@ fn apply_instruction_policy(
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty());
                 if let Some(env) = env {
-                    return Some(format!("{override_text}\n\n{env}"));
+                    combined.push_str("\n\n");
+                    combined.push_str(&env);
                 }
             }
-            Some(override_text.clone())
+            Some(combined)
         }
     }
 }
@@ -1271,7 +1279,7 @@ mod tests {
     }
 
     #[test]
-    fn test_override_preserves_env_context_without_marker() {
+    fn test_override_appends_overlay_and_env() {
         let env = EnvironmentInfo {
             working_directory: std::path::PathBuf::from("/tmp"),
             vcs: None,
@@ -1289,9 +1297,8 @@ mod tests {
             Some(&InstructionPolicy::Override("Override".to_string())),
         )
         .expect("expected rendered instructions");
-
-        assert!(rendered.starts_with("Override"));
-        assert!(rendered.contains("Here is useful information about the environment"));
+        let expected = "Override\n\n## Operating Mode\nCustom prompt\n\nHere is useful information about the environment you are running in:\n<env>\nWorking directory: /tmp\nVCS: none\nPlatform: linux\nToday's date: 2025-01-01\n</env>";
+        assert_eq!(rendered, expected);
     }
 
     #[test]

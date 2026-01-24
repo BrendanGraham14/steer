@@ -1146,7 +1146,14 @@ fn apply_instruction_policy(
             }
         }
         Some(InstructionPolicy::Override(override_text)) => {
+            let mut combined = override_text.clone();
             if let Some(system) = system.as_ref() {
+                let overlay = system.prompt.trim();
+                if !overlay.is_empty() {
+                    combined.push_str("\n\n## Operating Mode\n");
+                    combined.push_str(overlay);
+                }
+
                 let env = system
                     .environment
                     .as_ref()
@@ -1154,10 +1161,11 @@ fn apply_instruction_policy(
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty());
                 if let Some(env) = env {
-                    return Some(format!("{override_text}\n\n{env}"));
+                    combined.push_str("\n\n");
+                    combined.push_str(&env);
                 }
             }
-            Some(override_text.clone())
+            Some(combined)
         }
     }
 }
