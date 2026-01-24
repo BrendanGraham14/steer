@@ -24,7 +24,7 @@ impl ToolSpec for DispatchAgentToolSpec {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(tag = "mode", rename_all = "snake_case")]
+#[serde(tag = "location", rename_all = "snake_case")]
 pub enum WorkspaceTarget {
     Current,
     New { name: String },

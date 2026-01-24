@@ -264,17 +264,17 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("target should be a tagged union");
 
-        let mut mode_values = Vec::new();
+        let mut session_values = Vec::new();
         for variant in variants {
-            let mode_prop = variant
+            let session_prop = variant
                 .get("properties")
-                .and_then(|v| v.get("mode"))
+                .and_then(|v| v.get("session"))
                 .unwrap_or(&serde_json::Value::Null);
-            mode_values.extend(super::extract_enum_values(mode_prop));
+            session_values.extend(super::extract_enum_values(session_prop));
         }
 
-        assert!(mode_values.contains(&serde_json::Value::String("new".to_string())));
-        assert!(mode_values.contains(&serde_json::Value::String("resume".to_string())));
+        assert!(session_values.contains(&serde_json::Value::String("new".to_string())));
+        assert!(session_values.contains(&serde_json::Value::String("resume".to_string())));
     }
 
     fn resolve_ref<'a>(root: &'a serde_json::Value, schema: &'a serde_json::Value) -> &'a serde_json::Value {

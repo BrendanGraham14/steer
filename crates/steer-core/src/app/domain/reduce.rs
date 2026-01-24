@@ -1814,7 +1814,7 @@ mod tests {
             parameters: json!({
                 "prompt": "resume work",
                 "target": {
-                    "mode": "resume",
+                    "session": "resume",
                     "session_id": SessionId::new().to_string()
                 }
             }),

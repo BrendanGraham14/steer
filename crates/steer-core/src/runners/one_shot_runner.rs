@@ -522,9 +522,9 @@ mod tests {
             parameters: json!({
                 "prompt": "find files",
                 "target": {
-                    "mode": "new",
+                    "session": "new",
                     "workspace": {
-                        "mode": "current"
+                        "location": "current"
                     },
                     "agent": "explore"
                 }
