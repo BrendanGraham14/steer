@@ -306,7 +306,9 @@ async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> Result<()
     let tools = default_tool_schemas().await;
     // Ensure both a nested-schema tool and a zero-arg tool remain present in streamed tool sets.
     assert!(
-        tools.iter().any(|tool| tool.name == DISPATCH_AGENT_TOOL_NAME),
+        tools
+            .iter()
+            .any(|tool| tool.name == DISPATCH_AGENT_TOOL_NAME),
         "Expected dispatch_agent tool schema to be present"
     );
     assert!(
@@ -489,7 +491,7 @@ async fn run_api_with_dispatch_agent_tool_call(
     let messages = vec![Message {
         data: MessageData::User {
             content: vec![UserContent::Text {
-                text: "You must call the dispatch_agent tool exactly once. Use the prompt \"find files\", target a new session in the current workspace, and use the explore agent. Do not call any other tools. Do not answer with text before the tool call.".to_string(),
+                text: "You must call the dispatch_agent tool exactly once. Use prompt \"find files\". The target must be an object with session=\"new\", workspace as an object with location=\"current\", and agent=\"explore\". Do not encode any object as a JSON string. Do not call any other tools. Do not answer with text before the tool call.".to_string(),
             }],
         },
         timestamp,
@@ -524,35 +526,18 @@ async fn run_api_with_dispatch_agent_tool_call(
         .find(|tool_call| tool_call.name == DISPATCH_AGENT_TOOL_NAME)
         .expect("Expected dispatch_agent tool call");
 
-    let mut params_value = match &tool_call.parameters {
-        Value::String(raw) => serde_json::from_str(raw)
-            .unwrap_or_else(|err| panic!("dispatch_agent params string should be JSON: {err}")),
-        _ => tool_call.parameters.clone(),
-    };
-
-    if let Some(target_raw) = params_value
-        .get("target")
-        .and_then(|value| value.as_str())
-    {
-        let target_value = serde_json::from_str::<Value>(target_raw).unwrap_or_else(|err| {
-            panic!("dispatch_agent target string should be JSON: {err}")
-        });
-        if let Some(obj) = params_value.as_object_mut() {
-            obj.insert("target".to_string(), target_value);
-        }
-    }
-
-    let params: DispatchAgentParams =
-        serde_json::from_value(params_value).expect("dispatch_agent params");
+    let params = serde_json::from_value::<DispatchAgentParams>(tool_call.parameters.clone())
+        .expect("dispatch_agent params");
 
     assert_eq!(params.prompt, "find files");
 
     match params.target {
         DispatchAgentTarget::New { workspace, agent } => {
-            assert!(matches!(workspace, WorkspaceTarget::Current));
-            if let Some(agent) = agent.as_deref() {
-                assert_eq!(agent, "explore");
-            }
+            assert_eq!(workspace, WorkspaceTarget::Current);
+            assert!(
+                agent == Some("explore".to_string()) || agent.is_none(),
+                "Expected agent to be Some(\"explore\") or None, got: {agent:?}"
+            );
         }
         DispatchAgentTarget::Resume { .. } => {
             panic!("Expected new dispatch_agent target");
@@ -719,7 +704,9 @@ async fn test_api_dispatch_agent_tool_call(#[case] model: ModelId) {
     let client = test_client();
     run_api_with_dispatch_agent_tool_call(&client, &model)
         .await
-        .unwrap_or_else(|err| panic!("dispatch_agent tool call test failed for {model:?}: {err:?}"));
+        .unwrap_or_else(|err| {
+            panic!("dispatch_agent tool call test failed for {model:?}: {err:?}")
+        });
 }
 
 #[tokio::test]
