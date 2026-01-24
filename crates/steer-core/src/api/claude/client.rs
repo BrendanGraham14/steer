@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::{self, header};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -139,6 +140,7 @@ struct ClaudeTool {
 
 impl From<ToolSchema> for ClaudeTool {
     fn from(tool: ToolSchema) -> Self {
+        let tool = adapt_tool_schema_for_claude(tool);
         Self {
             name: tool.name,
             description: tool.description,
@@ -164,8 +166,441 @@ struct ClaudeCompletionResponse {
     extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
+fn adapt_tool_schema_for_claude(tool: ToolSchema) -> ToolSchema {
+    let root_schema = tool.input_schema.as_value();
+    let sanitized = sanitize_for_claude(root_schema, root_schema);
+    ToolSchema {
+        input_schema: InputSchema::new(sanitized),
+        ..tool
+    }
+}
+
+fn decode_pointer_segment(segment: &str) -> std::borrow::Cow<'_, str> {
+    if !segment.contains('~') {
+        return std::borrow::Cow::Borrowed(segment);
+    }
+    std::borrow::Cow::Owned(segment.replace("~1", "/").replace("~0", "~"))
+}
+
+fn resolve_ref<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> {
+    let path = reference.strip_prefix("#/")?;
+    let mut current = root;
+    for segment in path.split('/') {
+        let decoded = decode_pointer_segment(segment);
+        current = current.get(decoded.as_ref())?;
+    }
+    Some(current)
+}
+
+fn infer_type_from_enum(values: &[Value]) -> Option<String> {
+    let mut has_string = false;
+    let mut has_number = false;
+    let mut has_bool = false;
+    let mut has_object = false;
+    let mut has_array = false;
+
+    for value in values {
+        match value {
+            Value::String(_) => has_string = true,
+            Value::Number(_) => has_number = true,
+            Value::Bool(_) => has_bool = true,
+            Value::Object(_) => has_object = true,
+            Value::Array(_) => has_array = true,
+            Value::Null => {}
+        }
+    }
+
+    let kind_count = u8::from(has_string)
+        + u8::from(has_number)
+        + u8::from(has_bool)
+        + u8::from(has_object)
+        + u8::from(has_array);
+
+    if kind_count != 1 {
+        return None;
+    }
+
+    if has_string {
+        Some("string".to_string())
+    } else if has_number {
+        Some("number".to_string())
+    } else if has_bool {
+        Some("boolean".to_string())
+    } else if has_object {
+        Some("object".to_string())
+    } else if has_array {
+        Some("array".to_string())
+    } else {
+        None
+    }
+}
+
+fn normalize_type(value: &Value) -> Value {
+    if let Some(type_str) = value.as_str() {
+        return Value::String(type_str.to_string());
+    }
+
+    if let Some(type_array) = value.as_array()
+        && let Some(primary_type) = type_array
+            .iter()
+            .find_map(|v| if v.is_null() { None } else { v.as_str() })
+    {
+        return Value::String(primary_type.to_string());
+    }
+
+    Value::String("string".to_string())
+}
+
+fn extract_enum_values(value: &Value) -> Vec<Value> {
+    let Some(obj) = value.as_object() else {
+        return Vec::new();
+    };
+
+    if let Some(enum_values) = obj.get("enum").and_then(|v| v.as_array()) {
+        return enum_values
+            .iter()
+            .filter(|v| !v.is_null())
+            .cloned()
+            .collect();
+    }
+
+    if let Some(const_value) = obj.get("const") {
+        if const_value.is_null() {
+            return Vec::new();
+        }
+        return vec![const_value.clone()];
+    }
+
+    Vec::new()
+}
+
+fn merge_property(properties: &mut serde_json::Map<String, Value>, key: &str, value: &Value) {
+    match properties.get_mut(key) {
+        None => {
+            properties.insert(key.to_string(), value.clone());
+        }
+        Some(existing) => {
+            if existing == value {
+                return;
+            }
+
+            let existing_values = extract_enum_values(existing);
+            let incoming_values = extract_enum_values(value);
+            if incoming_values.is_empty() && existing_values.is_empty() {
+                return;
+            }
+
+            let mut combined = existing_values;
+            for item in incoming_values {
+                if !combined.contains(&item) {
+                    combined.push(item);
+                }
+            }
+
+            if combined.is_empty() {
+                return;
+            }
+
+            if let Some(obj) = existing.as_object_mut() {
+                obj.remove("const");
+                obj.insert("enum".to_string(), Value::Array(combined.clone()));
+                if !obj.contains_key("type")
+                    && let Some(inferred) = infer_type_from_enum(&combined)
+                {
+                    obj.insert("type".to_string(), Value::String(inferred));
+                }
+            }
+        }
+    }
+}
+
+fn merge_union_schemas(
+    root: &Value,
+    variants: &[Value],
+    seen_refs: &mut std::collections::HashSet<String>,
+) -> Value {
+    let mut merged_props = serde_json::Map::new();
+    let mut required_intersection: Option<std::collections::BTreeSet<String>> = None;
+    let mut enum_values: Vec<Value> = Vec::new();
+    let mut type_candidates: Vec<String> = Vec::new();
+
+    for variant in variants {
+        let sanitized = sanitize_for_claude_inner(root, variant, seen_refs);
+
+        if let Some(schema_type) = sanitized.get("type").and_then(|v| v.as_str()) {
+            type_candidates.push(schema_type.to_string());
+        }
+
+        if let Some(props) = sanitized.get("properties").and_then(|v| v.as_object()) {
+            for (key, value) in props {
+                merge_property(&mut merged_props, key, value);
+            }
+        }
+
+        if let Some(req) = sanitized.get("required").and_then(|v| v.as_array()) {
+            let req_set: std::collections::BTreeSet<String> = req
+                .iter()
+                .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                .collect();
+
+            required_intersection = match required_intersection.take() {
+                None => Some(req_set),
+                Some(existing) => Some(
+                    existing
+                        .intersection(&req_set)
+                        .cloned()
+                        .collect::<std::collections::BTreeSet<String>>(),
+                ),
+            };
+        }
+
+        if let Some(values) = sanitized.get("enum").and_then(|v| v.as_array()) {
+            for value in values {
+                if value.is_null() {
+                    continue;
+                }
+                if !enum_values.contains(value) {
+                    enum_values.push(value.clone());
+                }
+            }
+        }
+    }
+
+    let schema_type = if !merged_props.is_empty() {
+        "object".to_string()
+    } else if let Some(inferred) = infer_type_from_enum(&enum_values) {
+        inferred
+    } else if let Some(first) = type_candidates.first() {
+        first.clone()
+    } else {
+        "string".to_string()
+    };
+
+    let mut merged = serde_json::Map::new();
+    merged.insert("type".to_string(), Value::String(schema_type));
+
+    if !merged_props.is_empty() {
+        merged.insert("properties".to_string(), Value::Object(merged_props));
+    }
+
+    if let Some(required_set) = required_intersection
+        && !required_set.is_empty()
+    {
+        merged.insert(
+            "required".to_string(),
+            Value::Array(
+                required_set
+                    .into_iter()
+                    .map(Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+        );
+    }
+
+    if !enum_values.is_empty() {
+        merged.insert("enum".to_string(), Value::Array(enum_values));
+    }
+
+    Value::Object(merged)
+}
+
+fn sanitize_for_claude(root: &Value, schema: &Value) -> Value {
+    let mut seen_refs = std::collections::HashSet::new();
+    sanitize_for_claude_inner(root, schema, &mut seen_refs)
+}
+
+fn fallback_schema() -> Value {
+    let mut out = serde_json::Map::new();
+    out.insert("type".to_string(), Value::String("object".to_string()));
+    out.insert(
+        "properties".to_string(),
+        Value::Object(serde_json::Map::new()),
+    );
+    Value::Object(out)
+}
+
+fn sanitize_for_claude_inner(
+    root: &Value,
+    schema: &Value,
+    seen_refs: &mut std::collections::HashSet<String>,
+) -> Value {
+    if let Some(reference) = schema.get("$ref").and_then(|v| v.as_str()) {
+        if !seen_refs.insert(reference.to_string()) {
+            return fallback_schema();
+        }
+        if let Some(resolved) = resolve_ref(root, reference) {
+            let sanitized = sanitize_for_claude_inner(root, resolved, seen_refs);
+            seen_refs.remove(reference);
+            return sanitized;
+        }
+        seen_refs.remove(reference);
+    }
+
+    let Some(obj) = schema.as_object() else {
+        return schema.clone();
+    };
+
+    if let Some(union) = obj
+        .get("oneOf")
+        .or_else(|| obj.get("anyOf"))
+        .or_else(|| obj.get("allOf"))
+        .and_then(|v| v.as_array())
+    {
+        return merge_union_schemas(root, union, seen_refs);
+    }
+
+    let mut out = serde_json::Map::new();
+    for (key, value) in obj {
+        match key.as_str() {
+            "$ref"
+            | "$defs"
+            | "oneOf"
+            | "anyOf"
+            | "allOf"
+            | "const"
+            | "additionalProperties"
+            | "default"
+            | "examples"
+            | "title"
+            | "pattern"
+            | "minLength"
+            | "maxLength"
+            | "minimum"
+            | "maximum"
+            | "minItems"
+            | "maxItems"
+            | "uniqueItems"
+            | "deprecated" => {}
+            "type" => {
+                out.insert("type".to_string(), normalize_type(value));
+            }
+            "properties" => {
+                if let Some(props) = value.as_object() {
+                    let mut sanitized_props = serde_json::Map::new();
+                    for (prop_key, prop_value) in props {
+                        sanitized_props.insert(
+                            prop_key.clone(),
+                            sanitize_for_claude_inner(root, prop_value, seen_refs),
+                        );
+                    }
+                    out.insert("properties".to_string(), Value::Object(sanitized_props));
+                }
+            }
+            "items" => {
+                if let Some(items) = value.as_array() {
+                    let merged = merge_union_schemas(root, items, seen_refs);
+                    out.insert("items".to_string(), merged);
+                } else {
+                    out.insert(
+                        "items".to_string(),
+                        sanitize_for_claude_inner(root, value, seen_refs),
+                    );
+                }
+            }
+            "enum" => {
+                let values = value
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter(|v| !v.is_null())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                out.insert("enum".to_string(), Value::Array(values));
+            }
+            _ => {
+                out.insert(
+                    key.clone(),
+                    sanitize_for_claude_inner(root, value, seen_refs),
+                );
+            }
+        }
+    }
+
+    if let Some(const_value) = obj.get("const")
+        && !const_value.is_null()
+    {
+        out.insert("enum".to_string(), Value::Array(vec![const_value.clone()]));
+        if !out.contains_key("type")
+            && let Some(inferred) = infer_type_from_enum(std::slice::from_ref(const_value))
+        {
+            out.insert("type".to_string(), Value::String(inferred));
+        }
+    }
+
+    if out.get("type") == Some(&Value::String("object".to_string()))
+        && !out.contains_key("properties")
+    {
+        out.insert(
+            "properties".to_string(),
+            Value::Object(serde_json::Map::new()),
+        );
+    }
+
+    if !out.contains_key("type") {
+        if out.contains_key("properties") {
+            out.insert("type".to_string(), Value::String("object".to_string()));
+        } else if out.contains_key("items") {
+            out.insert("type".to_string(), Value::String("array".to_string()));
+        } else if let Some(enum_values) = out.get("enum").and_then(|v| v.as_array())
+            && let Some(inferred) = infer_type_from_enum(enum_values)
+        {
+            out.insert("type".to_string(), Value::String(inferred));
+        }
+    }
+
+    Value::Object(out)
+}
 fn default_cache_type() -> String {
     "ephemeral".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn sanitize_handles_recursive_ref() {
+        let schema = json!({
+            "$defs": {
+                "node": {
+                    "type": "object",
+                    "properties": {
+                        "next": { "$ref": "#/$defs/node" }
+                    }
+                }
+            },
+            "$ref": "#/$defs/node"
+        });
+
+        let sanitized = sanitize_for_claude(&schema, &schema);
+        let next = sanitized
+            .get("properties")
+            .and_then(|v| v.get("next"))
+            .and_then(|v| v.get("type"))
+            .and_then(|v| v.as_str());
+
+        assert_eq!(next, Some("object"));
+    }
+
+    #[test]
+    fn sanitize_collapses_tuple_items() {
+        let schema = json!({
+            "type": "array",
+            "items": [
+                { "type": "string" },
+                { "type": "number" }
+            ]
+        });
+
+        let sanitized = sanitize_for_claude(&schema, &schema);
+        let items = sanitized.get("items");
+
+        assert!(matches!(items, Some(Value::Object(_))));
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
