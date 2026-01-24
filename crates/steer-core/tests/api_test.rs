@@ -14,6 +14,7 @@ use steer_core::tools::static_tools::{
     AstGrepTool, BashTool, DispatchAgentTool, EditTool, FetchTool, GlobTool, GrepTool, LsTool,
     MultiEditTool, ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool,
 };
+use steer_core::tools::{DispatchAgentParams, DispatchAgentTarget, WorkspaceTarget};
 use steer_tools::result::{ExternalResult, ToolResult};
 use steer_tools::tools::{DISPATCH_AGENT_TOOL_NAME, LS_TOOL_NAME, TODO_READ_TOOL_NAME};
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
@@ -477,6 +478,71 @@ async fn run_streaming_with_reasoning(client: &Client, model: &ModelId) -> Resul
     Ok(())
 }
 
+async fn run_api_with_dispatch_agent_tool_call(
+    client: &Client,
+    model: &ModelId,
+) -> Result<(), ApiError> {
+    println!("Testing dispatch_agent tool call for model: {model:?}");
+
+    let tools = default_tool_schemas().await;
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "You must call the dispatch_agent tool exactly once. Use the prompt \"find files\", target a new session in the current workspace, and use the explore agent. Do not call any other tools. Do not answer with text before the tool call.".to_string(),
+            }],
+        },
+        timestamp,
+        id: Message::generate_id("user", timestamp),
+        parent_message_id: None,
+    }];
+
+    let response = client
+        .complete(
+            model,
+            messages,
+            None,
+            Some(tools),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
+
+    let response = response.map_err(|e| {
+        eprintln!("API call failed for model {model:?} dispatch_agent test: {e:?}");
+        e
+    })?;
+
+    assert!(
+        response.has_tool_calls(),
+        "Final response for model {model:?} should contain tool calls"
+    );
+
+    let tool_call = response
+        .extract_tool_calls()
+        .into_iter()
+        .find(|tool_call| tool_call.name == DISPATCH_AGENT_TOOL_NAME)
+        .expect("Expected dispatch_agent tool call");
+
+    let params: DispatchAgentParams =
+        serde_json::from_value(tool_call.parameters.clone()).expect("dispatch_agent params");
+
+    assert_eq!(params.prompt, "find files");
+
+    match params.target {
+        DispatchAgentTarget::New { workspace, agent } => {
+            assert!(matches!(workspace, WorkspaceTarget::Current));
+            assert_eq!(agent.as_deref(), Some("explore"));
+        }
+        DispatchAgentTarget::Resume { .. } => {
+            panic!("Expected new dispatch_agent target");
+        }
+    }
+
+    println!("dispatch_agent tool call test for {model:?} passed successfully!");
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_tool_schemas_include_object_properties() {
     let tools = default_tool_schemas().await;
@@ -620,6 +686,20 @@ async fn test_api_with_tool_response(#[case] model: ModelId) {
     run_api_with_tool_response(&client, &model)
         .await
         .unwrap_or_else(|err| panic!("tool response test failed for {model:?}: {err:?}"));
+}
+
+#[rstest]
+#[case::claude_haiku_4_5(builtin::claude_haiku_4_5())]
+#[case::gpt_5_nano_2025_08_07(builtin::gpt_5_nano_2025_08_07())]
+#[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
+#[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
+#[tokio::test]
+#[ignore]
+async fn test_api_dispatch_agent_tool_call(#[case] model: ModelId) {
+    let client = test_client();
+    run_api_with_dispatch_agent_tool_call(&client, &model)
+        .await
+        .unwrap_or_else(|err| panic!("dispatch_agent tool call test failed for {model:?}: {err:?}"));
 }
 
 #[tokio::test]
