@@ -55,8 +55,22 @@ impl From<schemars::Schema> for InputSchema {
     fn from(schema: schemars::Schema) -> Self {
         let schema_value =
             serde_json::to_value(&schema).unwrap_or_else(|_| serde_json::Value::Null);
-        Self(schema_value)
+        Self(ensure_object_properties(schema_value))
     }
+}
+
+fn ensure_object_properties(schema: Value) -> Value {
+    let mut schema = schema;
+    if let Value::Object(obj) = &mut schema {
+        let is_object = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|t| t == "object");
+        if is_object && !obj.contains_key("properties") {
+            obj.insert("properties".to_string(), Value::Object(serde_json::Map::new()));
+        }
+    }
+    schema
 }
 
 #[derive(Debug, Clone)]
@@ -226,28 +240,56 @@ mod tests {
     use schemars::schema_for;
 
     #[test]
-    fn dispatch_agent_schema_includes_mode() {
+    fn dispatch_agent_schema_includes_target() {
         let schema = schema_for!(crate::tools::dispatch_agent::DispatchAgentParams);
         let input_schema: InputSchema = schema.into();
         let summary = input_schema.summary();
 
         assert!(summary.properties.contains_key("prompt"));
-        assert!(summary.properties.contains_key("mode"));
-        assert!(summary.properties.contains_key("workspace"));
-        assert!(summary.properties.contains_key("session_id"));
+        assert!(summary.properties.contains_key("target"));
         assert!(summary.required.contains(&"prompt".to_string()));
-        assert!(summary.required.contains(&"mode".to_string()));
+        assert!(summary.required.contains(&"target".to_string()));
         assert_eq!(summary.schema_type, "object");
 
-        let mode_schema = summary
-            .properties
-            .get("mode")
-            .and_then(|v| v.get("enum"))
+        let root = input_schema.as_value();
+        let target_schema = root
+            .get("properties")
+            .and_then(|v| v.get("target"))
+            .expect("target schema should exist");
+        let target_schema = resolve_ref(root, target_schema);
+        let variants = target_schema
+            .get("oneOf")
+            .or_else(|| target_schema.get("anyOf"))
+            .or_else(|| target_schema.get("allOf"))
             .and_then(|v| v.as_array())
-            .expect("mode enum should exist");
+            .expect("target should be a tagged union");
 
-        assert!(mode_schema.contains(&serde_json::Value::String("new".to_string())));
-        assert!(mode_schema.contains(&serde_json::Value::String("resume".to_string())));
+        let mut mode_values = Vec::new();
+        for variant in variants {
+            let mode_prop = variant
+                .get("properties")
+                .and_then(|v| v.get("mode"))
+                .unwrap_or(&serde_json::Value::Null);
+            mode_values.extend(super::extract_enum_values(mode_prop));
+        }
+
+        assert!(mode_values.contains(&serde_json::Value::String("new".to_string())));
+        assert!(mode_values.contains(&serde_json::Value::String("resume".to_string())));
+    }
+
+    fn resolve_ref<'a>(root: &'a serde_json::Value, schema: &'a serde_json::Value) -> &'a serde_json::Value {
+        let Some(reference) = schema.get("$ref").and_then(|v| v.as_str()) else {
+            return schema;
+        };
+        let path = reference.strip_prefix("#/").unwrap_or(reference);
+        let mut current = root;
+        for segment in path.split('/') {
+            let Some(next) = current.get(segment) else {
+                return schema;
+            };
+            current = next;
+        }
+        current
     }
 }
 

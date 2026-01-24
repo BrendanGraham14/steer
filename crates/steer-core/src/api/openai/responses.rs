@@ -1275,7 +1275,7 @@ mod tests {
     }
 
     #[test]
-    fn test_responses_api_dispatch_agent_schema_includes_mode() {
+    fn test_responses_api_dispatch_agent_schema_includes_target() {
         let client = Client::new("test_key".to_string());
 
         let input_schema: steer_tools::InputSchema = schema_for!(DispatchAgentParams).into();
@@ -1301,24 +1301,13 @@ mod tests {
         let request = client.build_request(&model_id, messages, None, Some(tools), None);
 
         let tool = request.tools.expect("expected tools").into_iter().next().unwrap();
-        let summary = steer_tools::InputSchema::from(tool.parameters.clone()).summary();
+        let parameters = tool.parameters.clone();
+        let summary = steer_tools::InputSchema::from(parameters.clone()).summary();
 
         assert!(summary.properties.contains_key("prompt"));
-        assert!(summary.properties.contains_key("mode"));
-        assert!(summary.properties.contains_key("workspace"));
-        assert!(summary.properties.contains_key("session_id"));
+        assert!(summary.properties.contains_key("target"));
         assert!(summary.required.contains(&"prompt".to_string()));
-        assert!(summary.required.contains(&"mode".to_string()));
-
-        let mode_schema = summary
-            .properties
-            .get("mode")
-            .and_then(|v| v.get("enum"))
-            .and_then(|v| v.as_array())
-            .expect("mode enum should exist");
-
-        assert!(mode_schema.contains(&serde_json::Value::String("new".to_string())));
-        assert!(mode_schema.contains(&serde_json::Value::String("resume".to_string())));
+        assert!(summary.required.contains(&"target".to_string()));
     }
 
     #[test]

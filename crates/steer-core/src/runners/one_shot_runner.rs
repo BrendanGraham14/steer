@@ -521,9 +521,11 @@ mod tests {
             name: DISPATCH_AGENT_TOOL_NAME.to_string(),
             parameters: json!({
                 "prompt": "find files",
-                "mode": "new",
-                "workspace": "current",
-                "agent": "explore"
+                "target": {
+                    "mode": "new",
+                    "workspace": "current",
+                    "agent": "explore"
+                }
             }),
         };
 

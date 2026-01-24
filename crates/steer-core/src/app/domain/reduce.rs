@@ -1813,8 +1813,10 @@ mod tests {
             name: DISPATCH_AGENT_TOOL_NAME.to_string(),
             parameters: json!({
                 "prompt": "resume work",
-                "mode": "resume",
-                "session_id": SessionId::new().to_string()
+                "target": {
+                    "mode": "resume",
+                    "session_id": SessionId::new().to_string()
+                }
             }),
         };
 
@@ -2183,7 +2185,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_agent_missing_mode_auto_denies() {
+    fn test_dispatch_agent_missing_target_auto_denies() {
         let mut state = test_state();
         let session_id = state.session_id;
         let op_id = OpId::new();

@@ -13,7 +13,7 @@ use steer_core::tools::static_tools::{
     MultiEditTool, ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool,
 };
 use steer_tools::result::{ExternalResult, ToolResult};
-use steer_tools::tools::LS_TOOL_NAME;
+use steer_tools::tools::{DISPATCH_AGENT_TOOL_NAME, LS_TOOL_NAME, TODO_READ_TOOL_NAME};
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 use steer_workspace::local::LocalWorkspace;
 use steer_workspace::{Workspace, WorkspaceOpContext};
@@ -56,6 +56,40 @@ async fn default_tool_schemas() -> Vec<Tool> {
     registry.register_static(FetchTool);
 
     registry.available_schemas(Capabilities::all()).await
+}
+
+#[tokio::test]
+async fn test_tool_schemas_include_object_properties() {
+    let tools = default_tool_schemas().await;
+
+    let dispatch_tool = tools
+        .iter()
+        .find(|tool| tool.name == DISPATCH_AGENT_TOOL_NAME)
+        .expect("dispatch_agent schema should be registered");
+    let dispatch_schema = dispatch_tool.input_schema.as_value();
+    let dispatch_type = dispatch_schema
+        .get("type")
+        .and_then(|value| value.as_str());
+    assert_eq!(dispatch_type, Some("object"));
+    let dispatch_properties = dispatch_schema
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .expect("dispatch_agent schema should include properties");
+    assert!(dispatch_properties.contains_key("prompt"));
+    assert!(dispatch_properties.contains_key("target"));
+
+    let todo_tool = tools
+        .iter()
+        .find(|tool| tool.name == TODO_READ_TOOL_NAME)
+        .expect("read_todos schema should be registered");
+    let todo_schema = todo_tool.input_schema.as_value();
+    let todo_type = todo_schema.get("type").and_then(|value| value.as_str());
+    assert_eq!(todo_type, Some("object"));
+    let todo_properties = todo_schema
+        .get("properties")
+        .and_then(|value| value.as_object())
+        .expect("read_todos schema should include properties");
+    assert!(todo_properties.is_empty());
 }
 
 #[tokio::test]
