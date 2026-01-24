@@ -65,16 +65,16 @@ fn dispatch_agent_description() -> String {
     8. If the agent spec omits a model, the parent session's default model is used.
 
     Workspace options:
-    - `workspace: {{ "location": "current" }}` to run in the current workspace
-    - `workspace: {{ "location": "new", "name": "..." }}` to run in a fresh workspace (jj workspace or git worktree)
+    - `workspace: {{ "mode": "current" }}` to run in the current workspace
+    - `workspace: {{ "mode": "new", "name": "..." }}` to run in a fresh workspace (jj workspace or git worktree)
 
     Session options:
     - `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue a prior dispatch_agent session
 
     New session options:
-    - `target: {{ "session": "new", "workspace": {{ "location": "current" }} }}` to run in the current workspace
-    - `target: {{ "session": "new", "workspace": {{ "location": "new", "name": "..." }} }}` to run in a new workspace
-    - `target: {{ "session": "new", "workspace": {{ "location": "current" }}, "agent": "<id>" }}` selects an agent spec (defaults to "{default_agent}")
+    - `target: {{ "session": "new", "workspace": {{ "mode": "current" }} }}` to run in the current workspace
+    - `target: {{ "session": "new", "workspace": {{ "mode": "new", "name": "..." }} }}` to run in a new workspace
+    - `target: {{ "session": "new", "workspace": {{ "mode": "current" }}, "agent": "<id>" }}` selects an agent spec (defaults to "{default_agent}")
 
     {agent_specs_block}"#,
         VIEW_TOOL_NAME,

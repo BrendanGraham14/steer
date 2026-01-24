@@ -523,7 +523,9 @@ mod tests {
                 "prompt": "find files",
                 "target": {
                     "mode": "new",
-                    "workspace": "current",
+                    "workspace": {
+                        "mode": "current"
+                    },
                     "agent": "explore"
                 }
             }),
