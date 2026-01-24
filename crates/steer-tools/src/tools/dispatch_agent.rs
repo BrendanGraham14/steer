@@ -23,14 +23,14 @@ impl ToolSpec for DispatchAgentToolSpec {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(tag = "location", rename_all = "snake_case")]
 pub enum WorkspaceTarget {
     Current,
     New { name: String },
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(tag = "session", rename_all = "snake_case")]
 pub enum DispatchAgentTarget {
     New {
@@ -43,7 +43,7 @@ pub enum DispatchAgentTarget {
     },
 }
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
 pub struct DispatchAgentParams {
     pub prompt: String,
     pub target: DispatchAgentTarget,
