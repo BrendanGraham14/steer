@@ -601,6 +601,133 @@ mod tests {
 
         assert!(matches!(items, Some(Value::Object(_))));
     }
+
+    #[test]
+    fn sanitize_removes_unsupported_keywords() {
+        let schema = json!({
+            "type": "object",
+            "title": "ignored",
+            "additionalProperties": false,
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "pattern": "^[a-z]+$",
+                    "default": "x"
+                }
+            }
+        });
+
+        let sanitized = sanitize_for_claude(&schema, &schema);
+        let expected = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            }
+        });
+
+        assert_eq!(sanitized, expected);
+    }
+
+    #[test]
+    fn sanitize_converts_const_to_enum_with_type() {
+        let schema = json!({
+            "const": "fixed"
+        });
+
+        let sanitized = sanitize_for_claude(&schema, &schema);
+        let expected = json!({
+            "enum": ["fixed"],
+            "type": "string"
+        });
+
+        assert_eq!(sanitized, expected);
+    }
+
+    #[test]
+    fn sanitize_filters_null_enum_values() {
+        let schema = json!({
+            "enum": ["a", null, "b"]
+        });
+
+        let sanitized = sanitize_for_claude(&schema, &schema);
+        let expected = json!({
+            "enum": ["a", "b"],
+            "type": "string"
+        });
+
+        assert_eq!(sanitized, expected);
+    }
+
+    #[test]
+    fn sanitize_decodes_json_pointer_refs() {
+        let schema = json!({
+            "$defs": {
+                "a/b": { "type": "string" }
+            },
+            "$ref": "#/$defs/a~1b"
+        });
+
+        let sanitized = sanitize_for_claude(&schema, &schema);
+        let expected = json!({
+            "type": "string"
+        });
+
+        assert_eq!(sanitized, expected);
+    }
+
+    #[test]
+    fn sanitize_merges_union_properties_and_required() {
+        let schema = json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "a": { "type": "string" },
+                        "b": { "type": "string" }
+                    },
+                    "required": ["a"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "a": { "type": "string" },
+                        "c": { "type": "string" }
+                    },
+                    "required": ["a", "c"]
+                }
+            ]
+        });
+
+        let sanitized = sanitize_for_claude(&schema, &schema);
+        let expected = json!({
+            "type": "object",
+            "properties": {
+                "a": { "type": "string" },
+                "b": { "type": "string" },
+                "c": { "type": "string" }
+            },
+            "required": ["a"]
+        });
+
+        assert_eq!(sanitized, expected);
+    }
+
+    #[test]
+    fn sanitize_infers_array_type_from_items() {
+        let schema = json!({
+            "items": {
+                "type": "string"
+            }
+        });
+
+        let sanitized = sanitize_for_claude(&schema, &schema);
+        let expected = json!({
+            "type": "array",
+            "items": { "type": "string" }
+        });
+
+        assert_eq!(sanitized, expected);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
