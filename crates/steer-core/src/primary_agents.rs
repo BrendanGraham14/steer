@@ -10,9 +10,15 @@ use crate::session::state::{
 };
 use crate::tools::DISPATCH_AGENT_TOOL_NAME;
 use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
-pub const DEFAULT_PRIMARY_AGENT_ID: &str = "normal";
 
-const PLANNER_SYSTEM_PROMPT: &str = r#"You are in planner mode. Produce a concise, step-by-step plan only.
+pub const NORMAL_PRIMARY_AGENT_ID: &str = "normal";
+pub const PLANNER_PRIMARY_AGENT_ID: &str = "planner";
+pub const YOLO_PRIMARY_AGENT_ID: &str = "yolo";
+pub const DEFAULT_PRIMARY_AGENT_ID: &str = NORMAL_PRIMARY_AGENT_ID;
+
+static PLANNER_SYSTEM_PROMPT: Lazy<String> = Lazy::new(|| {
+    format!(
+        r#"You are in planner mode. Produce a concise, step-by-step plan only.
 
 Rules:
 - Use read-only tools to gather the context you need before planning.
@@ -35,7 +41,11 @@ Risks:
 Validation:
 - ...
 
-Finish by asking the user to switch back to "normal" or "yolo" to execute."#;
+Finish by asking the user to switch back to "{NORMAL_PRIMARY_AGENT_ID}" or "{YOLO_PRIMARY_AGENT_ID}" to execute."#,
+        NORMAL_PRIMARY_AGENT_ID = NORMAL_PRIMARY_AGENT_ID,
+        YOLO_PRIMARY_AGENT_ID = YOLO_PRIMARY_AGENT_ID,
+    )
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PrimaryAgentSpec {
@@ -114,7 +124,7 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
 
     vec![
         PrimaryAgentSpec {
-            id: "normal".to_string(),
+            id: NORMAL_PRIMARY_AGENT_ID.to_string(),
             name: "Normal".to_string(),
             description: "Default agent with full tool visibility. Tools which can write require explicit approvals."
                 .to_string(),
@@ -124,16 +134,16 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
             approval_policy: ToolApprovalPolicy::default(),
         },
         PrimaryAgentSpec {
-            id: "planner".to_string(),
+            id: PLANNER_PRIMARY_AGENT_ID.to_string(),
             name: "Planner".to_string(),
             description: "Planning-only agent with read-only tools.".to_string(),
             model: None,
-            system_prompt: Some(PLANNER_SYSTEM_PROMPT.to_string()),
+            system_prompt: Some(PLANNER_SYSTEM_PROMPT.clone()),
             tool_visibility: planner_tool_visibility,
             approval_policy: planner_approval_policy,
         },
         PrimaryAgentSpec {
-            id: "yolo".to_string(),
+            id: YOLO_PRIMARY_AGENT_ID.to_string(),
             name: "Yolo".to_string(),
             description: "Full tool visibility with auto-approval for all tools.".to_string(),
             model: None,
@@ -152,8 +162,8 @@ mod tests {
     use super::*;
     use crate::config::model::builtin;
     use crate::session::state::{SessionToolConfig, ToolRule, WorkspaceConfig};
-    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
+    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -185,7 +195,7 @@ mod tests {
     #[test]
     fn apply_primary_agent_preserves_base_when_unset() {
         let config = base_config();
-        let spec = primary_agent_spec("normal").expect("normal spec");
+        let spec = primary_agent_spec(NORMAL_PRIMARY_AGENT_ID).expect("normal spec");
         let updated = apply_primary_agent_to_config(&spec, &config);
 
         assert_eq!(updated.default_model, config.default_model);
@@ -216,7 +226,7 @@ mod tests {
 
     #[test]
     fn planner_spec_limits_tools_and_dispatch_agent() {
-        let spec = primary_agent_spec("planner").expect("planner spec");
+        let spec = primary_agent_spec(PLANNER_PRIMARY_AGENT_ID).expect("planner spec");
 
         match &spec.tool_visibility {
             ToolVisibility::Whitelist(allowed) => {
