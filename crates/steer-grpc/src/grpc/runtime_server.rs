@@ -1,7 +1,8 @@
 use crate::grpc::conversions::{
     environment_descriptor_to_proto, message_to_proto, model_to_proto, proto_to_model,
-    proto_to_tool_config, proto_to_workspace_config, repo_info_to_proto, session_event_to_proto,
-    stream_delta_to_proto, workspace_info_to_proto, workspace_status_to_proto,
+    proto_to_session_policy_overrides, proto_to_tool_config, proto_to_workspace_config,
+    repo_info_to_proto, session_event_to_proto, stream_delta_to_proto, workspace_info_to_proto,
+    workspace_status_to_proto,
 };
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
@@ -478,6 +479,14 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .map(proto_to_workspace_config)
             .unwrap_or_default();
 
+        if req.system_prompt.is_some() {
+            return Err(Status::invalid_argument(
+                "system_prompt is no longer configurable; use primary agent policies instead",
+            ));
+        }
+
+        let policy_overrides = proto_to_session_policy_overrides(req.policy_overrides);
+
         let workspace_id = match req.workspace_id {
             Some(value) => Some(Self::parse_workspace_id(&value)?),
             None => None,
@@ -526,7 +535,9 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             parent_session_id,
             workspace_name: req.workspace_name,
             tool_config,
-            system_prompt: req.system_prompt,
+            system_prompt: None,
+            primary_agent_id: req.primary_agent_id,
+            policy_overrides,
             metadata: req.metadata,
             default_model,
         };

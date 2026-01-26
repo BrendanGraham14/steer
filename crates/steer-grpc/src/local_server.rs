@@ -362,7 +362,7 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only(
+            .create_session(steer_core::test_utils::read_only_session_config(
                 steer_core::config::model::builtin::claude_sonnet_4_5(),
             ))
             .await
@@ -427,7 +427,7 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only(
+            .create_session(steer_core::test_utils::read_only_session_config(
                 steer_core::config::model::builtin::claude_sonnet_4_5(),
             ))
             .await
@@ -522,7 +522,7 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only(
+            .create_session(steer_core::test_utils::read_only_session_config(
                 steer_core::config::model::builtin::claude_sonnet_4_5(),
             ))
             .await
@@ -562,7 +562,7 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only(
+            .create_session(steer_core::test_utils::read_only_session_config(
                 steer_core::config::model::builtin::claude_sonnet_4_5(),
             ))
             .await
@@ -596,7 +596,7 @@ mod tests {
         let session_id = setup
             .runtime_service
             .handle()
-            .create_session(SessionConfig::read_only(
+            .create_session(steer_core::test_utils::read_only_session_config(
                 steer_core::config::model::builtin::claude_sonnet_4_5(),
             ))
             .await

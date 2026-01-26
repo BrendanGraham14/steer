@@ -8,8 +8,9 @@ use steer_core::app::domain::types::SessionId;
 use steer_core::app::domain::{SessionEvent, StreamDelta, ToolCallDelta as CoreToolCallDelta};
 
 use steer_core::session::state::{
-    ApprovalRules, BackendConfig, RemoteAuth, SessionConfig, SessionToolConfig, ToolApprovalPolicy,
-    ToolFilter, ToolRule, ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
+    ApprovalRules, ApprovalRulesOverrides, BackendConfig, RemoteAuth, SessionConfig,
+    SessionPolicyOverrides, SessionToolConfig, ToolApprovalPolicy, ToolApprovalPolicyOverrides,
+    ToolFilter, ToolRule, ToolRuleOverrides, ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
 };
 use steer_proto::agent::v1 as proto;
 use steer_proto::common::v1 as common;
@@ -481,6 +482,23 @@ pub(crate) fn tool_approval_policy_to_proto(
     }
 }
 
+pub(crate) fn tool_approval_policy_overrides_to_proto(
+    overrides: &ToolApprovalPolicyOverrides,
+) -> proto::ToolApprovalPolicyOverrides {
+    proto::ToolApprovalPolicyOverrides {
+        default_behavior: overrides.default_behavior.map(|behavior| match behavior {
+            UnapprovedBehavior::Prompt => proto::UnapprovedBehavior::Prompt.into(),
+            UnapprovedBehavior::Deny => proto::UnapprovedBehavior::Deny.into(),
+            UnapprovedBehavior::Allow => proto::UnapprovedBehavior::Allow.into(),
+        }),
+        preapproved: if overrides.preapproved.is_empty() {
+            None
+        } else {
+            Some(approval_rules_overrides_to_proto(&overrides.preapproved))
+        },
+    }
+}
+
 fn approval_rules_to_proto(rules: &ApprovalRules) -> proto::ApprovalRules {
     proto::ApprovalRules {
         tools: rules.tools.iter().cloned().collect(),
@@ -488,6 +506,19 @@ fn approval_rules_to_proto(rules: &ApprovalRules) -> proto::ApprovalRules {
             .per_tool
             .iter()
             .map(|(name, rule)| (name.clone(), tool_rule_to_proto(rule)))
+            .collect(),
+    }
+}
+
+fn approval_rules_overrides_to_proto(
+    rules: &ApprovalRulesOverrides,
+) -> proto::ApprovalRulesOverrides {
+    proto::ApprovalRulesOverrides {
+        tools: rules.tools.iter().cloned().collect(),
+        per_tool: rules
+            .per_tool
+            .iter()
+            .map(|(name, rule)| (name.clone(), tool_rule_override_to_proto(rule)))
             .collect(),
     }
 }
@@ -500,6 +531,23 @@ fn tool_rule_to_proto(rule: &ToolRule) -> proto::ToolRule {
             })),
         },
         ToolRule::DispatchAgent { agent_patterns } => proto::ToolRule {
+            rule: Some(proto::tool_rule::Rule::DispatchAgent(
+                proto::DispatchAgentRule {
+                    agent_patterns: agent_patterns.clone(),
+                },
+            )),
+        },
+    }
+}
+
+fn tool_rule_override_to_proto(rule: &ToolRuleOverrides) -> proto::ToolRule {
+    match rule {
+        ToolRuleOverrides::Bash { patterns } => proto::ToolRule {
+            rule: Some(proto::tool_rule::Rule::Bash(proto::BashRule {
+                patterns: patterns.clone(),
+            })),
+        },
+        ToolRuleOverrides::DispatchAgent { agent_patterns } => proto::ToolRule {
             rule: Some(proto::tool_rule::Rule::DispatchAgent(
                 proto::DispatchAgentRule {
                     agent_patterns: agent_patterns.clone(),
@@ -626,6 +674,23 @@ pub(crate) fn session_tool_config_to_proto(config: &SessionToolConfig) -> proto:
     }
 }
 
+pub(crate) fn session_policy_overrides_to_proto(
+    overrides: &SessionPolicyOverrides,
+) -> proto::SessionPolicyOverrides {
+    proto::SessionPolicyOverrides {
+        default_model: overrides.default_model.clone().map(model_to_proto),
+        tool_visibility: overrides
+            .tool_visibility
+            .as_ref()
+            .map(tool_visibility_to_proto),
+        approval_policy: if overrides.approval_policy.is_empty() {
+            None
+        } else {
+            Some(tool_approval_policy_overrides_to_proto(&overrides.approval_policy))
+        },
+    }
+}
+
 pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionConfig {
     proto::SessionConfig {
         tool_config: Some(session_tool_config_to_proto(&config.tool_config)),
@@ -645,6 +710,8 @@ pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionC
         parent_session_id: config.parent_session_id.as_ref().map(SessionId::to_string),
         workspace_name: config.workspace_name.clone(),
         repo_ref: config.repo_ref.as_ref().map(repo_ref_to_proto),
+        primary_agent_id: config.primary_agent_id.clone(),
+        policy_overrides: Some(session_policy_overrides_to_proto(&config.policy_overrides)),
     }
 }
 
@@ -727,6 +794,8 @@ pub(crate) fn proto_to_session_config(
         None => None,
     };
 
+    let policy_overrides = proto_to_session_policy_overrides(proto_config.policy_overrides);
+
     Ok(SessionConfig {
         default_model,
         workspace: proto_to_workspace_config(workspace_config),
@@ -737,6 +806,8 @@ pub(crate) fn proto_to_session_config(
         workspace_name: proto_config.workspace_name,
         tool_config: proto_to_tool_config(tool_config),
         system_prompt: proto_config.system_prompt,
+        primary_agent_id: proto_config.primary_agent_id,
+        policy_overrides,
         metadata: proto_config.metadata,
     })
 }
@@ -1287,6 +1358,58 @@ pub(crate) fn proto_to_tool_approval_policy(
     }
 }
 
+pub(crate) fn proto_to_session_policy_overrides(
+    proto_overrides: Option<proto::SessionPolicyOverrides>,
+) -> SessionPolicyOverrides {
+    match proto_overrides {
+        Some(overrides) => {
+            let default_model = match overrides.default_model {
+                Some(spec) => proto_to_model(&spec).ok(),
+                None => None,
+            };
+            let tool_visibility = overrides
+                .tool_visibility
+                .map(|visibility| proto_to_tool_visibility(Some(visibility)));
+            let approval_policy =
+                proto_to_tool_approval_policy_overrides(overrides.approval_policy);
+
+            SessionPolicyOverrides {
+                default_model,
+                tool_visibility,
+                approval_policy,
+            }
+        }
+        None => SessionPolicyOverrides::empty(),
+    }
+}
+
+pub(crate) fn proto_to_tool_approval_policy_overrides(
+    proto_policy: Option<proto::ToolApprovalPolicyOverrides>,
+) -> ToolApprovalPolicyOverrides {
+    match proto_policy {
+        Some(policy) => {
+            let default_behavior = policy
+                .default_behavior
+                .and_then(|value| proto::UnapprovedBehavior::try_from(value).ok())
+                .and_then(|behavior| match behavior {
+                    proto::UnapprovedBehavior::Prompt => Some(UnapprovedBehavior::Prompt),
+                    proto::UnapprovedBehavior::Deny => Some(UnapprovedBehavior::Deny),
+                    proto::UnapprovedBehavior::Allow => Some(UnapprovedBehavior::Allow),
+                    proto::UnapprovedBehavior::Unspecified => None,
+                });
+            let preapproved = policy
+                .preapproved
+                .map(proto_to_approval_rules_overrides)
+                .unwrap_or_else(ApprovalRulesOverrides::empty);
+            ToolApprovalPolicyOverrides {
+                default_behavior,
+                preapproved,
+            }
+        }
+        None => ToolApprovalPolicyOverrides::empty(),
+    }
+}
+
 fn proto_to_approval_rules(proto_rules: proto::ApprovalRules) -> ApprovalRules {
     ApprovalRules {
         tools: proto_rules.tools.into_iter().collect(),
@@ -1294,6 +1417,21 @@ fn proto_to_approval_rules(proto_rules: proto::ApprovalRules) -> ApprovalRules {
             .per_tool
             .into_iter()
             .filter_map(|(name, rule)| proto_to_tool_rule(rule).map(|r| (name, r)))
+            .collect(),
+    }
+}
+
+fn proto_to_approval_rules_overrides(
+    proto_rules: proto::ApprovalRulesOverrides,
+) -> ApprovalRulesOverrides {
+    ApprovalRulesOverrides {
+        tools: proto_rules.tools.into_iter().collect(),
+        per_tool: proto_rules
+            .per_tool
+            .into_iter()
+            .filter_map(|(name, rule)| {
+                proto_to_tool_rule_override(rule).map(|r| (name, r))
+            })
             .collect(),
     }
 }
@@ -1306,6 +1444,19 @@ fn proto_to_tool_rule(proto_rule: proto::ToolRule) -> Option<ToolRule> {
         proto::tool_rule::Rule::DispatchAgent(dispatch_agent) => Some(ToolRule::DispatchAgent {
             agent_patterns: dispatch_agent.agent_patterns,
         }),
+    }
+}
+
+fn proto_to_tool_rule_override(proto_rule: proto::ToolRule) -> Option<ToolRuleOverrides> {
+    match proto_rule.rule? {
+        proto::tool_rule::Rule::Bash(bash) => Some(ToolRuleOverrides::Bash {
+            patterns: bash.patterns,
+        }),
+        proto::tool_rule::Rule::DispatchAgent(dispatch_agent) => {
+            Some(ToolRuleOverrides::DispatchAgent {
+                agent_patterns: dispatch_agent.agent_patterns,
+            })
+        }
     }
 }
 

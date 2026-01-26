@@ -244,6 +244,8 @@ message CreateSessionRequest {
   optional string parent_session_id = 9;
   optional string workspace_name = 10;
   optional RepoRef repo_ref = 11;
+  optional string primary_agent_id = 12;
+  optional SessionPolicyOverrides policy_overrides = 13;
 }
 
 message CreateSessionResponse {
@@ -502,6 +504,8 @@ message SessionConfig {
   optional string parent_session_id = 9;
   optional string workspace_name = 10;
   optional RepoRef repo_ref = 11;
+  optional string primary_agent_id = 12;
+  optional SessionPolicyOverrides policy_overrides = 13;
 }
 
 // Environment management
@@ -952,6 +956,22 @@ message ApprovalRules {
 message ToolApprovalPolicy {
   UnapprovedBehavior default_behavior = 1;
   ApprovalRules preapproved = 2;
+}
+
+message ApprovalRulesOverrides {
+  repeated string tools = 1;
+  map<string, ToolRule> per_tool = 2;
+}
+
+message ToolApprovalPolicyOverrides {
+  optional UnapprovedBehavior default_behavior = 1;
+  optional ApprovalRulesOverrides preapproved = 2;
+}
+
+message SessionPolicyOverrides {
+  optional ModelSpec default_model = 1;
+  optional ToolVisibility tool_visibility = 2;
+  optional ToolApprovalPolicyOverrides approval_policy = 3;
 }
 
 // Workspace configuration

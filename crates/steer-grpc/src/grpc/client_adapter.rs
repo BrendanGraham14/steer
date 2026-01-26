@@ -8,7 +8,8 @@ use crate::client_api::ClientEvent;
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
     proto_to_repo_info, proto_to_workspace_info, proto_to_workspace_status,
-    session_tool_config_to_proto, workspace_config_to_proto,
+    session_policy_overrides_to_proto, session_tool_config_to_proto,
+    workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
 
@@ -98,6 +99,10 @@ impl AgentClient {
                 .repo_ref
                 .as_ref()
                 .map(crate::grpc::conversions::repo_ref_to_proto),
+            primary_agent_id: config.primary_agent_id.clone(),
+            policy_overrides: Some(session_policy_overrides_to_proto(
+                &config.policy_overrides,
+            )),
         });
 
         let response = self
