@@ -20,12 +20,6 @@
         "type": "string"
       }
     },
-    "system_prompt": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "tool_config": {
       "anyOf": [
         {

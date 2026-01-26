@@ -338,6 +338,7 @@ mod tests {
     use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::app::validation::ValidatorRegistry;
     use crate::config::model::builtin;
+    use crate::session::SessionPolicyOverrides;
     use crate::session::ToolApprovalPolicy;
     use crate::session::state::{
         ApprovalRules, SessionToolConfig, UnapprovedBehavior, WorkspaceConfig,
@@ -437,6 +438,8 @@ mod tests {
             workspace_name: None,
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
+            primary_agent_id: None,
+            policy_overrides: SessionPolicyOverrides::empty(),
             metadata: std::collections::HashMap::new(),
         }
     }

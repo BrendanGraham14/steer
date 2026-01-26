@@ -5,7 +5,7 @@ use std::sync::Arc;
 use steer_core::app::domain::action::{Action, McpServerState};
 use steer_core::app::domain::types::SessionId;
 use steer_core::session::{
-    SessionConfig as CoreSessionConfig, SessionToolConfig as CoreSessionToolConfig,
+    SessionConfig as CoreSessionConfig, SessionPolicyOverrides, SessionToolConfig as CoreSessionToolConfig,
     WorkspaceConfig as CoreWorkspaceConfig,
 };
 use steer_grpc::client_api::ClientEvent;
@@ -383,6 +383,8 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
         workspace_name: None,
         tool_config: CoreSessionToolConfig::default(),
         system_prompt: None,
+        primary_agent_id: None,
+        policy_overrides: SessionPolicyOverrides::empty(),
         metadata: HashMap::new(),
         default_model: default_model.clone(),
     };
@@ -417,6 +419,8 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
         workspace_name: None,
         tool_config: CoreSessionToolConfig::default(),
         system_prompt: None,
+        primary_agent_id: None,
+        policy_overrides: SessionPolicyOverrides::empty(),
         metadata: HashMap::new(),
         default_model,
     };
