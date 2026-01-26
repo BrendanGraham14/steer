@@ -4,7 +4,7 @@ use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{CancellationInfo, SessionEvent};
 use crate::app::domain::state::{AppState, OperationKind, PendingApproval, QueuedApproval};
 use crate::agents::default_agent_spec_id;
-use crate::primary_agents::{apply_primary_agent_to_config, default_primary_agent_id, primary_agent_spec};
+use crate::primary_agents::{default_primary_agent_id, primary_agent_spec, resolve_effective_config};
 use crate::session::state::{BackendConfig, ToolDecision};
 use crate::tools::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams, DispatchAgentTarget};
 use serde_json::Value;
@@ -1350,7 +1350,7 @@ fn handle_switch_primary_agent(
         }];
     };
 
-    let Some(spec) = primary_agent_spec(&agent_id) else {
+    let Some(_spec) = primary_agent_spec(&agent_id) else {
         return vec![Effect::EmitEvent {
             session_id,
             event: SessionEvent::Error {
@@ -1359,7 +1359,9 @@ fn handle_switch_primary_agent(
         }];
     };
 
-    let new_config = apply_primary_agent_to_config(&spec, base_config);
+    let mut updated_config = base_config.clone();
+    updated_config.primary_agent_id = Some(agent_id.clone());
+    let new_config = resolve_effective_config(&updated_config);
     let backend_effects = mcp_backend_diff_effects(session_id, base_config, &new_config);
 
     apply_session_config_state(state, &new_config, Some(agent_id.clone()), false);
@@ -1462,12 +1464,11 @@ fn collect_mcp_backends(
 pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     match event {
         SessionEvent::SessionCreated { config, .. } => {
-            apply_session_config_state(
-                state,
-                config,
-                Some(default_primary_agent_id().to_string()),
-                true,
-            );
+            let primary_agent_id = config
+                .primary_agent_id
+                .clone()
+                .unwrap_or_else(|| default_primary_agent_id().to_string());
+            apply_session_config_state(state, config, Some(primary_agent_id), true);
         }
         SessionEvent::SessionConfigUpdated {
             config,
@@ -1682,8 +1683,10 @@ mod tests {
         MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
     };
     use crate::config::model::builtin;
+    use crate::primary_agents::resolve_effective_config;
     use crate::session::state::{
-        ApprovalRules, SessionConfig, ToolApprovalPolicy, ToolVisibility, UnapprovedBehavior,
+        ApprovalRules, ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides,
+        ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolVisibility, UnapprovedBehavior,
     };
     use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
@@ -1707,8 +1710,9 @@ mod tests {
 
     fn base_session_config() -> SessionConfig {
         let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
-        config.tool_config.visibility = ToolVisibility::All;
-        config
+        config.primary_agent_id = Some("normal".to_string());
+        config.policy_overrides = SessionPolicyOverrides::empty();
+        resolve_effective_config(&config)
     }
 
     #[test]
@@ -1798,6 +1802,43 @@ mod tests {
         assert_eq!(
             updated.tool_config.approval_policy.default_behavior,
             UnapprovedBehavior::Allow
+        );
+    }
+
+    #[test]
+    fn test_switch_primary_agent_preserves_policy_overrides() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        config.primary_agent_id = Some("normal".to_string());
+        config.policy_overrides = SessionPolicyOverrides {
+            default_model: None,
+            tool_visibility: None,
+            approval_policy: ToolApprovalPolicyOverrides {
+                default_behavior: Some(UnapprovedBehavior::Deny),
+                preapproved: ApprovalRulesOverrides::empty(),
+            },
+        };
+        let config = resolve_effective_config(&config);
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
+
+        let _ = reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "yolo".to_string(),
+            },
+        );
+
+        let updated = state.session_config.as_ref().expect("config");
+        assert_eq!(
+            updated.tool_config.approval_policy.default_behavior,
+            UnapprovedBehavior::Deny
+        );
+        assert_eq!(
+            updated.policy_overrides.approval_policy.default_behavior,
+            Some(UnapprovedBehavior::Deny)
         );
     }
 

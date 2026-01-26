@@ -149,6 +149,12 @@ pub struct SessionConfig {
     /// Optional custom system prompt to use for the session. If `None`, Steer will
     /// fall back to its built-in default prompt.
     pub system_prompt: Option<String>,
+    /// Primary agent mode for this session. Defaults to "normal" if unset.
+    #[serde(default)]
+    pub primary_agent_id: Option<String>,
+    /// User-controlled policy overrides that apply on top of the primary agent base policy.
+    #[serde(default = "SessionPolicyOverrides::empty")]
+    pub policy_overrides: SessionPolicyOverrides,
     pub metadata: HashMap<String, String>,
     pub default_model: ModelId,
 }
@@ -248,6 +254,7 @@ impl SessionConfig {
     }
 
     /// Minimal read-only configuration
+    #[cfg(test)]
     pub fn read_only(default_model: ModelId) -> Self {
         Self {
             workspace: WorkspaceConfig::Local {
@@ -260,10 +267,88 @@ impl SessionConfig {
             workspace_name: None,
             tool_config: SessionToolConfig::read_only(),
             system_prompt: None,
+            primary_agent_id: None,
+            policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model,
         }
     }
+}
+
+/// User-controlled policy overrides applied on top of a primary agent base policy.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SessionPolicyOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<ModelId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_visibility: Option<ToolVisibility>,
+    #[serde(default = "ToolApprovalPolicyOverrides::empty")]
+    pub approval_policy: ToolApprovalPolicyOverrides,
+}
+
+impl SessionPolicyOverrides {
+    pub fn empty() -> Self {
+        Self {
+            default_model: None,
+            tool_visibility: None,
+            approval_policy: ToolApprovalPolicyOverrides::empty(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.default_model.is_none()
+            && self.tool_visibility.is_none()
+            && self.approval_policy.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ToolApprovalPolicyOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_behavior: Option<UnapprovedBehavior>,
+    #[serde(default = "ApprovalRulesOverrides::empty")]
+    pub preapproved: ApprovalRulesOverrides,
+}
+
+impl ToolApprovalPolicyOverrides {
+    pub fn empty() -> Self {
+        Self {
+            default_behavior: None,
+            preapproved: ApprovalRulesOverrides::empty(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.default_behavior.is_none() && self.preapproved.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ApprovalRulesOverrides {
+    #[serde(default)]
+    pub tools: HashSet<String>,
+    #[serde(default)]
+    pub per_tool: HashMap<String, ToolRuleOverrides>,
+}
+
+impl ApprovalRulesOverrides {
+    pub fn empty() -> Self {
+        Self {
+            tools: HashSet::new(),
+            per_tool: HashMap::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty() && self.per_tool.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolRuleOverrides {
+    Bash { patterns: Vec<String> },
+    DispatchAgent { agent_patterns: Vec<String> },
 }
 
 /// Tool visibility configuration - controls which tools are shown to the AI agent
@@ -408,6 +493,71 @@ impl ToolApprovalPolicy {
     pub fn pre_approved_tools(&self) -> &HashSet<String> {
         &self.preapproved.tools
     }
+}
+
+impl ToolApprovalPolicyOverrides {
+    pub fn apply_to(&self, base: &ToolApprovalPolicy) -> ToolApprovalPolicy {
+        let mut merged = base.clone();
+
+        if let Some(default_behavior) = self.default_behavior {
+            merged.default_behavior = default_behavior;
+        }
+
+        if !self.preapproved.tools.is_empty() {
+            merged
+                .preapproved
+                .tools
+                .extend(self.preapproved.tools.iter().cloned());
+        }
+
+        for (tool_name, override_rule) in &self.preapproved.per_tool {
+            let base_rule = merged.preapproved.per_tool.get(tool_name);
+            let merged_rule = merge_tool_rule_override(base_rule, override_rule);
+            merged
+                .preapproved
+                .per_tool
+                .insert(tool_name.clone(), merged_rule);
+        }
+
+        merged
+    }
+}
+
+fn merge_tool_rule_override(
+    base: Option<&ToolRule>,
+    override_rule: &ToolRuleOverrides,
+) -> ToolRule {
+    match (base, override_rule) {
+        (Some(ToolRule::Bash { patterns }), ToolRuleOverrides::Bash { patterns: extra }) => {
+            ToolRule::Bash {
+                patterns: merge_patterns(patterns, extra),
+            }
+        }
+        (
+            Some(ToolRule::DispatchAgent { agent_patterns }),
+            ToolRuleOverrides::DispatchAgent {
+                agent_patterns: extra,
+            },
+        ) => ToolRule::DispatchAgent {
+            agent_patterns: merge_patterns(agent_patterns, extra),
+        },
+        (_, ToolRuleOverrides::Bash { patterns }) => ToolRule::Bash {
+            patterns: patterns.clone(),
+        },
+        (_, ToolRuleOverrides::DispatchAgent { agent_patterns }) => ToolRule::DispatchAgent {
+            agent_patterns: agent_patterns.clone(),
+        },
+    }
+}
+
+fn merge_patterns(base: &[String], extra: &[String]) -> Vec<String> {
+    let mut merged = base.to_vec();
+    for pattern in extra {
+        if !merged.iter().any(|existing| existing == pattern) {
+            merged.push(pattern.clone());
+        }
+    }
+    merged
 }
 
 /// Authentication configuration for remote backends
@@ -764,6 +914,7 @@ mod tests {
     use super::*;
     use crate::app::conversation::{Message, MessageData, UserContent};
     use crate::config::model::builtin::claude_sonnet_4_5 as test_model;
+    use crate::tools::DISPATCH_AGENT_TOOL_NAME;
     use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use steer_tools::tools::{BASH_TOOL_NAME, EDIT_TOOL_NAME};
 
@@ -780,6 +931,8 @@ mod tests {
             workspace_name: None,
             tool_config: SessionToolConfig::default(),
             system_prompt: None,
+            primary_agent_id: None,
+            policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model: test_model(),
         };
@@ -857,6 +1010,87 @@ mod tests {
 
         assert_eq!(policy.tool_decision("read_file"), ToolDecision::Allow);
         assert_eq!(policy.tool_decision("write_file"), ToolDecision::Allow);
+    }
+
+    #[test]
+    fn test_tool_approval_policy_overrides_union_rules() {
+        let base_policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: ["read_file"].iter().map(|s| s.to_string()).collect(),
+                per_tool: [
+                    (
+                        BASH_TOOL_NAME.to_string(),
+                        ToolRule::Bash {
+                            patterns: vec!["git status".to_string()],
+                        },
+                    ),
+                    (
+                        DISPATCH_AGENT_TOOL_NAME.to_string(),
+                        ToolRule::DispatchAgent {
+                            agent_patterns: vec!["explore".to_string()],
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        };
+
+        let overrides = ToolApprovalPolicyOverrides {
+            default_behavior: Some(UnapprovedBehavior::Deny),
+            preapproved: ApprovalRulesOverrides {
+                tools: ["write_file"].iter().map(|s| s.to_string()).collect(),
+                per_tool: [
+                    (
+                        BASH_TOOL_NAME.to_string(),
+                        ToolRuleOverrides::Bash {
+                            patterns: vec!["git log".to_string()],
+                        },
+                    ),
+                    (
+                        DISPATCH_AGENT_TOOL_NAME.to_string(),
+                        ToolRuleOverrides::DispatchAgent {
+                            agent_patterns: vec!["review".to_string()],
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        };
+
+        let merged = overrides.apply_to(&base_policy);
+
+        assert_eq!(merged.default_behavior, UnapprovedBehavior::Deny);
+        assert!(merged.preapproved.tools.contains("read_file"));
+        assert!(merged.preapproved.tools.contains("write_file"));
+
+        let bash_patterns = match merged
+            .preapproved
+            .per_tool
+            .get(BASH_TOOL_NAME)
+            .expect("bash rule")
+        {
+            ToolRule::Bash { patterns } => patterns,
+            other => panic!("Unexpected bash rule: {other:?}"),
+        };
+        assert!(bash_patterns.contains(&"git status".to_string()));
+        assert!(bash_patterns.contains(&"git log".to_string()));
+        assert_eq!(bash_patterns.len(), 2);
+
+        let agent_patterns = match merged
+            .preapproved
+            .per_tool
+            .get(DISPATCH_AGENT_TOOL_NAME)
+            .expect("dispatch_agent rule")
+        {
+            ToolRule::DispatchAgent { agent_patterns } => agent_patterns,
+            other => panic!("Unexpected dispatch_agent rule: {other:?}"),
+        };
+        assert!(agent_patterns.contains(&"explore".to_string()));
+        assert!(agent_patterns.contains(&"review".to_string()));
+        assert_eq!(agent_patterns.len(), 2);
     }
 
     #[test]
@@ -1013,6 +1247,8 @@ mod tests {
             workspace_name: None,
             tool_config: SessionToolConfig::default(), // No backends configured
             system_prompt: None,
+            primary_agent_id: None,
+            policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model: test_model(),
         };

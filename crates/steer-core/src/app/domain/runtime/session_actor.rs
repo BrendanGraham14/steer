@@ -539,7 +539,7 @@ impl SessionActor {
                 Ok(())
             }
 
-            Effect::ReloadToolSchemas { session_id: _ } => {
+            Effect::ReloadToolSchemas { session_id } => {
                 let resolver = self
                     .session_mcp_backends
                     .as_ref()
@@ -553,7 +553,20 @@ impl SessionActor {
                     None => schemas,
                 };
 
-                self.state.tools = schemas;
+                if let Err(err) = self
+                    .internal_action_tx
+                    .send(Action::ToolSchemasUpdated {
+                        session_id,
+                        schemas,
+                    })
+                    .await
+                {
+                    tracing::error!(
+                        session_id = %self.session_id,
+                        error = %err,
+                        "Failed to dispatch tool schema reload"
+                    );
+                }
 
                 Ok(())
             }

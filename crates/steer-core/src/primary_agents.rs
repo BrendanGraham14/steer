@@ -5,8 +5,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use crate::config::model::ModelId;
+use crate::prompts::system_prompt_for_model;
 use crate::session::state::{
-    ApprovalRules, SessionConfig, ToolApprovalPolicy, ToolRule, ToolVisibility, UnapprovedBehavior,
+    ApprovalRules, SessionConfig, SessionPolicyOverrides, ToolApprovalPolicy, ToolRule,
+    ToolVisibility, UnapprovedBehavior,
 };
 use crate::tools::DISPATCH_AGENT_TOOL_NAME;
 use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
@@ -85,24 +87,93 @@ pub fn default_primary_agent_id() -> &'static str {
     DEFAULT_PRIMARY_AGENT_ID
 }
 
-pub fn apply_primary_agent_to_config(
-    spec: &PrimaryAgentSpec,
-    base_config: &SessionConfig,
-) -> SessionConfig {
+pub fn resolve_effective_config(base_config: &SessionConfig) -> SessionConfig {
     let mut config = base_config.clone();
 
-    if let Some(model) = spec.model.clone() {
-        config.default_model = model;
-    }
+    let requested_agent_id = base_config
+        .primary_agent_id
+        .clone()
+        .unwrap_or_else(|| DEFAULT_PRIMARY_AGENT_ID.to_string());
 
-    if let Some(prompt) = spec.system_prompt.as_ref() {
-        config.system_prompt = Some(prompt.clone());
-    }
+    let (primary_agent_id, spec) = match primary_agent_spec(&requested_agent_id) {
+        Some(spec) => (requested_agent_id, spec),
+        None => {
+            let fallback_spec = primary_agent_spec(DEFAULT_PRIMARY_AGENT_ID).unwrap_or_else(|| {
+                PrimaryAgentSpec {
+                    id: DEFAULT_PRIMARY_AGENT_ID.to_string(),
+                    name: "Normal".to_string(),
+                    description: "Default agent".to_string(),
+                    model: None,
+                    system_prompt: None,
+                    tool_visibility: ToolVisibility::All,
+                    approval_policy: ToolApprovalPolicy::default(),
+                }
+            });
+            (DEFAULT_PRIMARY_AGENT_ID.to_string(), fallback_spec)
+        }
+    };
 
-    config.tool_config.visibility = spec.tool_visibility.clone();
-    config.tool_config.approval_policy = spec.approval_policy.clone();
+    let effective_model = resolve_default_model(&config, &spec, &base_config.policy_overrides);
+    let effective_visibility = base_config
+        .policy_overrides
+        .tool_visibility
+        .clone()
+        .unwrap_or_else(|| spec.tool_visibility.clone());
+    let effective_approval_policy = base_config
+        .policy_overrides
+        .approval_policy
+        .apply_to(&spec.approval_policy);
+    let effective_system_prompt =
+        resolve_system_prompt(&config, &spec, &effective_model, &base_config.policy_overrides);
+
+    config.primary_agent_id = Some(primary_agent_id);
+    config.default_model = effective_model;
+    config.tool_config.visibility = effective_visibility;
+    config.tool_config.approval_policy = effective_approval_policy;
+    config.system_prompt = effective_system_prompt;
 
     config
+}
+
+fn resolve_default_model(
+    config: &SessionConfig,
+    spec: &PrimaryAgentSpec,
+    overrides: &SessionPolicyOverrides,
+) -> ModelId {
+    let mut model = config.default_model.clone();
+    if let Some(spec_model) = spec.model.as_ref() {
+        model = spec_model.clone();
+    }
+    if let Some(override_model) = overrides.default_model.as_ref() {
+        model = override_model.clone();
+    }
+    model
+}
+
+fn resolve_system_prompt(
+    config: &SessionConfig,
+    spec: &PrimaryAgentSpec,
+    model: &ModelId,
+    _overrides: &SessionPolicyOverrides,
+) -> Option<String> {
+    if let Some(prompt) = spec.system_prompt.as_ref() {
+        return Some(prompt.clone());
+    }
+
+    if let Some(prompt) = config.system_prompt.as_ref()
+        && !prompt.trim().is_empty()
+        && !is_known_primary_agent_prompt(prompt)
+    {
+        return Some(prompt.clone());
+    }
+
+    Some(system_prompt_for_model(model))
+}
+
+fn is_known_primary_agent_prompt(prompt: &str) -> bool {
+    primary_agent_specs()
+        .iter()
+        .any(|spec| spec.system_prompt.as_deref() == Some(prompt))
 }
 
 fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
@@ -161,7 +232,10 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
 mod tests {
     use super::*;
     use crate::config::model::builtin;
-    use crate::session::state::{SessionToolConfig, ToolRule, WorkspaceConfig};
+    use crate::session::state::{
+        ApprovalRulesOverrides, SessionPolicyOverrides, SessionToolConfig, ToolApprovalPolicyOverrides,
+        ToolRule, ToolRuleOverrides, WorkspaceConfig,
+    };
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
     use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use std::collections::HashMap;
@@ -179,6 +253,8 @@ mod tests {
             workspace_name: None,
             tool_config: SessionToolConfig::read_only(),
             system_prompt: Some("base prompt".to_string()),
+            primary_agent_id: None,
+            policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model: builtin::claude_sonnet_4_5(),
         }
@@ -193,10 +269,10 @@ mod tests {
     }
 
     #[test]
-    fn apply_primary_agent_preserves_base_when_unset() {
-        let config = base_config();
-        let spec = primary_agent_spec(NORMAL_PRIMARY_AGENT_ID).expect("normal spec");
-        let updated = apply_primary_agent_to_config(&spec, &config);
+    fn resolve_effective_config_preserves_base_when_unset() {
+        let mut config = base_config();
+        config.primary_agent_id = Some(NORMAL_PRIMARY_AGENT_ID.to_string());
+        let updated = resolve_effective_config(&config);
 
         assert_eq!(updated.default_model, config.default_model);
         assert_eq!(updated.system_prompt, config.system_prompt);
@@ -204,24 +280,55 @@ mod tests {
     }
 
     #[test]
-    fn apply_primary_agent_overrides_fields() {
-        let config = base_config();
-        let spec = PrimaryAgentSpec {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            description: "Test spec".to_string(),
-            model: Some(builtin::claude_sonnet_4_5()),
-            system_prompt: Some("override prompt".to_string()),
-            tool_visibility: ToolVisibility::All,
-            approval_policy: ToolApprovalPolicy {
-                default_behavior: UnapprovedBehavior::Allow,
-                preapproved: ApprovalRules::default(),
+    fn resolve_effective_config_applies_overrides() {
+        let mut config = base_config();
+        config.primary_agent_id = Some(NORMAL_PRIMARY_AGENT_ID.to_string());
+        config.policy_overrides = SessionPolicyOverrides {
+            default_model: Some(builtin::claude_haiku_4_5()),
+            tool_visibility: Some(ToolVisibility::ReadOnly),
+            approval_policy: ToolApprovalPolicyOverrides {
+                default_behavior: Some(UnapprovedBehavior::Allow),
+                preapproved: ApprovalRulesOverrides {
+                    tools: ["custom_tool".to_string()].into_iter().collect(),
+                    per_tool: [(
+                        "bash".to_string(),
+                        ToolRuleOverrides::Bash {
+                            patterns: vec!["git status".to_string()],
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
+                },
             },
         };
 
-        let updated = apply_primary_agent_to_config(&spec, &config);
-        assert_eq!(updated.system_prompt, Some("override prompt".to_string()));
-        assert_eq!(updated.tool_config.approval_policy, spec.approval_policy);
+        let updated = resolve_effective_config(&config);
+        assert_eq!(updated.default_model, builtin::claude_haiku_4_5());
+        assert_eq!(updated.tool_config.visibility, ToolVisibility::ReadOnly);
+        assert_eq!(
+            updated.tool_config.approval_policy.default_behavior,
+            UnapprovedBehavior::Allow
+        );
+        assert!(updated
+            .tool_config
+            .approval_policy
+            .preapproved
+            .tools
+            .contains("custom_tool"));
+
+        let rule = updated
+            .tool_config
+            .approval_policy
+            .preapproved
+            .per_tool
+            .get("bash")
+            .expect("bash rule");
+        match rule {
+            ToolRule::Bash { patterns } => {
+                assert!(patterns.contains(&"git status".to_string()));
+            }
+            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
+        }
     }
 
     #[test]
