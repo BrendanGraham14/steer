@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use steer_core::config::model::ModelId;
 use steer_core::session::{
-    ApprovalRules, ApprovalRulesOverrides, BackendConfig, RemoteAuth, SessionConfig,
-    SessionPolicyOverrides, SessionToolConfig, ToolApprovalPolicy, ToolApprovalPolicyOverrides,
-    ToolRule, ToolRuleOverrides, ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
+    ApprovalRulesOverrides, BackendConfig, RemoteAuth, SessionConfig, SessionPolicyOverrides,
+    SessionToolConfig, ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolRuleOverrides,
+    ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
 };
 use thiserror::Error;
 use tokio::fs;
@@ -837,14 +837,16 @@ patterns = [
         assert!(bash_rule.is_some(), "Bash rule should be present");
 
         match bash_rule.unwrap() {
-            ToolRule::Bash { patterns } => {
+            ToolRuleOverrides::Bash { patterns } => {
                 assert_eq!(patterns.len(), 4);
                 assert_eq!(patterns[0], "git status");
                 assert_eq!(patterns[1], "git log*");
                 assert_eq!(patterns[2], "npm run*");
                 assert_eq!(patterns[3], "cargo build*");
             }
-            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
+            ToolRuleOverrides::DispatchAgent { .. } => {
+                panic!("Unexpected dispatch agent rule")
+            }
         }
     }
 
@@ -875,10 +877,12 @@ patterns = []
         assert!(bash_rule.is_some());
 
         match bash_rule.unwrap() {
-            ToolRule::Bash { patterns } => {
+            ToolRuleOverrides::Bash { patterns } => {
                 assert_eq!(patterns.len(), 0);
             }
-            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
+            ToolRuleOverrides::DispatchAgent { .. } => {
+                panic!("Unexpected dispatch agent rule")
+            }
         }
     }
 
@@ -924,12 +928,14 @@ patterns = ["ls -la", "pwd"]
         assert!(bash_rule.is_some());
 
         match bash_rule.unwrap() {
-            ToolRule::Bash { patterns } => {
+            ToolRuleOverrides::Bash { patterns } => {
                 assert_eq!(patterns.len(), 2);
                 assert_eq!(patterns[0], "ls -la");
                 assert_eq!(patterns[1], "pwd");
             }
-            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
+            ToolRuleOverrides::DispatchAgent { .. } => {
+                panic!("Unexpected dispatch agent rule")
+            }
         }
     }
 
@@ -960,12 +966,12 @@ agent_patterns = ["explore", "explore-*"]
         assert!(dispatch_rule.is_some(), "Dispatch agent rule should be present");
 
         match dispatch_rule.unwrap() {
-            ToolRule::DispatchAgent { agent_patterns } => {
+            ToolRuleOverrides::DispatchAgent { agent_patterns } => {
                 assert_eq!(agent_patterns.len(), 2);
                 assert_eq!(agent_patterns[0], "explore");
                 assert_eq!(agent_patterns[1], "explore-*");
             }
-            ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
+            ToolRuleOverrides::Bash { .. } => panic!("Unexpected bash rule"),
         }
     }
 
@@ -1076,7 +1082,7 @@ project = "test-project"
         assert!(bash_rule.is_some());
 
         match bash_rule.unwrap() {
-            ToolRule::Bash { patterns } => {
+            ToolRuleOverrides::Bash { patterns } => {
                 assert_eq!(patterns.len(), 5);
                 assert_eq!(patterns[0], "git status");
                 assert_eq!(patterns[1], "git diff");
@@ -1084,17 +1090,19 @@ project = "test-project"
                 assert_eq!(patterns[3], "npm test");
                 assert_eq!(patterns[4], "cargo check");
             }
-            ToolRule::DispatchAgent { .. } => panic!("Unexpected dispatch agent rule"),
+            ToolRuleOverrides::DispatchAgent { .. } => {
+                panic!("Unexpected dispatch agent rule")
+            }
         }
 
         let dispatch_rule = policy.preapproved.per_tool.get("dispatch_agent");
         assert!(dispatch_rule.is_some());
 
         match dispatch_rule.unwrap() {
-            ToolRule::DispatchAgent { agent_patterns } => {
+            ToolRuleOverrides::DispatchAgent { agent_patterns } => {
                 assert_eq!(agent_patterns.as_slice(), ["explore"]);
             }
-            ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
+            ToolRuleOverrides::Bash { .. } => panic!("Unexpected bash rule"),
         }
     }
 }

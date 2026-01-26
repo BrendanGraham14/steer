@@ -459,24 +459,22 @@ impl Tui {
 
     async fn start_new_session(&mut self) -> Result<()> {
         use std::collections::HashMap;
-        use steer_core::session::state::{SessionConfig, SessionToolConfig, WorkspaceConfig};
+        use steer_grpc::client_api::{
+            CreateSessionParams, SessionPolicyOverrides, SessionToolConfig, WorkspaceConfig,
+        };
 
-        let session_config = SessionConfig {
+        let session_params = CreateSessionParams {
             workspace: WorkspaceConfig::default(),
-            workspace_ref: None,
-            workspace_id: None,
-            repo_ref: None,
-            parent_session_id: None,
-            workspace_name: None,
             tool_config: SessionToolConfig::default(),
-            system_prompt: None,
+            primary_agent_id: None,
+            policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model: self.current_model.clone(),
         };
 
         let new_session_id = self
             .client
-            .create_session(session_config)
+            .create_session(session_params)
             .await
             .map_err(|e| Error::Generic(format!("Failed to create new session: {e}")))?;
 
@@ -1678,12 +1676,13 @@ pub async fn run_tui(
     session_id: Option<String>,
     model: steer_core::config::model::ModelId,
     directory: Option<std::path::PathBuf>,
-    system_prompt: Option<String>,
     theme_name: Option<String>,
     force_setup: bool,
 ) -> Result<()> {
     use std::collections::HashMap;
-    use steer_core::session::{SessionConfig, SessionToolConfig};
+    use steer_grpc::client_api::{
+        CreateSessionParams, SessionPolicyOverrides, SessionToolConfig, WorkspaceConfig,
+    };
 
     // Load theme - use catppuccin-mocha as default if none specified
     let loader = theme::ThemeLoader::new();
@@ -1741,25 +1740,22 @@ pub async fn run_tui(
         (session_id, messages)
     } else {
         // Create a new session
-        let session_config = SessionConfig {
-            workspace: if let Some(ref dir) = directory {
-                steer_core::session::state::WorkspaceConfig::Local { path: dir.clone() }
-            } else {
-                steer_core::session::state::WorkspaceConfig::default()
-            },
-            workspace_ref: None,
-            workspace_id: None,
-            repo_ref: None,
-            parent_session_id: None,
-            workspace_name: None,
+        let workspace = if let Some(ref dir) = directory {
+            WorkspaceConfig::Local { path: dir.clone() }
+        } else {
+            WorkspaceConfig::default()
+        };
+        let session_params = CreateSessionParams {
+            workspace,
             tool_config: SessionToolConfig::default(),
-            system_prompt,
+            primary_agent_id: None,
+            policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model: model.clone(),
         };
 
         let session_id = client
-            .create_session(session_config)
+            .create_session(session_params)
             .await
             .map_err(Box::new)?;
         (session_id, vec![])
@@ -1850,7 +1846,6 @@ pub async fn run_tui_auth_setup(
         session_id,
         model.unwrap_or(steer_core::config::model::builtin::claude_sonnet_4_5()),
         session_db,
-        None, // system_prompt
         theme_name,
         true, // force_setup = true for auth setup
     )

@@ -267,6 +267,7 @@ async fn main() -> Result<()> {
 #[cfg(feature = "ui")]
 async fn run_tui_local(params: TuiParams) -> Result<()> {
     use steer_grpc::local_server;
+    use steer_grpc::client_api::CreateSessionParams;
 
     let mut session_id = params.session_id;
 
@@ -361,10 +362,11 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
             .with_overrides(overrides);
 
         let session_config = loader.load().await?;
+        let session_params = CreateSessionParams::from(session_config);
 
         // Create the session
         let new_session_id = client
-            .create_session(session_config)
+            .create_session(session_params)
             .await
             .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
         tracing::info!("Created session from config: {}", new_session_id);
@@ -378,7 +380,6 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         session_id,
         model_id,
         params.directory.clone(),
-        None, // system_prompt is already applied to the session
         params.theme.clone(),
         params.force_setup,
     )
@@ -389,6 +390,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
 #[cfg(feature = "ui")]
 async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
     use steer_grpc::AgentClient;
+    use steer_grpc::client_api::CreateSessionParams;
 
     let mut session_id = params.session_id;
 
@@ -463,10 +465,11 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
             .with_overrides(overrides);
 
         let session_config = loader.load().await?;
+        let session_params = CreateSessionParams::from(session_config);
 
         // Create the session
         let new_session_id = client
-            .create_session(session_config)
+            .create_session(session_params)
             .await
             .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
         tracing::info!("Created session from config: {}", new_session_id);
@@ -480,7 +483,6 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
         session_id,
         model_id,
         params.directory.clone(),
-        None, // system_prompt is already applied to the session
         params.theme.clone(),
         params.force_setup,
     )

@@ -4,16 +4,15 @@ use std::sync::Arc;
 
 use steer_core::app::domain::action::{Action, McpServerState};
 use steer_core::app::domain::types::SessionId;
-use steer_core::session::{
-    SessionConfig as CoreSessionConfig, SessionPolicyOverrides, SessionToolConfig as CoreSessionToolConfig,
-    WorkspaceConfig as CoreWorkspaceConfig,
+use steer_grpc::client_api::{
+    ClientEvent, CreateSessionParams, SessionPolicyOverrides, SessionToolConfig,
+    WorkspaceConfig as ClientWorkspaceConfig,
 };
-use steer_grpc::client_api::ClientEvent;
 use steer_grpc::{AgentClient, ServiceHost, ServiceHostConfig};
 use steer_proto::agent::v1::{
     CreateSessionRequest, GetAuthProgressRequest, ListFilesRequest, StartAuthRequest,
-    SubscribeSessionEventsRequest, WorkspaceConfig, agent_service_client::AgentServiceClient,
-    auth_progress::State as AuthProgressState,
+    SubscribeSessionEventsRequest, WorkspaceConfig as ProtoWorkspaceConfig,
+    agent_service_client::AgentServiceClient, auth_progress::State as AuthProgressState,
 };
 use steer_tui::error::Result;
 use tempfile::TempDir;
@@ -145,7 +144,7 @@ async fn test_tui_agent_service_file_listing() {
     // Test 1: Create a session with local workspace
     let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
     let create_req = CreateSessionRequest {
-        workspace_config: Some(WorkspaceConfig {
+        workspace_config: Some(ProtoWorkspaceConfig {
             config: Some(steer_proto::agent::v1::workspace_config::Config::Local(
                 steer_proto::agent::v1::LocalWorkspaceConfig {
                     path: workspace_path.to_string_lossy().to_string(),
@@ -372,24 +371,18 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
     let client = AgentClient::from_channel(channel).await.unwrap();
 
     let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
-    let session_config = CoreSessionConfig {
-        workspace: CoreWorkspaceConfig::Local {
+    let session_params = CreateSessionParams {
+        workspace: ClientWorkspaceConfig::Local {
             path: workspace_path.clone(),
         },
-        workspace_ref: None,
-        workspace_id: None,
-        repo_ref: None,
-        parent_session_id: None,
-        workspace_name: None,
-        tool_config: CoreSessionToolConfig::default(),
-        system_prompt: None,
+        tool_config: SessionToolConfig::default(),
         primary_agent_id: None,
         policy_overrides: SessionPolicyOverrides::empty(),
         metadata: HashMap::new(),
         default_model: default_model.clone(),
     };
 
-    let first_session_id = client.create_session(session_config).await.unwrap();
+    let first_session_id = client.create_session(session_params).await.unwrap();
     client.subscribe_session_events().await.unwrap();
     let mut event_rx = client.subscribe_client_events().await;
 
@@ -408,24 +401,18 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
         .unwrap();
     wait_for_mcp_event(&mut event_rx, "test-mcp-1").await;
 
-    let session_config = CoreSessionConfig {
-        workspace: CoreWorkspaceConfig::Local {
+    let session_params = CreateSessionParams {
+        workspace: ClientWorkspaceConfig::Local {
             path: workspace_path.clone(),
         },
-        workspace_ref: None,
-        workspace_id: None,
-        repo_ref: None,
-        parent_session_id: None,
-        workspace_name: None,
-        tool_config: CoreSessionToolConfig::default(),
-        system_prompt: None,
+        tool_config: SessionToolConfig::default(),
         primary_agent_id: None,
         policy_overrides: SessionPolicyOverrides::empty(),
         metadata: HashMap::new(),
         default_model,
     };
 
-    let second_session_id = client.create_session(session_config).await.unwrap();
+    let second_session_id = client.create_session(session_params).await.unwrap();
     assert_ne!(first_session_id, second_session_id);
 
     client.subscribe_session_events().await.unwrap();
@@ -481,7 +468,7 @@ async fn test_tui_fuzzy_finder_with_grpc_events() {
     let mut grpc_client = AgentServiceClient::new(channel.clone());
     let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
     let create_req = CreateSessionRequest {
-        workspace_config: Some(WorkspaceConfig {
+        workspace_config: Some(ProtoWorkspaceConfig {
             config: Some(steer_proto::agent::v1::workspace_config::Config::Local(
                 steer_proto::agent::v1::LocalWorkspaceConfig {
                     path: workspace_path.to_string_lossy().to_string(),
@@ -591,7 +578,7 @@ async fn test_workspace_changed_event_flow() {
     let mut grpc_client = AgentServiceClient::new(channel.clone());
     let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
     let create_req = CreateSessionRequest {
-        workspace_config: Some(WorkspaceConfig {
+        workspace_config: Some(ProtoWorkspaceConfig {
             config: Some(steer_proto::agent::v1::workspace_config::Config::Local(
                 steer_proto::agent::v1::LocalWorkspaceConfig {
                     path: workspace_path.to_string_lossy().to_string(),

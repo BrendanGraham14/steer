@@ -154,41 +154,6 @@ impl RuntimeAgentService {
         steer_core::config::model::ModelId::new(chosen.provider.clone(), chosen.id.clone())
     }
 
-    fn proto_to_workspace_ref(
-        reference: proto::WorkspaceRef,
-    ) -> Result<steer_workspace::WorkspaceRef, Status> {
-        let environment_id = Self::parse_environment_id(&reference.environment_id)?;
-        let workspace_id = Self::parse_workspace_id(&reference.workspace_id)?;
-        let repo_id = Self::parse_repo_id(&reference.repo_id)?;
-        Ok(steer_workspace::WorkspaceRef {
-            environment_id,
-            workspace_id,
-            repo_id,
-        })
-    }
-
-    fn proto_to_repo_ref(reference: proto::RepoRef) -> Result<steer_workspace::RepoRef, Status> {
-        let environment_id = Self::parse_environment_id(&reference.environment_id)?;
-        let repo_id = Self::parse_repo_id(&reference.repo_id)?;
-        let vcs_kind = reference.vcs_kind.and_then(|value| {
-            match steer_proto::remote_workspace::v1::VcsKind::try_from(value) {
-                Ok(steer_proto::remote_workspace::v1::VcsKind::Git) => {
-                    Some(steer_workspace::VcsKind::Git)
-                }
-                Ok(steer_proto::remote_workspace::v1::VcsKind::Jj) => {
-                    Some(steer_workspace::VcsKind::Jj)
-                }
-                _ => None,
-            }
-        });
-        Ok(steer_workspace::RepoRef {
-            environment_id,
-            repo_id,
-            root_path: std::path::PathBuf::from(reference.root_path),
-            vcs_kind,
-        })
-    }
-
     fn workspace_manager_error_to_status(err: steer_workspace::WorkspaceManagerError) -> Status {
         match err {
             steer_workspace::WorkspaceManagerError::NotFound(msg) => Status::not_found(msg),
@@ -479,33 +444,13 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .map(proto_to_workspace_config)
             .unwrap_or_default();
 
-        if req.system_prompt.is_some() {
-            return Err(Status::invalid_argument(
-                "system_prompt is no longer configurable; use primary agent policies instead",
-            ));
-        }
-
         let policy_overrides = proto_to_session_policy_overrides(req.policy_overrides);
 
-        let workspace_id = match req.workspace_id {
-            Some(value) => Some(Self::parse_workspace_id(&value)?),
-            None => None,
-        };
-
-        let workspace_ref = match req.workspace_ref {
-            Some(reference) => Some(Self::proto_to_workspace_ref(reference)?),
-            None => None,
-        };
-
-        let mut repo_ref = match req.repo_ref {
-            Some(reference) => Some(Self::proto_to_repo_ref(reference)?),
-            None => None,
-        };
-
-        let parent_session_id = match req.parent_session_id {
-            Some(value) => Some(Self::parse_session_id(&value)?),
-            None => None,
-        };
+        let workspace_id = None;
+        let workspace_ref = None;
+        let mut repo_ref = None;
+        let parent_session_id = None;
+        let mut workspace_name = None;
 
         if repo_ref.is_none()
             && let steer_core::session::state::WorkspaceConfig::Local { path } = &workspace_config
@@ -522,6 +467,10 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                         root_path: repo_info.root_path.clone(),
                         vcs_kind: repo_info.vcs_kind,
                     });
+                    workspace_name = repo_info
+                        .root_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned());
                 }
                 Err(_) => {}
             }
@@ -533,7 +482,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             workspace_id,
             repo_ref,
             parent_session_id,
-            workspace_name: req.workspace_name,
+            workspace_name,
             tool_config,
             system_prompt: None,
             primary_agent_id: req.primary_agent_id,

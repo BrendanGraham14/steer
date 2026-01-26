@@ -4,7 +4,7 @@ use tonic::Request;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
-use crate::client_api::ClientEvent;
+use crate::client_api::{ClientEvent, CreateSessionParams};
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
     proto_to_repo_info, proto_to_workspace_info, proto_to_workspace_status,
@@ -16,7 +16,7 @@ use crate::grpc::error::GrpcError;
 type GrpcResult<T> = std::result::Result<T, GrpcError>;
 
 use steer_core::app::conversation::Message;
-use steer_core::session::{McpServerInfo, SessionConfig};
+use steer_core::session::McpServerInfo;
 use steer_proto::agent::v1::{
     self as proto, CreateSessionRequest, DeleteSessionRequest, GetConversationRequest,
     GetDefaultModelRequest, GetMcpServersRequest, GetSessionRequest, GetWorkspaceStatusRequest,
@@ -72,36 +72,20 @@ impl AgentClient {
         Self::from_channel(channel).await
     }
 
-    pub async fn create_session(&self, config: SessionConfig) -> GrpcResult<String> {
+    pub async fn create_session(&self, params: CreateSessionParams) -> GrpcResult<String> {
         debug!("Creating new session with gRPC server");
 
-        let workspace_config = workspace_config_to_proto(&config.workspace);
-        let tool_config = session_tool_config_to_proto(&config.tool_config);
+        let workspace_config = workspace_config_to_proto(&params.workspace);
+        let tool_config = session_tool_config_to_proto(&params.tool_config);
 
         let request = Request::new(CreateSessionRequest {
-            metadata: config.metadata,
+            metadata: params.metadata,
             tool_config: Some(tool_config),
             workspace_config: Some(workspace_config),
-            system_prompt: config.system_prompt,
-            default_model: Some(model_to_proto(config.default_model)),
-            workspace_id: config.workspace_id.map(|id| id.as_uuid().to_string()),
-            workspace_ref: config
-                .workspace_ref
-                .as_ref()
-                .map(|reference| proto::WorkspaceRef {
-                    environment_id: reference.environment_id.as_uuid().to_string(),
-                    workspace_id: reference.workspace_id.as_uuid().to_string(),
-                    repo_id: reference.repo_id.as_uuid().to_string(),
-                }),
-            parent_session_id: config.parent_session_id.as_ref().map(|id| id.to_string()),
-            workspace_name: config.workspace_name.clone(),
-            repo_ref: config
-                .repo_ref
-                .as_ref()
-                .map(crate::grpc::conversions::repo_ref_to_proto),
-            primary_agent_id: config.primary_agent_id.clone(),
+            default_model: Some(model_to_proto(params.default_model)),
+            primary_agent_id: params.primary_agent_id,
             policy_overrides: Some(session_policy_overrides_to_proto(
-                &config.policy_overrides,
+                &params.policy_overrides,
             )),
         });
 

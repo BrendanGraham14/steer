@@ -234,16 +234,12 @@ message WorkspaceChangedEvent {
 
 message CreateSessionRequest {
   reserved 1;  // formerly tool_policy (redundant with tool_config.approval_policy)
+  reserved 5, 7, 8, 9, 10, 11;
+  reserved "system_prompt", "workspace_id", "workspace_ref", "parent_session_id", "workspace_name", "repo_ref";
   map<string, string> metadata = 2;
   optional SessionToolConfig tool_config = 3;
   optional WorkspaceConfig workspace_config = 4;
-  optional string system_prompt = 5;
   ModelSpec default_model = 6;  // Required: default model for the session
-  optional string workspace_id = 7;
-  optional WorkspaceRef workspace_ref = 8;
-  optional string parent_session_id = 9;
-  optional string workspace_name = 10;
-  optional RepoRef repo_ref = 11;
   optional string primary_agent_id = 12;
   optional SessionPolicyOverrides policy_overrides = 13;
 }

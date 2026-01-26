@@ -7,6 +7,7 @@ use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 
 use steer_core::catalog::CatalogConfig;
 use steer_grpc::AgentClient;
+use steer_grpc::client_api::CreateSessionParams;
 
 pub struct CreateSessionCommand {
     pub session_config: Option<std::path::PathBuf>,
@@ -106,9 +107,10 @@ impl Command for CreateSessionCommand {
             .with_overrides(overrides);
 
         let session_config = loader.load().await?;
+        let session_params = CreateSessionParams::from(session_config);
 
         let session_id = client
-            .create_session(session_config)
+            .create_session(session_params)
             .await
             .map_err(|e| eyre!("Failed to create session: {}", e))?;
 
