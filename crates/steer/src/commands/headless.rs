@@ -15,7 +15,7 @@ use super::Command;
 use crate::session_config::{SessionConfigLoader, SessionConfigOverrides};
 use steer_core::app::MessageData;
 use steer_core::app::conversation::{Message, UserContent};
-use steer_core::session::{ApprovalRules, ToolApprovalPolicy, UnapprovedBehavior};
+use steer_core::session::{ApprovalRulesOverrides, ToolApprovalPolicyOverrides};
 
 pub struct HeadlessCommand {
     pub model: Option<String>,
@@ -32,6 +32,12 @@ pub struct HeadlessCommand {
 #[async_trait]
 impl Command for HeadlessCommand {
     async fn execute(&self) -> Result<()> {
+        if self.system_prompt.is_some() {
+            return Err(eyre!(
+                "system_prompt is no longer supported; use primary agent policies instead"
+            ));
+        }
+
         let message = self.extract_message()?;
         let model_to_use = self.model.as_ref().unwrap_or(&self.global_model);
         let normalized_catalogs = self.normalize_catalog_paths();
@@ -121,7 +127,7 @@ impl HeadlessCommand {
         default_model: steer_core::config::model::ModelId,
     ) -> Result<steer_core::session::state::SessionConfig> {
         let overrides = SessionConfigOverrides {
-            system_prompt: self.system_prompt.clone(),
+            default_model: self.model.as_ref().map(|_| default_model.clone()),
             ..Default::default()
         };
 
@@ -134,7 +140,7 @@ impl HeadlessCommand {
 
         let mut config = loader.load().await?;
 
-        let auto_approve_policy = {
+        let auto_approve_rules = {
             let all_tools = [
                 BASH_TOOL_NAME,
                 GREP_TOOL_NAME,
@@ -152,16 +158,16 @@ impl HeadlessCommand {
             .iter()
             .map(|s| s.to_string())
             .collect::<std::collections::HashSet<String>>();
-            ToolApprovalPolicy {
-                default_behavior: UnapprovedBehavior::Prompt,
-                preapproved: ApprovalRules {
-                    tools: all_tools,
-                    per_tool: std::collections::HashMap::new(),
-                },
+            ApprovalRulesOverrides {
+                tools: all_tools,
+                per_tool: std::collections::HashMap::new(),
             }
         };
 
-        config.tool_config.approval_policy = auto_approve_policy;
+        config.policy_overrides.approval_policy = ToolApprovalPolicyOverrides {
+            default_behavior: None,
+            preapproved: auto_approve_rules,
+        };
         config
             .metadata
             .insert("mode".to_string(), "headless".to_string());

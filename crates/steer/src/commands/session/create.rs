@@ -22,10 +22,11 @@ pub struct CreateSessionCommand {
 #[async_trait]
 impl Command for CreateSessionCommand {
     async fn execute(&self) -> Result<()> {
-        let overrides = SessionConfigOverrides {
-            system_prompt: self.system_prompt.clone(),
-            metadata: self.metadata.clone(),
-        };
+        if self.system_prompt.is_some() {
+            return Err(eyre!(
+                "system_prompt is no longer supported; use primary agent policies instead"
+            ));
+        }
 
         let mut local_grpc_setup = None;
         let client = if let Some(remote_addr) = &self.remote {
@@ -93,6 +94,12 @@ impl Command for CreateSessionCommand {
             }
         } else {
             server_default.clone()
+        };
+
+        let overrides = SessionConfigOverrides {
+            metadata: self.metadata.clone(),
+            default_model: self.model.as_ref().map(|_| default_model.clone()),
+            ..Default::default()
         };
 
         let loader = SessionConfigLoader::new(default_model, self.session_config.clone())

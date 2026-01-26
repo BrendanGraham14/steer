@@ -1,7 +1,7 @@
 use steer::RuntimeBuilder;
 use steer_core::app::MessageData;
 use steer_core::app::conversation::AssistantContent;
-use steer_core::session::state::SessionConfig;
+use steer_core::test_utils::read_only_session_config;
 
 #[tokio::test]
 #[ignore]
@@ -15,7 +15,7 @@ async fn test_headless_mode_integration() {
         .await
         .expect("Failed to create runtime");
 
-    let config = SessionConfig::read_only(model.clone());
+    let config = read_only_session_config(model.clone());
 
     let result = steer::run_once_new_session(&runtime.handle(), config, message, model)
         .await

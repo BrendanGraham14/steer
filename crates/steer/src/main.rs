@@ -15,8 +15,8 @@ use tracing::{debug, warn};
 struct TuiParams {
     session_id: Option<String>,
     model: Option<String>,
+    model_override: Option<String>,
     directory: Option<PathBuf>,
-    system_prompt: Option<String>,
     session_db: Option<PathBuf>,
     session_config_path: Option<PathBuf>,
     theme: Option<String>,
@@ -29,8 +29,8 @@ struct RemoteTuiParams {
     remote_addr: String,
     session_id: Option<String>,
     model: Option<String>,
+    model_override: Option<String>,
     directory: Option<PathBuf>,
-    system_prompt: Option<String>,
     session_config_path: Option<PathBuf>,
     theme: Option<String>,
     catalogs: Vec<PathBuf>,
@@ -46,6 +46,12 @@ async fn main() -> Result<()> {
     color_eyre::install()?;
 
     let cli = Cli::parse();
+
+    if cli.system_prompt.is_some() {
+        eyre::bail!(
+            "--system-prompt is no longer supported; use primary agent policies instead"
+        );
+    }
 
     // Load .env file if it exists
     steer::cli::config::load_env()?;
@@ -111,8 +117,8 @@ async fn main() -> Result<()> {
                         remote_addr: addr,
                         session_id: cli.session,
                         model: preferred_model.clone(),
+                        model_override: cli_model.clone(),
                         directory: cli.directory,
-                        system_prompt: cli.system_prompt,
                         session_config_path,
                         theme: theme_name.clone(),
                         catalogs,
@@ -134,8 +140,8 @@ async fn main() -> Result<()> {
                     run_tui_local(TuiParams {
                         session_id: cli.session,
                         model: preferred_model.clone(),
+                        model_override: cli_model.clone(),
                         directory: cli.directory,
-                        system_prompt: cli.system_prompt,
                         session_db: cli.session_db,
                         session_config_path,
                         theme: theme_name,
@@ -173,6 +179,11 @@ async fn main() -> Result<()> {
             remote,
             catalogs,
         } => {
+            if system_prompt.is_some() {
+                eyre::bail!(
+                    "--system-prompt is no longer supported; use primary agent policies instead"
+                );
+            }
             let remote_addr = remote.or(cli.remote.clone());
             let catalog_paths: Vec<String> = catalogs
                 .iter()
@@ -192,7 +203,7 @@ async fn main() -> Result<()> {
                 global_model,
                 session,
                 session_config,
-                system_prompt: system_prompt.or(cli.system_prompt),
+                system_prompt,
                 remote: remote_addr,
                 directory: cli.directory,
                 catalogs,
@@ -292,9 +303,15 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         .await
         .map_err(|e| eyre::eyre!("Failed to fetch server default model: {}", e))?;
 
+    let mut model_override = None;
     let model_id = if let Some(model_str) = params.model.as_deref() {
         match client.resolve_model(model_str).await {
-            Ok(id) => id,
+            Ok(id) => {
+                if params.model_override.is_some() {
+                    model_override = Some(id.clone());
+                }
+                id
+            }
             Err(e) => {
                 let fallback = server_default.to_string();
                 warn!(
@@ -336,7 +353,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
     if session_id.is_none() {
         // Load session config (explicit path if provided, else auto-discovery or defaults)
         let overrides = SessionConfigOverrides {
-            system_prompt: params.system_prompt.clone(),
+            default_model: model_override.clone(),
             ..Default::default()
         };
 
@@ -408,9 +425,15 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
         .await
         .map_err(|e| eyre::eyre!("Failed to fetch server default model: {}", e))?;
 
+    let mut model_override = None;
     let model_id = if let Some(model_str) = params.model.as_deref() {
         match client.resolve_model(model_str).await {
-            Ok(resolved) => resolved,
+            Ok(resolved) => {
+                if params.model_override.is_some() {
+                    model_override = Some(resolved.clone());
+                }
+                resolved
+            }
             Err(e) => {
                 let fallback = server_default.to_string();
                 warn!(
@@ -432,7 +455,7 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
     if session_id.is_none() {
         // Load session config (explicit path if provided, else auto-discovery or defaults)
         let overrides = SessionConfigOverrides {
-            system_prompt: params.system_prompt.clone(),
+            default_model: model_override.clone(),
             ..Default::default()
         };
 

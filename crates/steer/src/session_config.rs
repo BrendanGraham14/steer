@@ -5,8 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use steer_core::config::model::ModelId;
 use steer_core::session::{
-    ApprovalRules, BackendConfig, RemoteAuth, SessionConfig, SessionToolConfig, ToolApprovalPolicy,
-    ToolRule, ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
+    ApprovalRules, ApprovalRulesOverrides, BackendConfig, RemoteAuth, SessionConfig,
+    SessionPolicyOverrides, SessionToolConfig, ToolApprovalPolicy, ToolApprovalPolicyOverrides,
+    ToolRule, ToolRuleOverrides, ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
 };
 use thiserror::Error;
 use tokio::fs;
@@ -35,6 +36,9 @@ pub enum SessionConfigError {
 
     #[error("MCP HTTP transport url cannot be empty")]
     EmptyHttpUrl,
+
+    #[error("system_prompt is no longer supported in session config or CLI overrides")]
+    SystemPromptUnsupported,
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -115,6 +119,7 @@ pub enum ToolVisibilityObject {
 pub struct SessionConfigOverrides {
     pub system_prompt: Option<String>,
     pub metadata: Option<String>,
+    pub default_model: Option<ModelId>,
 }
 
 /// Loads session configuration from files and applies overrides
@@ -175,6 +180,8 @@ impl SessionConfigLoader {
                 workspace_name: None,
                 tool_config: SessionToolConfig::default(),
                 system_prompt: None,
+                primary_agent_id: None,
+                policy_overrides: SessionPolicyOverrides::empty(),
                 metadata: HashMap::new(),
             })
         };
@@ -202,13 +209,18 @@ impl SessionConfigLoader {
             None => WorkspaceConfig::default(),
         };
 
+        if partial.system_prompt.is_some() {
+            return Err(SessionConfigError::SystemPromptUnsupported.into());
+        }
+
+        let mut policy_overrides = SessionPolicyOverrides::empty();
         let tool_config = if let Some(partial_tool_config) = partial.tool_config {
             let backends = partial_tool_config.backends.unwrap_or_default();
 
-            let visibility = match partial_tool_config.visibility {
+            let visibility_override = match partial_tool_config.visibility {
                 Some(ToolVisibilityConfig::String(s)) => match s.as_str() {
-                    "all" => ToolVisibility::All,
-                    "read_only" => ToolVisibility::ReadOnly,
+                    "all" => Some(ToolVisibility::All),
+                    "read_only" => Some(ToolVisibility::ReadOnly),
                     _ => {
                         return Err(eyre::eyre!(
                             "Invalid visibility string: {}. Expected 'all' or 'read_only'",
@@ -217,22 +229,26 @@ impl SessionConfigLoader {
                     }
                 },
                 Some(ToolVisibilityConfig::Object(obj)) => match obj {
-                    ToolVisibilityObject::Whitelist(tools) => ToolVisibility::Whitelist(tools),
-                    ToolVisibilityObject::Blacklist(tools) => ToolVisibility::Blacklist(tools),
+                    ToolVisibilityObject::Whitelist(tools) => {
+                        Some(ToolVisibility::Whitelist(tools))
+                    }
+                    ToolVisibilityObject::Blacklist(tools) => {
+                        Some(ToolVisibility::Blacklist(tools))
+                    }
                 },
-                None => ToolVisibility::default(),
+                None => None,
             };
 
-            let approval_policy = if let Some(approvals) = partial_tool_config.approvals {
-                let default_behavior = approvals
-                    .default_behavior
-                    .unwrap_or(UnapprovedBehavior::Prompt);
+            if visibility_override.is_some() {
+                policy_overrides.tool_visibility = visibility_override;
+            }
 
+            if let Some(approvals) = partial_tool_config.approvals {
                 let mut per_tool = HashMap::new();
                 if let Some(bash) = approvals.bash {
                     per_tool.insert(
                         "bash".to_string(),
-                        ToolRule::Bash {
+                        ToolRuleOverrides::Bash {
                             patterns: bash.patterns,
                         },
                     );
@@ -240,27 +256,25 @@ impl SessionConfigLoader {
                 if let Some(dispatch_agent) = approvals.dispatch_agent {
                     per_tool.insert(
                         "dispatch_agent".to_string(),
-                        ToolRule::DispatchAgent {
+                        ToolRuleOverrides::DispatchAgent {
                             agent_patterns: dispatch_agent.agent_patterns,
                         },
                     );
                 }
 
-                ToolApprovalPolicy {
-                    default_behavior,
-                    preapproved: ApprovalRules {
+                policy_overrides.approval_policy = ToolApprovalPolicyOverrides {
+                    default_behavior: approvals.default_behavior,
+                    preapproved: ApprovalRulesOverrides {
                         tools: approvals.tools,
                         per_tool,
                     },
-                }
-            } else {
-                ToolApprovalPolicy::default()
-            };
+                };
+            }
 
             SessionToolConfig {
                 backends,
-                visibility,
-                approval_policy,
+                visibility: ToolVisibility::default(),
+                approval_policy: ToolApprovalPolicy::default(),
                 metadata: HashMap::new(),
             }
         } else {
@@ -278,15 +292,20 @@ impl SessionConfigLoader {
             parent_session_id: None,
             workspace_name: None,
             tool_config,
-            system_prompt: partial.system_prompt,
+            system_prompt: None,
+            primary_agent_id: None,
+            policy_overrides,
             metadata: partial.metadata.unwrap_or_default(),
         })
     }
 
     fn apply_overrides(&self, config: &mut SessionConfig) -> Result<()> {
-        // Apply system prompt override
-        if let Some(system_prompt) = &self.overrides.system_prompt {
-            config.system_prompt = Some(system_prompt.clone());
+        if self.overrides.system_prompt.is_some() {
+            return Err(SessionConfigError::SystemPromptUnsupported.into());
+        }
+
+        if let Some(model) = &self.overrides.default_model {
+            config.policy_overrides.default_model = Some(model.clone());
         }
 
         // Apply metadata overrides
@@ -431,8 +450,6 @@ visibility = "all"
     #[tokio::test]
     async fn test_full_config_parsing() {
         let toml_content = r#"
-system_prompt = "You are a helpful assistant."
-
 [workspace]
 type = "local"
 
@@ -445,11 +462,6 @@ project = "my-project"
 
         let partial: PartialSessionConfig = toml::from_str(toml_content).unwrap();
         assert!(partial.workspace.is_some());
-        assert!(partial.system_prompt.is_some());
-        assert_eq!(
-            partial.system_prompt.unwrap(),
-            "You are a helpful assistant."
-        );
         assert!(partial.metadata.is_some());
     }
 
@@ -470,15 +482,34 @@ project = "my-project"
     #[tokio::test]
     async fn test_config_loader_with_overrides() {
         let overrides = SessionConfigOverrides {
-            system_prompt: Some("Custom prompt".to_string()),
+            default_model: Some(test_model()),
             metadata: Some("key1=value1,key2=value2".to_string()),
+            ..Default::default()
         };
 
         let loader = SessionConfigLoader::new(test_model(), None).with_overrides(overrides);
         let config = loader.load().await.unwrap();
 
-        assert_eq!(config.system_prompt, Some("Custom prompt".to_string()));
+        assert_eq!(config.policy_overrides.default_model, Some(test_model()));
         assert_eq!(config.metadata.get("key1"), Some(&"value1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_config_loader_rejects_system_prompt_override() {
+        let overrides = SessionConfigOverrides {
+            system_prompt: Some("Custom prompt".to_string()),
+            ..Default::default()
+        };
+
+        let loader = SessionConfigLoader::new(test_model(), None).with_overrides(overrides);
+        let result = loader.load().await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("system_prompt is no longer supported")
+        );
     }
 
     #[tokio::test]
@@ -508,6 +539,31 @@ project = "my-project"
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("Failed to parse TOML config"));
+    }
+
+    #[tokio::test]
+    async fn test_rejects_system_prompt_in_config_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+system_prompt = "You are a helpful assistant."
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
+        let result = loader.load().await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("system_prompt is no longer supported")
+        );
     }
 
     #[tokio::test]
@@ -615,8 +671,6 @@ backends = [
         writeln!(
             temp_file,
             r#"
-system_prompt = "Original prompt"
-
 [tool_config]
 visibility = "all"
 
@@ -631,15 +685,14 @@ key2 = "original2"
         .unwrap();
 
         let overrides = SessionConfigOverrides {
-            system_prompt: Some("Overridden prompt".to_string()),
             metadata: Some("key2=overridden2,key3=new3".to_string()),
+            ..Default::default()
         };
 
         let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()))
             .with_overrides(overrides);
         let config = loader.load().await.unwrap();
 
-        assert_eq!(config.system_prompt, Some("Overridden prompt".to_string()));
         assert_eq!(config.metadata.get("key1"), Some(&"original1".to_string()));
         assert_eq!(
             config.metadata.get("key2"),
@@ -647,10 +700,13 @@ key2 = "original2"
         );
         assert_eq!(config.metadata.get("key3"), Some(&"new3".to_string()));
 
-        assert!(matches!(config.tool_config.visibility, ToolVisibility::All));
         assert!(matches!(
-            config.tool_config.approval_policy.default_behavior,
-            UnapprovedBehavior::Prompt
+            config.policy_overrides.tool_visibility,
+            Some(ToolVisibility::All)
+        ));
+        assert!(matches!(
+            config.policy_overrides.approval_policy.default_behavior,
+            Some(UnapprovedBehavior::Prompt)
         ));
     }
 
@@ -672,8 +728,8 @@ visibility = {{ whitelist = ["grep", "ls", "view"] }}
         let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
-        match &config.tool_config.visibility {
-            ToolVisibility::Whitelist(tools) => {
+        match &config.policy_overrides.tool_visibility {
+            Some(ToolVisibility::Whitelist(tools)) => {
                 assert_eq!(tools.len(), 3);
                 assert!(tools.contains("grep"));
                 assert!(tools.contains("ls"));
@@ -701,8 +757,8 @@ visibility = {{ blacklist = ["bash", "edit_file"] }}
         let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
-        match &config.tool_config.visibility {
-            ToolVisibility::Blacklist(tools) => {
+        match &config.policy_overrides.tool_visibility {
+            Some(ToolVisibility::Blacklist(tools)) => {
                 assert_eq!(tools.len(), 2);
                 assert!(tools.contains("bash"));
                 assert!(tools.contains("edit_file"));
@@ -773,7 +829,7 @@ patterns = [
         let config = loader.load().await.unwrap();
 
         let bash_rule = config
-            .tool_config
+            .policy_overrides
             .approval_policy
             .preapproved
             .per_tool
@@ -811,7 +867,7 @@ patterns = []
         let config = loader.load().await.unwrap();
 
         let bash_rule = config
-            .tool_config
+            .policy_overrides
             .approval_policy
             .preapproved
             .per_tool
@@ -850,14 +906,17 @@ patterns = ["ls -la", "pwd"]
         let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
-        assert!(matches!(config.tool_config.visibility, ToolVisibility::All));
         assert!(matches!(
-            config.tool_config.approval_policy.default_behavior,
-            UnapprovedBehavior::Prompt
+            config.policy_overrides.tool_visibility,
+            Some(ToolVisibility::All)
+        ));
+        assert!(matches!(
+            config.policy_overrides.approval_policy.default_behavior,
+            Some(UnapprovedBehavior::Prompt)
         ));
 
         let bash_rule = config
-            .tool_config
+            .policy_overrides
             .approval_policy
             .preapproved
             .per_tool
@@ -893,7 +952,7 @@ agent_patterns = ["explore", "explore-*"]
         let config = loader.load().await.unwrap();
 
         let dispatch_rule = config
-            .tool_config
+            .policy_overrides
             .approval_policy
             .preapproved
             .per_tool
@@ -930,7 +989,7 @@ tools = ["grep", "ls"]
 
         assert!(
             config
-                .tool_config
+                .policy_overrides
                 .approval_policy
                 .preapproved
                 .tools
@@ -938,7 +997,7 @@ tools = ["grep", "ls"]
         );
         assert!(
             config
-                .tool_config
+                .policy_overrides
                 .approval_policy
                 .preapproved
                 .tools
@@ -946,7 +1005,7 @@ tools = ["grep", "ls"]
         );
         assert!(
             config
-                .tool_config
+                .policy_overrides
                 .approval_policy
                 .preapproved
                 .per_tool
@@ -964,8 +1023,6 @@ tools = ["grep", "ls"]
         writeln!(
             temp_file,
             r#"
-system_prompt = "You are a helpful assistant"
-
 [workspace]
 type = "local"
 
@@ -998,20 +1055,17 @@ project = "test-project"
         let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
         let config = loader.load().await.unwrap();
 
-        assert_eq!(
-            config.system_prompt,
-            Some("You are a helpful assistant".to_string())
-        );
+        assert!(config.system_prompt.is_none());
         assert!(matches!(config.workspace, WorkspaceConfig::Local { .. }));
         assert_eq!(
             config.metadata.get("project"),
             Some(&"test-project".to_string())
         );
 
-        let policy = &config.tool_config.approval_policy;
+        let policy = &config.policy_overrides.approval_policy;
         assert!(matches!(
             policy.default_behavior,
-            UnapprovedBehavior::Prompt
+            Some(UnapprovedBehavior::Prompt)
         ));
         assert_eq!(policy.preapproved.tools.len(), 3);
         assert!(policy.preapproved.tools.contains("grep"));
