@@ -13,7 +13,10 @@ use crate::app::domain::event::{CancellationInfo, OperationKind, SessionEvent};
 use crate::app::domain::session::EventStore;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::builtin::default_model;
-use crate::session::state::SessionConfig;
+use crate::session::state::{
+    SessionConfig, SessionPolicyOverrides, SessionToolConfig, ToolApprovalPolicyOverrides,
+    ToolVisibility, WorkspaceConfig,
+};
 use crate::tools::{SessionMcpBackends, ToolExecutor};
 
 use super::interpreter::EffectInterpreter;
@@ -75,7 +78,7 @@ impl AgentInterpreter {
         let mut session_config = config
             .session_config
             .clone()
-            .unwrap_or_else(|| SessionConfig::read_only(default_model()));
+            .unwrap_or_else(|| default_session_config(default_model()));
         if session_config.parent_session_id.is_none() {
             session_config.parent_session_id = config.parent_session_id;
         }
@@ -378,6 +381,34 @@ impl AgentInterpreter {
             .await
             .map_err(|e| AgentInterpreterError::EventStore(e.to_string()))?;
         Ok(())
+    }
+}
+
+fn default_session_config(default_model: crate::config::model::ModelId) -> SessionConfig {
+    SessionConfig {
+        workspace: WorkspaceConfig::Local {
+            path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        },
+        workspace_ref: None,
+        workspace_id: None,
+        repo_ref: None,
+        parent_session_id: None,
+        workspace_name: None,
+        tool_config: SessionToolConfig {
+            backends: Vec::new(),
+            visibility: ToolVisibility::All,
+            approval_policy: crate::session::state::ToolApprovalPolicy::default(),
+            metadata: HashMap::new(),
+        },
+        system_prompt: None,
+        primary_agent_id: None,
+        policy_overrides: SessionPolicyOverrides {
+            default_model: None,
+            tool_visibility: Some(ToolVisibility::ReadOnly),
+            approval_policy: ToolApprovalPolicyOverrides::empty(),
+        },
+        metadata: HashMap::new(),
+        default_model,
     }
 }
 

@@ -6,7 +6,10 @@
 use crate::app::AppConfig;
 use crate::auth::{AuthStorage, CredentialType};
 use crate::config::LlmConfigProvider;
+use crate::config::model::ModelId;
+use crate::session::state::{SessionConfig, SessionPolicyOverrides, SessionToolConfig, WorkspaceConfig};
 use std::sync::Arc;
+use std::collections::HashMap;
 
 /// In-memory storage for testing - doesn't use keyring or filesystem
 pub struct InMemoryAuthStorage {
@@ -70,4 +73,24 @@ pub fn test_llm_config_provider() -> LlmConfigProvider {
 pub fn test_app_config() -> AppConfig {
     // Use the default which is designed for tests
     AppConfig::default()
+}
+
+/// Build a minimal read-only session config for tests.
+pub fn read_only_session_config(default_model: ModelId) -> SessionConfig {
+    SessionConfig {
+        workspace: WorkspaceConfig::Local {
+            path: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        },
+        workspace_ref: None,
+        workspace_id: None,
+        repo_ref: None,
+        parent_session_id: None,
+        workspace_name: None,
+        tool_config: SessionToolConfig::read_only(),
+        system_prompt: None,
+        primary_agent_id: None,
+        policy_overrides: SessionPolicyOverrides::empty(),
+        metadata: HashMap::new(),
+        default_model,
+    }
 }

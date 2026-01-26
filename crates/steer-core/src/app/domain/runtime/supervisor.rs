@@ -14,7 +14,7 @@ use crate::app::domain::session::EventStore;
 use crate::app::domain::state::AppState;
 use crate::app::domain::types::{MessageId, NonEmptyString, OpId, RequestId, SessionId};
 use crate::config::model::ModelId;
-use crate::primary_agents::default_primary_agent_id;
+use crate::primary_agents::{default_primary_agent_id, resolve_effective_config};
 use crate::prompts::system_prompt_for_model;
 use crate::session::state::SessionConfig;
 use crate::tools::ToolExecutor;
@@ -210,6 +210,12 @@ impl RuntimeSupervisor {
         self.event_store.create_session(session_id).await?;
 
         let mut config = config;
+
+        if config.primary_agent_id.is_none() {
+            config.primary_agent_id = Some(default_primary_agent_id().to_string());
+        }
+        let mut config = resolve_effective_config(&config);
+
         let system_context = self.resolve_system_context(&config).await;
         if let Some(context) = &system_context {
             config.system_prompt = Some(context.prompt.clone());
@@ -225,11 +231,7 @@ impl RuntimeSupervisor {
             .await?;
 
         let mut state = AppState::new(session_id);
-        state.apply_session_config(
-            &config,
-            Some(default_primary_agent_id().to_string()),
-            true,
-        );
+        state.apply_session_config(&config, config.primary_agent_id.clone(), true);
         if let Some(system_context) = system_context {
             state.cached_system_context = Some(system_context);
         }
@@ -266,11 +268,13 @@ impl RuntimeSupervisor {
             apply_event_to_state(&mut state, event);
         }
 
-        if let Some(config) = state.session_config.as_mut() {
-            let system_context = self.resolve_system_context(config).await;
+        if let Some(config) = state.session_config.clone() {
+            let mut resolved = resolve_effective_config(&config);
+            let system_context = self.resolve_system_context(&resolved).await;
             if let Some(context) = &system_context {
-                config.system_prompt = Some(context.prompt.clone());
+                resolved.system_prompt = Some(context.prompt.clone());
             }
+            state.apply_session_config(&resolved, resolved.primary_agent_id.clone(), false);
             state.cached_system_context = system_context;
         }
 
@@ -818,6 +822,8 @@ mod tests {
             workspace_name: None,
             tool_config: crate::session::state::SessionToolConfig::default(),
             system_prompt: None,
+            primary_agent_id: None,
+            policy_overrides: crate::session::state::SessionPolicyOverrides::empty(),
             metadata: std::collections::HashMap::new(),
         }
     }

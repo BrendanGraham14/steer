@@ -11,7 +11,8 @@ use crate::error::Error;
 use crate::model_registry::ModelRegistry;
 use crate::runners::OneShotRunner;
 use crate::session::state::{
-    ApprovalRules, SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolVisibility,
+    ApprovalRules, ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides,
+    SessionToolConfig, ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolVisibility,
     UnapprovedBehavior, WorkspaceConfig,
 };
 use crate::tools::{ToolExecutor, ToolSystemBuilder};
@@ -86,35 +87,44 @@ impl AgentSpawner for DefaultAgentSpawner {
             Vec::new()
         };
 
-        let approval_policy = ToolApprovalPolicy {
-            default_behavior: UnapprovedBehavior::Prompt,
-            preapproved: ApprovalRules {
-                tools: visibility_tools.clone(),
-                per_tool: HashMap::new(),
-            },
-        };
-
         let tool_config = SessionToolConfig {
             backends: mcp_backends,
-            visibility: ToolVisibility::Whitelist(visibility_tools),
-            approval_policy,
+            visibility: ToolVisibility::All,
+            approval_policy: ToolApprovalPolicy::default(),
             metadata: HashMap::new(),
         };
 
-        let mut session_config = SessionConfig::read_only(config.model.clone());
-        session_config.workspace = WorkspaceConfig::Local {
-            path: workspace_path,
+        let policy_overrides = SessionPolicyOverrides {
+            default_model: Some(config.model.clone()),
+            tool_visibility: Some(ToolVisibility::Whitelist(visibility_tools.clone())),
+            approval_policy: ToolApprovalPolicyOverrides {
+                default_behavior: Some(UnapprovedBehavior::Prompt),
+                preapproved: ApprovalRulesOverrides {
+                    tools: visibility_tools,
+                    per_tool: HashMap::new(),
+                },
+            },
         };
-        session_config.workspace_ref = config.workspace_ref.clone();
-        session_config.workspace_id = config.workspace_id;
-        session_config.repo_ref = config.repo_ref.clone();
-        session_config.workspace_name = config.workspace_name.clone();
-        session_config.parent_session_id = Some(config.parent_session_id);
-        session_config.system_prompt = config
-            .system_context
-            .as_ref()
-            .map(|context| context.prompt.clone());
-        session_config.tool_config = tool_config;
+
+        let session_config = SessionConfig {
+            workspace: WorkspaceConfig::Local {
+                path: workspace_path,
+            },
+            workspace_ref: config.workspace_ref.clone(),
+            workspace_id: config.workspace_id,
+            repo_ref: config.repo_ref.clone(),
+            parent_session_id: Some(config.parent_session_id),
+            workspace_name: config.workspace_name.clone(),
+            tool_config,
+            system_prompt: config
+                .system_context
+                .as_ref()
+                .map(|context| context.prompt.clone()),
+            primary_agent_id: None,
+            policy_overrides,
+            metadata: HashMap::new(),
+            default_model: config.model.clone(),
+        };
 
         let tool_executor = self.build_tool_executor(workspace);
         let runtime = RuntimeService::spawn(

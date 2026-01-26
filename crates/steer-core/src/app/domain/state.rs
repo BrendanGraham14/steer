@@ -254,7 +254,9 @@ impl AppState {
         self.pending_approval = None;
         self.approval_queue.clear();
 
-        if let Some(primary_agent_id) = primary_agent_id {
+        if let Some(primary_agent_id) =
+            primary_agent_id.or_else(|| config.primary_agent_id.clone())
+        {
             self.primary_agent_id = Some(primary_agent_id);
         }
 
