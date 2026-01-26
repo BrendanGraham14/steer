@@ -11,9 +11,9 @@ use crate::error::Error;
 use crate::model_registry::ModelRegistry;
 use crate::runners::OneShotRunner;
 use crate::session::state::{
-    ApprovalRules, ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides,
-    SessionToolConfig, ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolVisibility,
-    UnapprovedBehavior, WorkspaceConfig,
+    ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides, SessionToolConfig,
+    ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolVisibility, UnapprovedBehavior,
+    WorkspaceConfig,
 };
 use crate::tools::{ToolExecutor, ToolSystemBuilder};
 use crate::workspace::{RepoManager, Workspace, WorkspaceManager};

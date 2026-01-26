@@ -6,7 +6,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
-use crate::app::domain::action::{Action, McpServerState};
+use crate::app::domain::action::{Action, McpServerState, SchemaSource};
 use crate::app::domain::delta::StreamDelta;
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::SessionEvent;
@@ -558,6 +558,9 @@ impl SessionActor {
                     .send(Action::ToolSchemasUpdated {
                         session_id,
                         schemas,
+                        source: SchemaSource::Backend {
+                            backend_name: "tool_executor".to_string(),
+                        },
                     })
                     .await
                 {
