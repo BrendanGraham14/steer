@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::tui::theme::{Component, Theme};
-use steer_core::config::model::ModelId;
+use steer_grpc::client_api::ModelId;
 
 /// Optional update badge info
 #[derive(Clone, Debug)]

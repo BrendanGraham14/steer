@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use steer_core::config::provider::ProviderId;
+use steer_grpc::client_api::{AuthProgress, ProviderId, ProviderInfo};
 
 #[derive(Debug, Clone)]
 pub struct SetupState {
@@ -8,7 +8,7 @@ pub struct SetupState {
     pub auth_providers: HashMap<ProviderId, AuthStatus>,
     pub selected_provider: Option<ProviderId>,
     pub auth_flow_id: Option<String>,
-    pub auth_progress: Option<steer_grpc::proto::AuthProgress>,
+    pub auth_progress: Option<AuthProgress>,
     pub auth_input: String,
     pub error_message: Option<String>,
     pub provider_cursor: usize,
@@ -45,7 +45,7 @@ pub struct RemoteProviderRegistry {
 }
 
 impl RemoteProviderRegistry {
-    pub fn from_proto(providers: Vec<steer_grpc::proto::ProviderInfo>) -> Self {
+    pub fn from_proto(providers: Vec<ProviderInfo>) -> Self {
         let providers = providers
             .into_iter()
             .map(|p| RemoteProviderConfig {

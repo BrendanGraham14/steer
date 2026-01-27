@@ -17,34 +17,33 @@ use futures::{FutureExt, StreamExt};
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, EventStream, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
-use steer_core::app::conversation::{AssistantContent, Message, MessageData};
-
 use steer_grpc::AgentClient;
-use steer_grpc::client_api::{ClientEvent, ModelId, OpId};
+use steer_grpc::client_api::{
+    AssistantContent, ClientEvent, EditingMode, LlmStatus, Message, MessageData, ModelId, OpId,
+    Preferences, ProviderId, WorkspaceStatus,
+};
 
 use crate::tui::events::processor::PendingToolApproval;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-fn auth_status_from_source(
-    source: Option<&steer_grpc::proto::AuthSource>,
-) -> crate::tui::state::AuthStatus {
-    match source.and_then(|s| s.source.as_ref()) {
-        Some(steer_grpc::proto::auth_source::Source::ApiKey(_)) => {
+fn auth_status_from_source(source: Option<&steer_grpc::client_api::AuthSource>) -> crate::tui::state::AuthStatus {
+    match source {
+        Some(steer_grpc::client_api::AuthSource::ApiKey { .. }) => {
             crate::tui::state::AuthStatus::ApiKeySet
         }
-        Some(steer_grpc::proto::auth_source::Source::Plugin(_)) => {
+        Some(steer_grpc::client_api::AuthSource::Plugin { .. }) => {
             crate::tui::state::AuthStatus::OAuthConfigured
         }
         _ => crate::tui::state::AuthStatus::NotConfigured,
     }
 }
 
-fn has_any_auth_source(source: Option<&steer_grpc::proto::AuthSource>) -> bool {
+fn has_any_auth_source(source: Option<&steer_grpc::client_api::AuthSource>) -> bool {
     matches!(
-        source.and_then(|s| s.source.as_ref()),
-        Some(steer_grpc::proto::auth_source::Source::ApiKey(_))
-            | Some(steer_grpc::proto::auth_source::Source::Plugin(_))
+        source,
+        Some(steer_grpc::client_api::AuthSource::ApiKey { .. })
+            | Some(steer_grpc::client_api::AuthSource::Plugin { .. })
     )
 }
 
@@ -193,7 +192,7 @@ pub struct Tui {
     /// Command registry for slash commands
     command_registry: CommandRegistry,
     /// User preferences
-    preferences: steer_core::preferences::Preferences,
+    preferences: Preferences,
     /// Double-tap tracker for key sequences
     double_tap_tracker: crate::tui::state::DoubleTapTracker,
     /// Vim mode state
@@ -249,8 +248,8 @@ impl Tui {
     /// Get the default input mode based on editing preferences
     fn default_input_mode(&self) -> InputMode {
         match self.preferences.ui.editing_mode {
-            steer_core::preferences::EditingMode::Simple => InputMode::Simple,
-            steer_core::preferences::EditingMode::Vim => InputMode::VimNormal,
+            EditingMode::Simple => InputMode::Simple,
+            EditingMode::Vim => InputMode::VimNormal,
         }
     }
 
@@ -287,14 +286,14 @@ impl Tui {
             .unwrap_or((80, 24));
 
         // Load preferences
-        let preferences = steer_core::preferences::Preferences::load()
-            .map_err(crate::error::Error::Core)
+        let preferences = Preferences::load()
+            .map_err(|e| crate::error::Error::Config(e.to_string()))
             .unwrap_or_default();
 
         // Determine initial input mode based on editing mode preference
         let input_mode = match preferences.ui.editing_mode {
-            steer_core::preferences::EditingMode::Simple => InputMode::Simple,
-            steer_core::preferences::EditingMode::Vim => InputMode::VimNormal,
+            EditingMode::Simple => InputMode::Simple,
+            EditingMode::Vim => InputMode::VimNormal,
         };
 
         let tui = Self {
@@ -342,7 +341,7 @@ impl Tui {
 
         // Debug: log all Tool messages to check their IDs
         for message in &messages {
-            if let steer_core::app::MessageData::Tool { tool_use_id, .. } = &message.data {
+            if let MessageData::Tool { tool_use_id, .. } = &message.data {
                 debug!(
                     target: "tui.restore",
                     "Found Tool message with tool_use_id={}",
@@ -360,7 +359,7 @@ impl Tui {
         // The rest of the tool registry population code remains the same
         // Extract tool calls from assistant messages
         for message in &messages {
-            if let steer_core::app::MessageData::Assistant { content, .. } = &message.data {
+            if let MessageData::Assistant { content, .. } = &message.data {
                 debug!(
                     target: "tui.restore",
                     "Processing Assistant message id={}",
@@ -383,7 +382,7 @@ impl Tui {
 
         // Map tool results to their calls
         for message in &messages {
-            if let steer_core::app::MessageData::Tool { tool_use_id, .. } = &message.data {
+            if let MessageData::Tool { tool_use_id, .. } = &message.data {
                 debug!(
                     target: "tui.restore",
                     "Updating registry with Tool result for id={}",
@@ -428,9 +427,7 @@ impl Tui {
         });
     }
 
-    fn format_workspace_status(&self, status: &steer_core::workspace::WorkspaceStatus) -> String {
-        use steer_core::workspace::LlmStatus;
-
+    fn format_workspace_status(&self, status: &WorkspaceStatus) -> String {
         let mut output = String::new();
         output.push_str(&format!("Workspace: {}\n", status.workspace_id.as_uuid()));
         output.push_str(&format!(
@@ -1374,10 +1371,7 @@ impl Tui {
                             let status = auth_status_from_source(
                                 status_map.get(&p.id).and_then(|s| s.as_ref()),
                             );
-                            provider_status.insert(
-                                steer_core::config::provider::ProviderId(p.id.clone()),
-                                status,
-                            );
+                            provider_status.insert(ProviderId(p.id.clone()), status);
                         }
 
                         // Enter setup mode, skipping welcome page
@@ -1407,17 +1401,19 @@ impl Tui {
                                 format!("Current editing mode: {mode_str}")
                             }
                             Some("simple") => {
-                                self.preferences.ui.editing_mode =
-                                    steer_core::preferences::EditingMode::Simple;
+                                self.preferences.ui.editing_mode = EditingMode::Simple;
                                 self.set_mode(InputMode::Simple);
-                                self.preferences.save().map_err(crate::error::Error::Core)?;
+                                self.preferences
+                                    .save()
+                                    .map_err(|e| crate::error::Error::Config(e.to_string()))?;
                                 "Switched to Simple mode".to_string()
                             }
                             Some("vim") => {
-                                self.preferences.ui.editing_mode =
-                                    steer_core::preferences::EditingMode::Vim;
+                                self.preferences.ui.editing_mode = EditingMode::Vim;
                                 self.set_mode(InputMode::VimNormal);
-                                self.preferences.save().map_err(crate::error::Error::Core)?;
+                                self.preferences
+                                    .save()
+                                    .map_err(|e| crate::error::Error::Config(e.to_string()))?;
                                 "Switched to Vim mode (Normal)".to_string()
                             }
                             Some(mode) => {
@@ -1580,9 +1576,7 @@ impl Tui {
                     let text = content
                         .iter()
                         .filter_map(|block| match block {
-                            steer_core::app::conversation::UserContent::Text { text } => {
-                                Some(text.as_str())
-                            }
+                            UserContent::Text { text } => Some(text.as_str()),
                             _ => None,
                         })
                         .collect::<Vec<_>>()
@@ -1593,8 +1587,8 @@ impl Tui {
                         .set_content_from_lines(text.lines().collect::<Vec<_>>());
                     // Switch to appropriate mode based on editing preference
                     self.input_mode = match self.preferences.ui.editing_mode {
-                        steer_core::preferences::EditingMode::Simple => InputMode::Simple,
-                        steer_core::preferences::EditingMode::Vim => InputMode::VimInsert,
+                        EditingMode::Simple => InputMode::Simple,
+                        EditingMode::Vim => InputMode::VimInsert,
                     };
 
                     // Store the message ID we're editing
@@ -1674,7 +1668,7 @@ pub fn setup_panic_hook() {
 pub async fn run_tui(
     client: steer_grpc::AgentClient,
     session_id: Option<String>,
-    model: steer_core::config::model::ModelId,
+    model: ModelId,
     directory: Option<std::path::PathBuf>,
     theme_name: Option<String>,
     force_setup: bool,
@@ -1790,7 +1784,7 @@ pub async fn run_tui(
         .any(|s| has_any_auth_source(s.auth_source.as_ref()));
 
     let should_run_setup = force_setup
-        || (!steer_core::preferences::Preferences::config_path()
+        || (!Preferences::config_path()
             .map(|p| p.exists())
             .unwrap_or(false)
             && !has_any_auth);
@@ -1813,10 +1807,7 @@ pub async fn run_tui(
         let mut provider_status = std::collections::HashMap::new();
         for p in registry.all() {
             let status = auth_status_from_source(status_map.get(&p.id).and_then(|s| s.as_ref()));
-            provider_status.insert(
-                steer_core::config::provider::ProviderId(p.id.clone()),
-                status,
-            );
+            provider_status.insert(ProviderId(p.id.clone()), status);
         }
 
         tui.setup_state = Some(crate::tui::state::SetupState::new(
@@ -1844,7 +1835,7 @@ pub async fn run_tui_auth_setup(
     run_tui(
         client,
         session_id,
-        model.unwrap_or(steer_core::config::model::builtin::claude_sonnet_4_5()),
+        model.unwrap_or(builtin::claude_sonnet_4_5()),
         session_db,
         theme_name,
         true, // force_setup = true for auth setup
@@ -1860,7 +1851,7 @@ mod tests {
 
     use serde_json::json;
 
-    use steer_core::app::conversation::{AssistantContent, Message, MessageData};
+    use steer_grpc::client_api::{AssistantContent, Message, MessageData};
     use tempfile::tempdir;
 
     /// RAII guard to ensure terminal state is restored after a test, even on panic.
@@ -1880,7 +1871,7 @@ mod tests {
         let workspace_root = tempdir().unwrap();
         let (client, _server_handle) =
             local_client_and_server(None, Some(workspace_root.path().to_path_buf())).await;
-        let model = steer_core::config::model::builtin::claude_sonnet_4_5();
+        let model = builtin::claude_sonnet_4_5();
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 
@@ -1947,7 +1938,7 @@ mod tests {
         let workspace_root = tempdir().unwrap();
         let (client, _server_handle) =
             local_client_and_server(None, Some(workspace_root.path().to_path_buf())).await;
-        let model = steer_core::config::model::builtin::claude_sonnet_4_5();
+        let model = builtin::claude_sonnet_4_5();
         let session_id = "test_session_id".to_string();
         let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
 

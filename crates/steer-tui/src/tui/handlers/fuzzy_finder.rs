@@ -5,8 +5,7 @@ use crate::tui::theme::ThemeLoader;
 use crate::tui::widgets::PickerItem;
 use crate::tui::widgets::fuzzy_finder::FuzzyFinderMode;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use steer_core::config::model::ModelId;
-use steer_core::config::provider::ProviderId;
+use steer_grpc::client_api::{ModelId, ProviderId};
 use tui_textarea::Input;
 
 impl Tui {

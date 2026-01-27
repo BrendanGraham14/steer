@@ -2,7 +2,7 @@ use super::{ToolFormatter, helpers::*};
 use crate::tui::theme::{Component, Theme};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
-use steer_core::app::conversation::ToolResult;
+use steer_grpc::client_api::ToolResult;
 
 pub struct DefaultFormatter;
 

@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
-use steer_core::app::conversation::ToolResult;
+use steer_grpc::client_api::ToolResult;
 use textwrap;
 
 /// Fallback formatter for MCP/external tools (names starting with "mcp__")

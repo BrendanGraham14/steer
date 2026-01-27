@@ -197,7 +197,7 @@ mod tests {
     use crate::tui::events::processors::message::MessageEventProcessor;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
     use crate::tui::widgets::ChatListState;
-    use steer_grpc::client_api::{AssistantContent, ModelId, OpId};
+    use steer_grpc::client_api::{AssistantContent, ModelId, OpId, builtin};
 
     use serde_json::json;
     use std::collections::HashSet;
@@ -233,7 +233,7 @@ mod tests {
         let progress_message = None;
         let spinner_state = 0;
         let current_tool_approval = None;
-        let current_model = steer_core::config::model::builtin::claude_sonnet_4_5();
+        let current_model = builtin::claude_sonnet_4_5();
         let messages_updated = false;
         let in_flight_operations = HashSet::new();
         TestContext {

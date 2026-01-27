@@ -7,8 +7,7 @@ use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::chat_list_state::ViewMode;
 use crate::tui::widgets::chat_widgets::message_widget::MessageWidget;
 use ratatui::text::{Line, Span};
-use steer_core::app::conversation::{AssistantContent, Message, MessageData};
-use steer_tools::{ToolCall, ToolResult};
+use steer_grpc::client_api::{AssistantContent, Message, MessageData, ToolCall, ToolResult};
 
 /// Core trait for chat items that can compute their height and render themselves
 pub trait ChatRenderable: Send + Sync {
@@ -236,7 +235,7 @@ impl ChatRenderable for DynamicChatWidget {
 mod tests {
     use super::*;
     use crate::tui::theme::Theme;
-    use steer_core::app::conversation::UserContent;
+    use steer_grpc::client_api::UserContent;
 
     #[test]
     fn test_chat_block_from_message_row() {

@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
-use steer_core::app::conversation::ToolResult;
+use steer_grpc::client_api::ToolResult;
 use steer_tools::tools::todo::write::TodoWriteParams;
 use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
 

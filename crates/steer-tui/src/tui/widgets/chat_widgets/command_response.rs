@@ -137,7 +137,7 @@ impl ChatRenderable for CommandResponseWidget {
                         }
 
                         TuiCommandResponse::ListMcpServers(servers) => {
-                            use steer_core::session::state::McpConnectionState;
+                            use steer_grpc::client_api::McpConnectionState;
 
                             if servers.is_empty() {
                                 lines.push(Line::from(Span::styled(
@@ -277,7 +277,7 @@ impl ChatRenderable for CommandResponseWidget {
                                     }
 
                                     // Transport info
-                                    use steer_core::tools::McpTransport;
+                                    use steer_grpc::client_api::McpTransport;
                                     let transport_desc = match &server.transport {
                                         McpTransport::Stdio { command, args } => {
                                             format!("stdio: {} {}", command, args.join(" "))

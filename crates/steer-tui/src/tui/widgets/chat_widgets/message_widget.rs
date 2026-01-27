@@ -1,5 +1,5 @@
 use ratatui::text::{Line, Span};
-use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+use steer_grpc::client_api::{AssistantContent, Message, MessageData, UserContent};
 
 use crate::tui::theme::{Component, Theme};
 use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;
@@ -315,8 +315,7 @@ mod tests {
     use crate::tui::theme::Theme;
     use crate::tui::widgets::ChatRenderable;
     use crate::tui::widgets::ViewMode;
-    use steer_core::app::conversation::AssistantContent;
-    use steer_core::app::conversation::{Message, MessageData, UserContent};
+    use steer_grpc::client_api::{AssistantContent, Message, MessageData, UserContent};
 
     #[test]
     fn test_message_widget_user_text() {

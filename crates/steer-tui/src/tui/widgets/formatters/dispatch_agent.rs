@@ -5,8 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
-use steer_core::agents::default_agent_spec_id;
-use steer_core::app::conversation::ToolResult;
+use steer_grpc::client_api::{ToolResult, default_agent_spec_id};
 use steer_tools::tools::dispatch_agent::{
     DispatchAgentParams, DispatchAgentTarget, WorkspaceTarget,
 };

@@ -248,10 +248,7 @@ impl ChatRenderable for RowWidget {
 #[cfg(test)]
 mod tests {
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
-    use steer_core::app::{
-        Message,
-        conversation::{AssistantContent, MessageData},
-    };
+    use steer_grpc::client_api::{AssistantContent, Message, MessageData};
 
     use super::RowWidget;
     use crate::tui::{

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use steer_core::app::conversation::ToolResult;
+use steer_grpc::client_api::ToolResult;
 use steer_tools::error::{ToolError, ToolExecutionError};
 use steer_tools::schema::ToolCall;
 

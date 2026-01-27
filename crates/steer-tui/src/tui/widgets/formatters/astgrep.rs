@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use serde_json::Value;
-use steer_core::app::conversation::ToolResult;
+use steer_grpc::client_api::ToolResult;
 use steer_tools::tools::astgrep::AstGrepParams;
 
 pub struct AstGrepFormatter;

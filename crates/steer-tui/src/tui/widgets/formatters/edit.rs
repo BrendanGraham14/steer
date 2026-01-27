@@ -7,7 +7,7 @@ use ratatui::{
 };
 use serde_json::Value;
 use std::path::Path;
-use steer_core::app::conversation::ToolResult;
+use steer_grpc::client_api::ToolResult;
 use steer_tools::tools::edit::{EditParams, multi_edit::MultiEditParams};
 
 pub struct EditFormatter;

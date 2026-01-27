@@ -3,7 +3,7 @@ use lazy_static::lazy_static;
 use ratatui::text::Line;
 use serde_json::Value;
 use std::collections::HashMap;
-use steer_core::app::conversation::ToolResult;
+use steer_grpc::client_api::ToolResult;
 
 pub mod astgrep;
 pub mod bash;

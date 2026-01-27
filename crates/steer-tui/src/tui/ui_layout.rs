@@ -10,7 +10,7 @@ use ratatui::{
     style::Style,
     widgets::{Block, Clear},
 };
-use steer_core::config::model::ModelId;
+use steer_grpc::client_api::ModelId;
 
 /// Computed layout areas for the UI
 pub struct UiLayout {

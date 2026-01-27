@@ -6,6 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Widget},
 };
+use steer_grpc::client_api::ProviderId;
 
 pub struct ProviderSelectionWidget;
 
@@ -47,9 +48,7 @@ impl ProviderSelectionWidget {
             .map(|(i, provider)| {
                 let status = state
                     .auth_providers
-                    .get(&steer_core::config::provider::ProviderId(
-                        provider.id.clone(),
-                    ))
+                    .get(&ProviderId(provider.id.clone()))
                     .unwrap_or(&AuthStatus::NotConfigured);
                 let (icon, status_style) = match status {
                     AuthStatus::OAuthConfigured => ("✓", theme.style(Component::SetupStatusActive)),

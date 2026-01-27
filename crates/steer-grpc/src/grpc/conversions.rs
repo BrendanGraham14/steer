@@ -19,6 +19,12 @@ use steer_tools::ToolCall;
 use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus, TodoWriteFileOperation};
 use uuid::Uuid;
 
+use crate::client_api::{
+    ApiKeyOrigin as ClientApiKeyOrigin, AuthMethod as ClientAuthMethod,
+    AuthProgress as ClientAuthProgress, AuthSource as ClientAuthSource, ProviderAuthStatus,
+    ProviderInfo, StartAuthResponse,
+};
+
 /// Convert a core ModelId to proto ModelSpec
 pub fn model_to_proto(model: steer_core::config::model::ModelId) -> proto::ModelSpec {
     proto::ModelSpec {
@@ -2645,4 +2651,111 @@ pub(crate) fn auth_source_to_proto(source: steer_core::auth::AuthSource) -> prot
             source: Some(Source::None(proto::AuthSourceNone {})),
         },
     }
+}
+
+pub(crate) fn proto_to_auth_source(
+    source: proto::AuthSource,
+) -> Result<ClientAuthSource, ConversionError> {
+    let source = source.source.ok_or_else(|| ConversionError::MissingField {
+        field: "auth_source.source".to_string(),
+    })?;
+    let mapped = match source {
+        proto::auth_source::Source::ApiKey(api_key) => {
+            let origin = match proto::ApiKeyOrigin::try_from(api_key.origin) {
+                Ok(proto::ApiKeyOrigin::Env) => ClientApiKeyOrigin::Env,
+                Ok(proto::ApiKeyOrigin::Stored) => ClientApiKeyOrigin::Stored,
+                _ => {
+                    return Err(ConversionError::InvalidData {
+                        message: format!("Invalid api key origin {}", api_key.origin),
+                    })
+                }
+            };
+            ClientAuthSource::ApiKey { origin }
+        }
+        proto::auth_source::Source::Plugin(plugin) => {
+            let method = match proto::AuthMethod::try_from(plugin.method) {
+                Ok(proto::AuthMethod::Oauth) => ClientAuthMethod::OAuth,
+                Ok(proto::AuthMethod::ApiKey) => ClientAuthMethod::ApiKey,
+                _ => {
+                    return Err(ConversionError::InvalidData {
+                        message: format!("Invalid auth method {}", plugin.method),
+                    })
+                }
+            };
+            ClientAuthSource::Plugin { method }
+        }
+        proto::auth_source::Source::None(_) => ClientAuthSource::None,
+    };
+
+    Ok(mapped)
+}
+
+pub(crate) fn proto_to_auth_progress(
+    progress: proto::AuthProgress,
+) -> Result<ClientAuthProgress, ConversionError> {
+    let state = progress.state.ok_or_else(|| ConversionError::MissingField {
+        field: "auth_progress.state".to_string(),
+    })?;
+    let mapped = match state {
+        proto::auth_progress::State::NeedInput(need_input) => {
+            ClientAuthProgress::NeedInput {
+                prompt: need_input.prompt,
+            }
+        }
+        proto::auth_progress::State::InProgress(in_progress) => {
+            ClientAuthProgress::InProgress {
+                message: in_progress.message,
+            }
+        }
+        proto::auth_progress::State::Complete(_) => ClientAuthProgress::Complete,
+        proto::auth_progress::State::Error(error) => {
+            ClientAuthProgress::Error {
+                message: error.message,
+            }
+        }
+        proto::auth_progress::State::OauthStarted(oauth) => {
+            ClientAuthProgress::OAuthStarted {
+                auth_url: oauth.auth_url,
+            }
+        }
+    };
+
+    Ok(mapped)
+}
+
+pub(crate) fn proto_to_provider_info(
+    info: proto::ProviderInfo,
+) -> Result<ProviderInfo, ConversionError> {
+    Ok(ProviderInfo {
+        id: info.id,
+        name: info.name,
+    })
+}
+
+pub(crate) fn proto_to_provider_auth_status(
+    status: proto::ProviderAuthStatus,
+) -> Result<ProviderAuthStatus, ConversionError> {
+    let auth_source = match status.auth_source {
+        Some(source) => Some(proto_to_auth_source(source)?),
+        None => None,
+    };
+
+    Ok(ProviderAuthStatus {
+        provider_id: status.provider_id,
+        auth_source,
+    })
+}
+
+pub(crate) fn proto_to_start_auth_response(
+    response: proto::StartAuthResponse,
+) -> Result<StartAuthResponse, ConversionError> {
+    let progress = match response.progress {
+        Some(progress) => Some(proto_to_auth_progress(progress)?),
+        None => None,
+    };
+
+    Ok(StartAuthResponse {
+        flow_id: response.flow_id,
+        progress,
+    })
 }

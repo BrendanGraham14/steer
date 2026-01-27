@@ -6,9 +6,10 @@ pub async fn local_client_and_server(
     session_dir: Option<PathBuf>,
     workspace_root: Option<PathBuf>,
 ) -> (AgentClient, tokio::task::JoinHandle<()>) {
+    use steer_grpc::client_api::builtin;
     use steer_grpc::local_server::setup_local_grpc;
     let (channel, server_handle) = setup_local_grpc(
-        steer_core::config::model::builtin::claude_sonnet_4_5(),
+        builtin::claude_sonnet_4_5(),
         session_dir,
         workspace_root,
     )

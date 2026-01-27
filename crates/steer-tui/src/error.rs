@@ -45,10 +45,6 @@ pub enum Error {
     #[error("Operation timed out: {0}")]
     Timeout(String),
 
-    /// Core errors from steer-core
-    #[error("Core error: {0}")]
-    Core(#[from] steer_core::error::Error),
-
     /// Generic errors
     #[error("{0}")]
     Generic(String),

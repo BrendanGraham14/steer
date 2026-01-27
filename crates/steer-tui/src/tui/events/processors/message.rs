@@ -361,7 +361,7 @@ mod tests {
 
     use crate::tui::events::processor::PendingToolApproval;
     use steer_grpc::AgentClient;
-    use steer_grpc::client_api::{AssistantContent, Message, MessageData, ModelId, ToolCall};
+    use steer_grpc::client_api::{AssistantContent, Message, MessageData, ModelId, ToolCall, builtin};
 
     struct TestContext {
         chat_store: ChatStore,
@@ -391,7 +391,7 @@ mod tests {
         let progress_message = None;
         let spinner_state = 0;
         let current_tool_approval = None;
-        let current_model = steer_core::config::model::builtin::claude_sonnet_4_5();
+        let current_model = builtin::claude_sonnet_4_5();
         let messages_updated = false;
 
         TestContext {
@@ -488,7 +488,7 @@ mod tests {
             .process(
                 ClientEvent::AssistantMessageAdded {
                     message: assistant_message,
-                    model: steer_core::config::model::builtin::claude_sonnet_4_5(),
+                    model: builtin::claude_sonnet_4_5(),
                 },
                 &mut ctx,
             )

@@ -14,8 +14,7 @@ use ratatui::{
 };
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use steer_core::app::MessageData;
-use steer_core::app::conversation::{AssistantContent, Message, UserContent};
+use steer_grpc::client_api::{AssistantContent, Message, MessageData, UserContent};
 use steer_tools::{ToolResult, schema::ToolCall};
 
 /// Flattened item types for 1:1 widget mapping
@@ -865,7 +864,7 @@ mod tests {
     use crate::tui::model::NoticeLevel;
     use ratatui::{Terminal, backend::TestBackend};
     use std::time::SystemTime;
-    use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+    use steer_grpc::client_api::{AssistantContent, Message, MessageData, UserContent};
     use steer_tools::result::ExternalResult;
 
     fn create_test_message(content: &str, id: &str) -> ChatItem {

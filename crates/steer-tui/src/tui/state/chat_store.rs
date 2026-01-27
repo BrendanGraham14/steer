@@ -1,7 +1,7 @@
 //! ChatStore - storage for the new ChatItem model
 
 use crate::tui::model::{ChatItem, ChatItemData, RowId};
-use steer_core::app::conversation::{Message, MessageData};
+use steer_grpc::client_api::{Message, MessageData};
 
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
@@ -410,7 +410,7 @@ impl ChatStore {
 mod tests {
     use super::*;
     use std::time::SystemTime;
-    use steer_core::app::conversation::UserContent;
+    use steer_grpc::client_api::UserContent;
 
     fn user_message(id: &str, parent_id: Option<&str>, text: &str) -> Message {
         Message {

@@ -11,6 +11,12 @@ pub use steer_core::config::model::ModelId;
 pub use steer_core::app::domain::delta::ToolCallDelta;
 pub use steer_core::app::domain::event::CompactResult;
 
+pub use steer_core::agents::default_agent_spec_id;
+
+pub use steer_core::config::model::builtin;
+
+pub use steer_core::config::provider;
+
 pub use steer_tools::result::{
     BashResult, EditResult, ExternalResult, FileContentResult, FileListResult, GlobResult,
     GrepResult, ReplaceResult, SearchMatch, SearchResult, TodoListResult, ToolResult,
@@ -26,8 +32,17 @@ pub use steer_core::session::state::{
 };
 
 pub use steer_core::session::McpServerInfo;
+pub use steer_core::session::state::McpConnectionState;
 
 pub use steer_core::app::domain::action::McpServerState;
+
+pub use steer_core::tools::McpTransport;
+
+pub use steer_core::preferences::{EditingMode, Preferences};
+
+pub use steer_core::config::provider::ProviderId;
+
+pub use steer_workspace::{LlmStatus, WorkspaceStatus};
 
 #[derive(Debug, Clone)]
 pub struct CreateSessionParams {

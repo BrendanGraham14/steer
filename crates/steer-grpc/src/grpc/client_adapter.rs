@@ -4,10 +4,13 @@ use tonic::Request;
 use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
-use crate::client_api::{ClientEvent, CreateSessionParams};
+use crate::client_api::{
+    ClientEvent, CreateSessionParams, ProviderAuthStatus, ProviderInfo, StartAuthResponse,
+};
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
-    proto_to_repo_info, proto_to_workspace_info, proto_to_workspace_status,
+    proto_to_provider_auth_status, proto_to_provider_info, proto_to_repo_info,
+    proto_to_start_auth_response, proto_to_workspace_info, proto_to_workspace_status,
     session_policy_overrides_to_proto, session_tool_config_to_proto,
     workspace_config_to_proto,
 };
@@ -675,7 +678,7 @@ impl AgentClient {
         ))
     }
 
-    pub async fn list_providers(&self) -> GrpcResult<Vec<proto::ProviderInfo>> {
+    pub async fn list_providers(&self) -> GrpcResult<Vec<ProviderInfo>> {
         let request = Request::new(proto::ListProvidersRequest {});
         let response = self
             .client
@@ -684,13 +687,19 @@ impl AgentClient {
             .list_providers(request)
             .await
             .map_err(Box::new)?;
-        Ok(response.into_inner().providers)
+        let providers = response
+            .into_inner()
+            .providers
+            .into_iter()
+            .map(proto_to_provider_info)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(providers)
     }
 
     pub async fn get_provider_auth_status(
         &self,
         provider_id: Option<String>,
-    ) -> GrpcResult<Vec<proto::ProviderAuthStatus>> {
+    ) -> GrpcResult<Vec<ProviderAuthStatus>> {
         let request = Request::new(proto::GetProviderAuthStatusRequest { provider_id });
         let response = self
             .client
@@ -699,10 +708,16 @@ impl AgentClient {
             .get_provider_auth_status(request)
             .await
             .map_err(Box::new)?;
-        Ok(response.into_inner().statuses)
+        let statuses = response
+            .into_inner()
+            .statuses
+            .into_iter()
+            .map(proto_to_provider_auth_status)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(statuses)
     }
 
-    pub async fn start_auth(&self, provider_id: String) -> GrpcResult<proto::StartAuthResponse> {
+    pub async fn start_auth(&self, provider_id: String) -> GrpcResult<StartAuthResponse> {
         let request = Request::new(proto::StartAuthRequest { provider_id });
         let response = self
             .client
@@ -711,14 +726,14 @@ impl AgentClient {
             .start_auth(request)
             .await
             .map_err(Box::new)?;
-        Ok(response.into_inner())
+        proto_to_start_auth_response(response.into_inner()).map_err(GrpcError::from)
     }
 
     pub async fn send_auth_input(
         &self,
         flow_id: String,
         input: String,
-    ) -> GrpcResult<proto::AuthProgress> {
+    ) -> GrpcResult<crate::client_api::AuthProgress> {
         let request = Request::new(proto::SendAuthInputRequest { flow_id, input });
         let response = self
             .client
@@ -727,15 +742,19 @@ impl AgentClient {
             .send_auth_input(request)
             .await
             .map_err(Box::new)?;
-        response
+        let progress = response
             .into_inner()
             .progress
             .ok_or_else(|| GrpcError::InvalidSessionState {
                 reason: "Missing auth progress in response".to_string(),
-            })
+            })?;
+        crate::grpc::conversions::proto_to_auth_progress(progress).map_err(GrpcError::from)
     }
 
-    pub async fn get_auth_progress(&self, flow_id: String) -> GrpcResult<proto::AuthProgress> {
+    pub async fn get_auth_progress(
+        &self,
+        flow_id: String,
+    ) -> GrpcResult<crate::client_api::AuthProgress> {
         let request = Request::new(proto::GetAuthProgressRequest { flow_id });
         let response = self
             .client
@@ -744,12 +763,13 @@ impl AgentClient {
             .get_auth_progress(request)
             .await
             .map_err(Box::new)?;
-        response
+        let progress = response
             .into_inner()
             .progress
             .ok_or_else(|| GrpcError::InvalidSessionState {
                 reason: "Missing auth progress in response".to_string(),
-            })
+            })?;
+        crate::grpc::conversions::proto_to_auth_progress(progress).map_err(GrpcError::from)
     }
 
     pub async fn cancel_auth(&self, flow_id: String) -> GrpcResult<()> {

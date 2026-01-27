@@ -6,7 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
-use steer_core::config::provider::{self, ProviderId};
+use steer_grpc::client_api::{AuthProgress, ProviderId, provider};
 
 pub struct AuthenticationWidget;
 
@@ -60,7 +60,7 @@ impl AuthenticationWidget {
             .as_ref()
             .and_then(|progress| progress.state.as_ref())
         {
-            Some(steer_grpc::proto::auth_progress::State::OauthStarted(oauth)) => {
+            Some(AuthProgress::OAuthStarted { auth_url }) => {
                 content.push(Line::from(""));
                 content.push(Line::from(Span::styled(
                     "OAuth Authentication",
@@ -70,7 +70,7 @@ impl AuthenticationWidget {
                 content.push(Line::from("Please visit this URL in your browser:"));
                 content.push(Line::from(""));
                 content.push(Line::from(Span::styled(
-                    &oauth.auth_url,
+                    auth_url,
                     theme.style(Component::SetupUrl),
                 )));
                 content.push(Line::from(""));
@@ -104,9 +104,9 @@ impl AuthenticationWidget {
                     ),
                 ]));
             }
-            Some(steer_grpc::proto::auth_progress::State::NeedInput(need_input)) => {
+            Some(AuthProgress::NeedInput { prompt }) => {
                 content.push(Line::from(""));
-                content.push(Line::from(need_input.prompt.clone()));
+                content.push(Line::from(prompt.clone()));
                 content.push(Line::from(""));
 
                 let masked_input = if state.auth_input.is_empty() {
@@ -128,17 +128,17 @@ impl AuthenticationWidget {
                     )));
                 }
             }
-            Some(steer_grpc::proto::auth_progress::State::InProgress(in_progress)) => {
+            Some(AuthProgress::InProgress { message }) => {
                 content.push(Line::from(""));
-                content.push(Line::from(in_progress.message.clone()));
+                content.push(Line::from(message.clone()));
             }
-            Some(steer_grpc::proto::auth_progress::State::Complete(_)) => {
+            Some(AuthProgress::Complete) => {
                 content.push(Line::from(""));
                 content.push(Line::from("Authentication complete."));
             }
-            Some(steer_grpc::proto::auth_progress::State::Error(error)) => {
+            Some(AuthProgress::Error { message }) => {
                 content.push(Line::from(""));
-                content.push(Line::from(format!("Error: {}", error.message)));
+                content.push(Line::from(format!("Error: {}", message)));
             }
             None => {
                 content.push(Line::from(""));
@@ -179,8 +179,7 @@ impl AuthenticationWidget {
             .as_ref()
             .and_then(|progress| progress.state.as_ref())
         {
-            Some(steer_grpc::proto::auth_progress::State::OauthStarted(_))
-            | Some(steer_grpc::proto::auth_progress::State::NeedInput(_)) => {
+            Some(AuthProgress::OAuthStarted { .. }) | Some(AuthProgress::NeedInput { .. }) => {
                 vec![Line::from(vec![
                     Span::raw("Type or paste input, "),
                     Span::styled("Enter", theme.style(Component::SetupKeyBinding)),

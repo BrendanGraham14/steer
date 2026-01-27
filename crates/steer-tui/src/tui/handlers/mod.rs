@@ -13,13 +13,14 @@ mod setup_impl;
 use crate::error::Result;
 use crate::tui::Tui;
 use ratatui::crossterm::event::KeyEvent;
+use steer_grpc::client_api::EditingMode;
 
 impl Tui {
     pub async fn handle_key_event(&mut self, key: KeyEvent) -> Result<bool> {
         // Check editing mode to determine handler
         match self.preferences.ui.editing_mode {
-            steer_core::preferences::EditingMode::Simple => self.handle_simple_mode(key).await,
-            steer_core::preferences::EditingMode::Vim => self.handle_vim_mode(key).await,
+            EditingMode::Simple => self.handle_simple_mode(key).await,
+            EditingMode::Vim => self.handle_vim_mode(key).await,
         }
     }
 }

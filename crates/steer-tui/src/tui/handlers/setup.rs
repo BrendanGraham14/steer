@@ -3,7 +3,7 @@ use crate::tui::InputMode;
 use crate::tui::Tui;
 use crate::tui::state::{AuthStatus, SetupState, SetupStep};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use steer_core::config::provider::ProviderId;
+use steer_grpc::client_api::{AuthProgress, AuthSource, Preferences, ProviderId};
 use tracing::debug;
 
 // Remove TODO comment - authentication is now handled using the generic trait
@@ -29,10 +29,8 @@ impl SetupHandler {
             .insert(provider_id.clone(), AuthStatus::InProgress);
 
         if let Some(progress) = setup_state.auth_progress.as_ref() {
-            if let Some(steer_grpc::proto::auth_progress::State::OauthStarted(oauth)) =
-                progress.state.as_ref()
-            {
-                if let Err(e) = open::that(&oauth.auth_url) {
+            if let Some(AuthProgress::OAuthStarted { auth_url }) = progress.state.as_ref() {
+                if let Err(e) = open::that(auth_url) {
                     setup_state.error_message = Some(format!("Failed to open browser: {e}"));
                 }
             }
@@ -47,17 +45,12 @@ impl SetupHandler {
             .get_provider_auth_status(Some(provider_id.storage_key()))
             .await
             .map_err(|e| crate::error::Error::Auth(e.to_string()))?;
-        let status = statuses
-            .first()
-            .and_then(|s| s.auth_source.as_ref())
-            .and_then(|source| source.source.as_ref());
+        let status = statuses.first().and_then(|s| s.auth_source.as_ref());
 
         let mapped = match status {
-            Some(steer_grpc::proto::auth_source::Source::ApiKey(_)) => AuthStatus::ApiKeySet,
-            Some(steer_grpc::proto::auth_source::Source::Plugin(_)) => AuthStatus::OAuthConfigured,
-            Some(steer_grpc::proto::auth_source::Source::None(_)) | None => {
-                AuthStatus::NotConfigured
-            }
+            Some(AuthSource::ApiKey { .. }) => AuthStatus::ApiKeySet,
+            Some(AuthSource::Plugin { .. }) => AuthStatus::OAuthConfigured,
+            Some(AuthSource::None) | None => AuthStatus::NotConfigured,
         };
 
         Ok(mapped)
@@ -138,9 +131,7 @@ impl SetupHandler {
             }
             (KeyCode::Enter, KeyModifiers::NONE) => {
                 if let Some(provider_config) = providers.get(state.provider_cursor) {
-                    state.selected_provider = Some(steer_core::config::provider::ProviderId(
-                        provider_config.id.clone(),
-                    ));
+                    state.selected_provider = Some(ProviderId(provider_config.id.clone()));
                     state.next_step();
                 }
                 Ok(None)
@@ -191,8 +182,8 @@ impl SetupHandler {
 
                 let expects_input = matches!(
                     progress_state,
-                    Some(steer_grpc::proto::auth_progress::State::NeedInput(_))
-                        | Some(steer_grpc::proto::auth_progress::State::OauthStarted(_))
+                    Some(AuthProgress::NeedInput { .. })
+                        | Some(AuthProgress::OAuthStarted { .. })
                 );
 
                 let flow_id = tui
@@ -218,11 +209,11 @@ impl SetupHandler {
                     let mut error_message = None;
 
                         match &progress.state {
-                            Some(steer_grpc::proto::auth_progress::State::Complete(_)) => {
+                            Some(AuthProgress::Complete) => {
                                 completed = true;
                             }
-                            Some(steer_grpc::proto::auth_progress::State::Error(error)) => {
-                                error_message = Some(error.message.clone());
+                            Some(AuthProgress::Error { message }) => {
+                                error_message = Some(message.clone());
                             }
                             _ => {}
                         }
@@ -262,8 +253,8 @@ impl SetupHandler {
                     .map(|state| {
                         matches!(
                             state,
-                            steer_grpc::proto::auth_progress::State::NeedInput(_)
-                                | steer_grpc::proto::auth_progress::State::OauthStarted(_)
+                            AuthProgress::NeedInput { .. }
+                                | AuthProgress::OAuthStarted { .. }
                         )
                     })
                     .unwrap_or(false);
@@ -281,8 +272,8 @@ impl SetupHandler {
                     .map(|state| {
                         matches!(
                             state,
-                            steer_grpc::proto::auth_progress::State::NeedInput(_)
-                                | steer_grpc::proto::auth_progress::State::OauthStarted(_)
+                            AuthProgress::NeedInput { .. }
+                                | AuthProgress::OAuthStarted { .. }
                         )
                     })
                     .unwrap_or(false);
@@ -320,7 +311,7 @@ impl SetupHandler {
                 // Save preferences
                 if let Some(_setup_state) = &tui.setup_state {
                     // Load existing preferences or use defaults
-                    let prefs = steer_core::preferences::Preferences::load().unwrap_or_default();
+                    let prefs = Preferences::load().unwrap_or_default();
 
                     // Model selection has been removed from setup flow
                     // Just save the existing preferences without modification
@@ -381,8 +372,7 @@ impl SetupHandler {
             .map(|state| {
                 matches!(
                     state,
-                    steer_grpc::proto::auth_progress::State::OauthStarted(_)
-                        | steer_grpc::proto::auth_progress::State::InProgress(_)
+                    AuthProgress::OAuthStarted { .. } | AuthProgress::InProgress { .. }
                 )
             })
             .unwrap_or(false);
@@ -401,11 +391,11 @@ impl SetupHandler {
         let mut error_message = None;
 
         match &progress.state {
-            Some(steer_grpc::proto::auth_progress::State::Complete(_)) => {
+            Some(AuthProgress::Complete) => {
                 completed = true;
             }
-            Some(steer_grpc::proto::auth_progress::State::Error(error)) => {
-                error_message = Some(error.message.clone());
+            Some(AuthProgress::Error { message }) => {
+                error_message = Some(message.clone());
             }
             _ => {}
         }

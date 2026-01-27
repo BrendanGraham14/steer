@@ -2,7 +2,6 @@ use crate::error::Error;
 use crate::error::Result;
 use crate::tui::Tui;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
-use steer_core::error::Error as CoreError;
 use steer_grpc::client_api::ApprovalDecision;
 use steer_tools::tools::BASH_TOOL_NAME;
 use steer_tools::tools::bash::BashParams;
@@ -24,12 +23,8 @@ impl Tui {
                         debug!(target: "handle_approval_mode", "(Always) Approving bash command with request_id '{:?}'", request_id);
                         let bash_params: BashParams =
                             serde_json::from_value(tool_call.parameters.clone()).map_err(|e| {
-                                Error::Core(CoreError::Tool(
-                                    steer_tools::ToolError::InvalidParams {
-                                        tool_name: "bash".to_string(),
-                                        message: e.to_string(),
-                                    }
-                                    .into(),
+                                Error::CommandProcessing(format!(
+                                    "Invalid bash params for approval: {e}"
                                 ))
                             })?;
                         self.client
