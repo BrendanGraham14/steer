@@ -7,7 +7,9 @@ use ratatui::{
 use serde_json::Value;
 use steer_core::agents::default_agent_spec_id;
 use steer_core::app::conversation::ToolResult;
-use steer_core::tools::{DispatchAgentParams, DispatchAgentTarget, WorkspaceTarget};
+use steer_tools::tools::dispatch_agent::{
+    DispatchAgentParams, DispatchAgentTarget, WorkspaceTarget,
+};
 
 pub struct DispatchAgentFormatter;
 

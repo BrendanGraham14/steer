@@ -6,7 +6,7 @@ use ratatui::{
 };
 use serde_json::Value;
 use steer_core::app::conversation::ToolResult;
-use steer_core::tools::FetchParams;
+use steer_tools::tools::fetch::FetchParams;
 
 pub struct FetchFormatter;
 
