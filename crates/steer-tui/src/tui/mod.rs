@@ -20,7 +20,7 @@ use ratatui::{Frame, Terminal};
 use steer_grpc::AgentClient;
 use steer_grpc::client_api::{
     AssistantContent, ClientEvent, EditingMode, LlmStatus, Message, MessageData, ModelId, OpId,
-    Preferences, ProviderId, WorkspaceStatus,
+    Preferences, ProviderId, UserContent, WorkspaceStatus, builtin,
 };
 
 use crate::tui::events::processor::PendingToolApproval;

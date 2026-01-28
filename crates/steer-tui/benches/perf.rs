@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use steer_core::app::conversation::{Message, MessageData, UserContent};
+use steer_grpc::client_api::{Message, MessageData, UserContent};
 use steer_tui::tui::theme::Theme;
 use steer_tui::tui::widgets::chat_widgets::gutter::{Gutter, RoleGlyph};
 use steer_tui::tui::widgets::chat_widgets::{MessageWidget, RowWidget};

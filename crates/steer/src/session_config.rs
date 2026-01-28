@@ -378,6 +378,7 @@ mod tests {
     use super::*;
     use steer_core::config::provider::ProviderId;
     use steer_core::session::ToolFilter;
+    use steer_core::session::ToolRuleOverrides;
 
     fn test_model() -> ModelId {
         ModelId::new(ProviderId("test-provider".to_string()), "test-model")

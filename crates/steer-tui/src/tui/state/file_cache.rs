@@ -86,3 +86,39 @@ impl FileCache {
         &self.session_id
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FileCache;
+
+    #[tokio::test]
+    async fn test_fuzzy_search_matches_query() {
+        let cache = FileCache::new("session-1".to_string());
+        cache
+            .update(vec![
+                "src/main.rs".to_string(),
+                "src/lib.rs".to_string(),
+                "README.md".to_string(),
+            ])
+            .await;
+
+        let results = cache.fuzzy_search("main", None).await;
+        assert!(results.iter().any(|path| path == "src/main.rs"));
+        assert!(!results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_fuzzy_search_empty_query_limit() {
+        let cache = FileCache::new("session-2".to_string());
+        cache
+            .update(vec![
+                "src/main.rs".to_string(),
+                "src/lib.rs".to_string(),
+                "README.md".to_string(),
+            ])
+            .await;
+
+        let results = cache.fuzzy_search("", Some(2)).await;
+        assert_eq!(results.len(), 2);
+    }
+}

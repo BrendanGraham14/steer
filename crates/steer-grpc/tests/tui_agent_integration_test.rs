@@ -14,12 +14,13 @@ use steer_proto::agent::v1::{
     SubscribeSessionEventsRequest, WorkspaceConfig as ProtoWorkspaceConfig,
     agent_service_client::AgentServiceClient, auth_progress::State as AuthProgressState,
 };
-use steer_tui::error::Result;
 use tempfile::TempDir;
 use tokio::time::{Duration, Instant, timeout_at};
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 use tracing::{debug, info};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// Create a test workspace with some files
 async fn setup_test_workspace() -> Result<(TempDir, PathBuf)> {
@@ -372,7 +373,7 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
 
     let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
     let session_params = CreateSessionParams {
-        workspace: ClientWorkspaceConfig::Local {
+       workspace: ClientWorkspaceConfig::Local {
             path: workspace_path.clone(),
         },
         tool_config: SessionToolConfig::default(),
@@ -402,7 +403,7 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
     wait_for_mcp_event(&mut event_rx, "test-mcp-1").await;
 
     let session_params = CreateSessionParams {
-        workspace: ClientWorkspaceConfig::Local {
+       workspace: ClientWorkspaceConfig::Local {
             path: workspace_path.clone(),
         },
         tool_config: SessionToolConfig::default(),
@@ -434,115 +435,6 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
 
     drop(event_rx);
     client.shutdown().await;
-
-    service_host.shutdown().await.unwrap();
-}
-
-#[tokio::test]
-async fn test_tui_fuzzy_finder_with_grpc_events() {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    // Setup
-    let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
-
-    let db_path = workspace_path.join("test_sessions.db");
-    let bind_addr = "127.0.0.1:50052".parse().unwrap();
-    let config = ServiceHostConfig {
-        db_path,
-        bind_addr,
-        auth_storage: Arc::new(steer_core::test_utils::InMemoryAuthStorage::new()),
-        catalog_config: steer_core::catalog::CatalogConfig::default(),
-        workspace_root: Some(workspace_path.clone()),
-    };
-
-    let mut service_host = ServiceHost::new(config).await.unwrap();
-    service_host.start().await.unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let channel = Channel::from_shared(format!("http://{bind_addr}"))
-        .unwrap()
-        .connect()
-        .await
-        .unwrap();
-    // Create session
-    let mut grpc_client = AgentServiceClient::new(channel.clone());
-    let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
-    let create_req = CreateSessionRequest {
-        workspace_config: Some(ProtoWorkspaceConfig {
-            config: Some(steer_proto::agent::v1::workspace_config::Config::Local(
-                steer_proto::agent::v1::LocalWorkspaceConfig {
-                    path: workspace_path.to_string_lossy().to_string(),
-                },
-            )),
-        }),
-        default_model: Some(steer_proto::agent::v1::ModelSpec {
-            provider_id: default_model.provider.storage_key(),
-            model_id: default_model.id.clone(),
-        }),
-        ..Default::default()
-    };
-
-    let session_id = grpc_client
-        .create_session(create_req)
-        .await
-        .unwrap()
-        .into_inner()
-        .session
-        .unwrap()
-        .id;
-
-    // Get files via gRPC
-    let list_req = ListFilesRequest {
-        session_id: session_id.clone(),
-        query: String::new(),
-        max_results: 100,
-    };
-
-    let mut file_stream = grpc_client.list_files(list_req).await.unwrap().into_inner();
-    let mut files: Vec<String> = Vec::new();
-
-    while let Some(response) = file_stream.message().await.unwrap() {
-        files.extend(response.paths);
-    }
-
-    info!("Got {} files for TUI test", files.len());
-
-    // Test fuzzy matching locally (what TUI does internally)
-    use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
-    let matcher = SkimMatcherV2::default();
-
-    // Search for "main"
-    let query = "main";
-    let mut results: Vec<(i64, String)> = files
-        .iter()
-        .filter_map(|file| {
-            matcher
-                .fuzzy_match(file, query)
-                .map(|score| (score, file.clone()))
-        })
-        .collect();
-
-    results.sort_by(|a, b| b.0.cmp(&a.0)); // Sort by score descending
-
-    assert!(!results.is_empty(), "Should find files matching 'main'");
-    assert!(
-        results[0].1.contains("main"),
-        "Top result should contain 'main'"
-    );
-
-    // Search for "rs" - should find all Rust files
-    let query = "rs";
-    let rust_files: Vec<String> = files
-        .iter()
-        .filter(|file| matcher.fuzzy_match(file, query).is_some())
-        .cloned()
-        .collect();
-
-    assert!(rust_files.len() >= 3, "Should find at least 3 Rust files");
-
-    // Test empty query returns all files (what happens when @ is first pressed)
-    let all_files: Vec<String> = files.iter().take(20).cloned().collect(); // Limit to 20 like TUI does
-    assert!(!all_files.is_empty(), "Should return files for empty query");
 
     service_host.shutdown().await.unwrap();
 }

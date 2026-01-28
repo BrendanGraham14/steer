@@ -28,11 +28,10 @@ impl SetupHandler {
             .auth_providers
             .insert(provider_id.clone(), AuthStatus::InProgress);
 
-        if let Some(progress) = setup_state.auth_progress.as_ref() {
-            if let Some(AuthProgress::OAuthStarted { auth_url }) = progress.state.as_ref() {
-                if let Err(e) = open::that(auth_url) {
-                    setup_state.error_message = Some(format!("Failed to open browser: {e}"));
-                }
+        if let Some(AuthProgress::OAuthStarted { auth_url }) = setup_state.auth_progress.as_ref()
+        {
+            if let Err(e) = open::that(auth_url) {
+                setup_state.error_message = Some(format!("Failed to open browser: {e}"));
             }
         }
 
@@ -171,14 +170,11 @@ impl SetupHandler {
 
         match key.code {
             KeyCode::Enter => {
-                let progress_state = {
-                    let setup_state = tui.setup_state.as_ref().unwrap();
-                    setup_state
-                        .auth_progress
-                        .as_ref()
-                        .and_then(|progress| progress.state.as_ref())
-                        .cloned()
-                };
+                let progress_state = tui
+                    .setup_state
+                    .as_ref()
+                    .and_then(|state| state.auth_progress.as_ref())
+                    .cloned();
 
                 let expects_input = matches!(
                     progress_state,
@@ -208,11 +204,11 @@ impl SetupHandler {
                     let mut completed = false;
                     let mut error_message = None;
 
-                        match &progress.state {
-                            Some(AuthProgress::Complete) => {
+                        match &progress {
+                            AuthProgress::Complete => {
                                 completed = true;
                             }
-                            Some(AuthProgress::Error { message }) => {
+                            AuthProgress::Error { message } => {
                                 error_message = Some(message.clone());
                             }
                             _ => {}
@@ -249,10 +245,9 @@ impl SetupHandler {
                 let expects_input = state
                     .auth_progress
                     .as_ref()
-                    .and_then(|progress| progress.state.as_ref())
-                    .map(|state| {
+                    .map(|progress| {
                         matches!(
-                            state,
+                            progress,
                             AuthProgress::NeedInput { .. }
                                 | AuthProgress::OAuthStarted { .. }
                         )
@@ -268,10 +263,9 @@ impl SetupHandler {
                 let expects_input = state
                     .auth_progress
                     .as_ref()
-                    .and_then(|progress| progress.state.as_ref())
-                    .map(|state| {
+                    .map(|progress| {
                         matches!(
-                            state,
+                            progress,
                             AuthProgress::NeedInput { .. }
                                 | AuthProgress::OAuthStarted { .. }
                         )
@@ -368,10 +362,9 @@ impl SetupHandler {
             .setup_state
             .as_ref()
             .and_then(|state| state.auth_progress.as_ref())
-            .and_then(|progress| progress.state.as_ref())
-            .map(|state| {
+            .map(|progress| {
                 matches!(
-                    state,
+                    progress,
                     AuthProgress::OAuthStarted { .. } | AuthProgress::InProgress { .. }
                 )
             })
@@ -390,11 +383,11 @@ impl SetupHandler {
         let mut completed = false;
         let mut error_message = None;
 
-        match &progress.state {
-            Some(AuthProgress::Complete) => {
+        match &progress {
+            AuthProgress::Complete => {
                 completed = true;
             }
-            Some(AuthProgress::Error { message }) => {
+            AuthProgress::Error { message } => {
                 error_message = Some(message.clone());
             }
             _ => {}

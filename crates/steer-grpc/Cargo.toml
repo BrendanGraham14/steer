@@ -43,3 +43,4 @@ proptest = "1.7.0"
 tempfile = "3.20.0"
 steer-core = { workspace = true, features = ["test-utils"] }
 tokio-util = "0.7.18"
+tracing-subscriber = "0.3.22"

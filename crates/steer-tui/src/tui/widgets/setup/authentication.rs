@@ -55,11 +55,7 @@ impl AuthenticationWidget {
         // Main content
         let mut content = vec![];
 
-        match state
-            .auth_progress
-            .as_ref()
-            .and_then(|progress| progress.state.as_ref())
-        {
+        match state.auth_progress.as_ref() {
             Some(AuthProgress::OAuthStarted { auth_url }) => {
                 content.push(Line::from(""));
                 content.push(Line::from(Span::styled(
@@ -174,11 +170,7 @@ impl AuthenticationWidget {
         }
 
         // Instructions
-        let instructions = match state
-            .auth_progress
-            .as_ref()
-            .and_then(|progress| progress.state.as_ref())
-        {
+        let instructions = match state.auth_progress.as_ref() {
             Some(AuthProgress::OAuthStarted { .. }) | Some(AuthProgress::NeedInput { .. }) => {
                 vec![Line::from(vec![
                     Span::raw("Type or paste input, "),

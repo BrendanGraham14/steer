@@ -6654,6 +6654,7 @@ dependencies = [
  "tonic",
  "tower 0.5.3",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -6729,7 +6730,6 @@ dependencies = [
  "serde",
  "serde_json",
  "similar",
- "steer-core",
  "steer-grpc",
  "steer-proto",
  "steer-tools",
