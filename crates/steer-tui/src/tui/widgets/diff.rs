@@ -201,7 +201,23 @@ impl<'a> DiffWidget<'a> {
                         j += 1;
                     }
 
-                    if !inserts.is_empty() {
+                    if inserts.is_empty() {
+                        // Pure deletion - show on left only
+                        for del in deletes {
+                            let content = del.value().trim_end();
+                            let left = self.truncate_or_pad(content, half_width);
+                            let right = " ".repeat(half_width);
+
+                            lines.push(Line::from(vec![
+                                Span::styled("-", self.theme.style(Component::CodeDeletion)),
+                                Span::styled(left, self.theme.style(Component::CodeDeletion)),
+                                Span::styled(" │ ", self.theme.style(Component::DimText)),
+                                Span::styled(" ", self.theme.style(Component::DimText)),
+                                Span::styled(right, self.theme.style(Component::DimText)),
+                            ]));
+                        }
+                        i = j;
+                    } else {
                         // This is a replacement - show side by side
                         let max_len = deletes.len().max(inserts.len());
 
@@ -221,8 +237,8 @@ impl<'a> DiffWidget<'a> {
                             let right = self.truncate_or_pad(right_content, half_width);
 
                             // Determine prefixes based on whether there's content
-                            let left_prefix = if !left_content.is_empty() { "-" } else { " " };
-                            let right_prefix = if !right_content.is_empty() { "+" } else { " " };
+                            let left_prefix = if left_content.is_empty() { " " } else { "-" };
+                            let right_prefix = if right_content.is_empty() { " " } else { "+" };
 
                             lines.push(Line::from(vec![
                                 Span::styled(
@@ -231,10 +247,10 @@ impl<'a> DiffWidget<'a> {
                                 ),
                                 Span::styled(
                                     left,
-                                    if !left_content.is_empty() {
-                                        self.theme.style(Component::CodeDeletion)
-                                    } else {
+                                    if left_content.is_empty() {
                                         self.theme.style(Component::DimText)
+                                    } else {
+                                        self.theme.style(Component::CodeDeletion)
                                     },
                                 ),
                                 Span::styled(" │ ", self.theme.style(Component::DimText)),
@@ -244,31 +260,15 @@ impl<'a> DiffWidget<'a> {
                                 ),
                                 Span::styled(
                                     right,
-                                    if !right_content.is_empty() {
-                                        self.theme.style(Component::CodeAddition)
-                                    } else {
+                                    if right_content.is_empty() {
                                         self.theme.style(Component::DimText)
+                                    } else {
+                                        self.theme.style(Component::CodeAddition)
                                     },
                                 ),
                             ]));
                         }
 
-                        i = j;
-                    } else {
-                        // Pure deletion - show on left only
-                        for del in deletes {
-                            let content = del.value().trim_end();
-                            let left = self.truncate_or_pad(content, half_width);
-                            let right = " ".repeat(half_width);
-
-                            lines.push(Line::from(vec![
-                                Span::styled("-", self.theme.style(Component::CodeDeletion)),
-                                Span::styled(left, self.theme.style(Component::CodeDeletion)),
-                                Span::styled(" │ ", self.theme.style(Component::DimText)),
-                                Span::styled(" ", self.theme.style(Component::DimText)),
-                                Span::styled(right, self.theme.style(Component::DimText)),
-                            ]));
-                        }
                         i = j;
                     }
                 }

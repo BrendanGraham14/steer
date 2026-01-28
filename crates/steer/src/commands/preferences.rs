@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn parses_editor_with_arguments() {
         let (command, args) =
-            PreferencesCommand::parse_editor_command_str(r#"code --wait --new-window"#).unwrap();
+            PreferencesCommand::parse_editor_command_str(r"code --wait --new-window").unwrap();
         assert_eq!(command, "code");
         assert_eq!(args, vec!["--wait", "--new-window"]);
     }

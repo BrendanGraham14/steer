@@ -130,7 +130,7 @@ impl<'a> ApprovalWidget<'a> {
     }
 }
 
-impl<'a> Widget for ApprovalWidget<'a> {
+impl Widget for ApprovalWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let approval_text = self.format_approval_text(area.width);
         let title = self.format_title();

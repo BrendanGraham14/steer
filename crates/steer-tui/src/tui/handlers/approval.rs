@@ -11,13 +11,13 @@ impl Tui {
     pub async fn handle_approval_mode(&mut self, key: KeyEvent) -> Result<bool> {
         if let Some((request_id, tool_call)) = self.current_tool_approval.take() {
             match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                KeyCode::Char('y' | 'Y') => {
                     self.client
                         .approve_tool(request_id.to_string(), ApprovalDecision::Once)
                         .await?;
                     self.input_mode = self.default_input_mode();
                 }
-                KeyCode::Char('a') | KeyCode::Char('A') => {
+                KeyCode::Char('a' | 'A') => {
                     debug!(target: "handle_approval_mode", "Approving tool call with request_id '{:?}' and name '{}'", request_id, tool_call.name);
                     if tool_call.name == BASH_TOOL_NAME {
                         debug!(target: "handle_approval_mode", "(Always) Approving bash command with request_id '{:?}'", request_id);
@@ -40,7 +40,7 @@ impl Tui {
                     }
                     self.input_mode = self.default_input_mode();
                 }
-                KeyCode::Char('l') | KeyCode::Char('L') => {
+                KeyCode::Char('l' | 'L') => {
                     if tool_call.name == BASH_TOOL_NAME {
                         self.client
                             .approve_tool(request_id.to_string(), ApprovalDecision::AlwaysTool)
@@ -50,7 +50,7 @@ impl Tui {
                         self.current_tool_approval = Some((request_id, tool_call));
                     }
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                     self.client
                         .approve_tool(request_id.to_string(), ApprovalDecision::Deny)
                         .await?;

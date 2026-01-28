@@ -31,10 +31,7 @@ impl InputSchema {
         schema.insert("type".to_string(), Value::String("object".to_string()));
         schema.insert("properties".to_string(), Value::Object(properties));
         if !required.is_empty() {
-            let required_values = required
-                .into_iter()
-                .map(Value::String)
-                .collect::<Vec<_>>();
+            let required_values = required.into_iter().map(Value::String).collect::<Vec<_>>();
             schema.insert("required".to_string(), Value::Array(required_values));
         }
         Self(Value::Object(schema))
@@ -53,8 +50,7 @@ impl From<Value> for InputSchema {
 
 impl From<schemars::Schema> for InputSchema {
     fn from(schema: schemars::Schema) -> Self {
-        let schema_value =
-            serde_json::to_value(&schema).unwrap_or_else(|_| serde_json::Value::Null);
+        let schema_value = serde_json::to_value(&schema).unwrap_or(serde_json::Value::Null);
         Self(ensure_object_properties(schema_value))
     }
 }
@@ -67,7 +63,10 @@ fn ensure_object_properties(schema: Value) -> Value {
             .and_then(|v| v.as_str())
             .is_some_and(|t| t == "object");
         if is_object && !obj.contains_key("properties") {
-            obj.insert("properties".to_string(), Value::Object(serde_json::Map::new()));
+            obj.insert(
+                "properties".to_string(),
+                Value::Object(serde_json::Map::new()),
+            );
         }
     }
     schema
@@ -180,11 +179,7 @@ impl InputSchemaSummary {
     }
 }
 
-fn merge_property(
-    properties: &mut serde_json::Map<String, Value>,
-    key: &str,
-    value: &Value,
-) {
+fn merge_property(properties: &mut serde_json::Map<String, Value>, key: &str, value: &Value) {
     match properties.get_mut(key) {
         None => {
             properties.insert(key.to_string(), value.clone());
@@ -277,7 +272,10 @@ mod tests {
         assert!(session_values.contains(&serde_json::Value::String("resume".to_string())));
     }
 
-    fn resolve_ref<'a>(root: &'a serde_json::Value, schema: &'a serde_json::Value) -> &'a serde_json::Value {
+    fn resolve_ref<'a>(
+        root: &'a serde_json::Value,
+        schema: &'a serde_json::Value,
+    ) -> &'a serde_json::Value {
         let Some(reference) = schema.get("$ref").and_then(|v| v.as_str()) else {
             return schema;
         };

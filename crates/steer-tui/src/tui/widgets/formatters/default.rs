@@ -1,4 +1,7 @@
-use super::{ToolFormatter, helpers::*};
+use super::{
+    ToolFormatter,
+    helpers::{separator_line, truncate_lines},
+};
 use crate::tui::theme::{Component, Theme};
 use ratatui::text::{Line, Span};
 use serde_json::Value;

@@ -50,7 +50,7 @@ fn generate_model_constants(out_dir: &Path, models: &[ModelData]) {
 
     // First pass: generate primary constants for each model
     for model in models {
-        let const_name = model.id.to_lowercase().replace("-", "_").replace(".", "_");
+        let const_name = model.id.to_lowercase().replace(['-', '.'], "_");
         let provider_fn = model.provider.to_lowercase();
         output.push_str(&format!(
             "#[inline]\npub fn {}() -> ModelId {{ ModelId {{ provider: {}(), id: \"{}\".to_string() }} }}\n",
@@ -62,9 +62,9 @@ fn generate_model_constants(out_dir: &Path, models: &[ModelData]) {
 
     // Second pass: generate alias constants
     for model in models {
-        let target_fn = model.id.to_lowercase().replace("-", "_").replace(".", "_");
+        let target_fn = model.id.to_lowercase().replace(['-', '.'], "_");
         for alias in &model.aliases {
-            let alias_const = alias.to_lowercase().replace("-", "_").replace(".", "_");
+            let alias_const = alias.to_lowercase().replace(['-', '.'], "_");
             output.push_str(&format!(
                 "#[inline]\npub fn {alias_const}() -> ModelId {{ {target_fn}() }}\n"
             ));

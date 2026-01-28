@@ -713,7 +713,7 @@ impl SessionState {
             (_, ToolCallStatus::Executing) => {
                 tool_call.started_at = Some(Utc::now());
             }
-            (_, ToolCallStatus::Completed) | (_, ToolCallStatus::Failed { .. }) => {
+            (_, ToolCallStatus::Completed | ToolCallStatus::Failed { .. }) => {
                 tool_call.completed_at = Some(Utc::now());
             }
             _ => {}
@@ -759,8 +759,9 @@ impl SessionState {
         match &message.data {
             MessageData::Assistant { content, .. } => {
                 for c in content {
-                    if let crate::app::conversation::AssistantContent::ToolCall { tool_call, .. } =
-                        c
+                    if let crate::app::conversation::AssistantContent::ToolCall {
+                        tool_call, ..
+                    } = c
                     {
                         tool_call_ids.push(tool_call.id.clone());
                     }
@@ -957,7 +958,7 @@ mod tests {
             preapproved: ApprovalRules {
                 tools: ["read_file", "list_files"]
                     .iter()
-                    .map(|s| s.to_string())
+                    .map(|s| (*s).to_string())
                     .collect(),
                 per_tool: HashMap::new(),
             },
@@ -974,7 +975,7 @@ mod tests {
             preapproved: ApprovalRules {
                 tools: ["read_file", "list_files"]
                     .iter()
-                    .map(|s| s.to_string())
+                    .map(|s| (*s).to_string())
                     .collect(),
                 per_tool: HashMap::new(),
             },
@@ -1002,7 +1003,7 @@ mod tests {
             preapproved: ApprovalRules {
                 tools: ["read_file", "list_files"]
                     .iter()
-                    .map(|s| s.to_string())
+                    .map(|s| (*s).to_string())
                     .collect(),
                 per_tool: HashMap::new(),
             },
@@ -1017,7 +1018,7 @@ mod tests {
         let base_policy = ToolApprovalPolicy {
             default_behavior: UnapprovedBehavior::Prompt,
             preapproved: ApprovalRules {
-                tools: ["read_file"].iter().map(|s| s.to_string()).collect(),
+                tools: ["read_file"].iter().map(|s| (*s).to_string()).collect(),
                 per_tool: [
                     (
                         BASH_TOOL_NAME.to_string(),
@@ -1040,7 +1041,7 @@ mod tests {
         let overrides = ToolApprovalPolicyOverrides {
             default_behavior: Some(UnapprovedBehavior::Deny),
             preapproved: ApprovalRulesOverrides {
-                tools: ["write_file"].iter().map(|s| s.to_string()).collect(),
+                tools: ["write_file"].iter().map(|s| (*s).to_string()).collect(),
                 per_tool: [
                     (
                         BASH_TOOL_NAME.to_string(),

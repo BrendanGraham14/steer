@@ -48,9 +48,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.system_prompt.is_some() {
-        eyre::bail!(
-            "--system-prompt is no longer supported; use primary agent policies instead"
-        );
+        eyre::bail!("--system-prompt is no longer supported; use primary agent policies instead");
     }
 
     // Load .env file if it exists
@@ -106,10 +104,10 @@ async fn main() -> Result<()> {
                 // Launch TUI with appropriate backend
                 if let Some(addr) = remote_addr {
                     // Merge catalogs: use subcommand if provided, otherwise fall back to global
-                    let catalogs = if !subcommand_catalogs.is_empty() {
-                        subcommand_catalogs
-                    } else {
+                    let catalogs = if subcommand_catalogs.is_empty() {
                         cli.catalogs.clone()
+                    } else {
+                        subcommand_catalogs
                     };
 
                     // Connect to remote server
@@ -127,10 +125,10 @@ async fn main() -> Result<()> {
                     .await
                 } else {
                     // Merge catalogs: use subcommand if provided, otherwise fall back to global
-                    let catalogs = if !subcommand_catalogs.is_empty() {
-                        subcommand_catalogs
-                    } else {
+                    let catalogs = if subcommand_catalogs.is_empty() {
                         cli.catalogs.clone()
+                    } else {
+                        subcommand_catalogs
                     };
 
                     // Normalize and warn for invalid catalog paths
@@ -216,10 +214,10 @@ async fn main() -> Result<()> {
             catalogs: server_catalogs,
         } => {
             // Merge catalogs: prefer subcommand if provided, else use global
-            let catalogs = if !server_catalogs.is_empty() {
-                server_catalogs
-            } else {
+            let catalogs = if server_catalogs.is_empty() {
                 cli.catalogs.clone()
+            } else {
+                server_catalogs
             };
             let catalogs = normalize_catalogs(&catalogs);
 
@@ -266,8 +264,8 @@ async fn main() -> Result<()> {
 
 #[cfg(feature = "ui")]
 async fn run_tui_local(params: TuiParams) -> Result<()> {
-    use steer_grpc::local_server;
     use steer_grpc::client_api::CreateSessionParams;
+    use steer_grpc::local_server;
 
     let mut session_id = params.session_id;
 
@@ -320,8 +318,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
                     model_str, e, fallback
                 );
                 eprintln!(
-                    "Warning: preferred model '{}' is invalid. Using server default {}.",
-                    model_str, fallback
+                    "Warning: preferred model '{model_str}' is invalid. Using server default {fallback}."
                 );
                 server_default.clone()
             }
@@ -339,7 +336,7 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
         // Sort sessions by updated_at descending, fallback to created_at
         sessions.sort_by(|a, b| {
             let ts_to_tuple = |ts: &Option<prost_types::Timestamp>| {
-                ts.as_ref().map(|t| (t.seconds, t.nanos)).unwrap_or((0, 0))
+                ts.as_ref().map_or((0, 0), |t| (t.seconds, t.nanos))
             };
             ts_to_tuple(&b.updated_at).cmp(&ts_to_tuple(&a.updated_at))
         });
@@ -411,7 +408,7 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
             .map_err(|e| eyre::eyre!("Failed to list sessions: {}", e))?;
         sessions.sort_by(|a, b| {
             let ts_to_tuple = |ts: &Option<prost_types::Timestamp>| {
-                ts.as_ref().map(|t| (t.seconds, t.nanos)).unwrap_or((0, 0))
+                ts.as_ref().map_or((0, 0), |t| (t.seconds, t.nanos))
             };
             ts_to_tuple(&b.updated_at).cmp(&ts_to_tuple(&a.updated_at))
         });
@@ -443,8 +440,7 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
                     model_str, e, fallback
                 );
                 eprintln!(
-                    "Warning: preferred model '{}' is invalid. Using server default {}.",
-                    model_str, fallback
+                    "Warning: preferred model '{model_str}' is invalid. Using server default {fallback}."
                 );
                 server_default.clone()
             }

@@ -1,4 +1,7 @@
-use super::{ToolFormatter, helpers::*};
+use super::{
+    ToolFormatter,
+    helpers::{separator_line, tool_error_user_message},
+};
 use crate::tui::theme::Theme;
 use ratatui::{
     style::Style,
@@ -102,7 +105,12 @@ impl ToolFormatter for AstGrepFormatter {
         if let Some(result) = result {
             match result {
                 ToolResult::Search(search_result) => {
-                    if !search_result.matches.is_empty() {
+                    if search_result.matches.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            "No matches found",
+                            theme.subtle_text(),
+                        )));
+                    } else {
                         lines.push(separator_line(wrap_width, theme.dim_text()));
 
                         const MAX_LINES: usize = 20;
@@ -127,11 +135,6 @@ impl ToolFormatter for AstGrepFormatter {
                                 theme.subtle_text(),
                             )));
                         }
-                    } else {
-                        lines.push(Line::from(Span::styled(
-                            "No matches found",
-                            theme.subtle_text(),
-                        )));
                     }
                 }
                 ToolResult::Error(error) => {

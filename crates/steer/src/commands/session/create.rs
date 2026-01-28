@@ -87,8 +87,7 @@ impl Command for CreateSessionCommand {
                         input, e, fallback
                     );
                     eprintln!(
-                        "Warning: preferred model '{}' is invalid. Using server default {}.",
-                        input, fallback
+                        "Warning: preferred model '{input}' is invalid. Using server default {fallback}."
                     );
                     server_default.clone()
                 }
@@ -129,13 +128,14 @@ impl CreateSessionCommand {
         self.catalogs
             .iter()
             .map(|p| {
-                if !p.exists() {
+                if p.exists() {
+                    p.canonicalize().map_or_else(
+                        |_| p.to_string_lossy().to_string(),
+                        |c| c.to_string_lossy().to_string(),
+                    )
+                } else {
                     tracing::warn!("Catalog path does not exist: {}", p.display());
                     p.to_string_lossy().to_string()
-                } else {
-                    p.canonicalize()
-                        .map(|c| c.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| p.to_string_lossy().to_string())
                 }
             })
             .collect()

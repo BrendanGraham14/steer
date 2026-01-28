@@ -304,7 +304,10 @@ impl RuntimeSupervisor {
         Ok(())
     }
 
-    async fn resolve_system_context(&self, config: &SessionConfig) -> Option<crate::app::SystemContext> {
+    async fn resolve_system_context(
+        &self,
+        config: &SessionConfig,
+    ) -> Option<crate::app::SystemContext> {
         let prompt = config
             .system_prompt
             .as_ref()
@@ -330,7 +333,10 @@ impl RuntimeSupervisor {
             }
         };
 
-        Some(crate::app::SystemContext::with_environment(prompt, environment))
+        Some(crate::app::SystemContext::with_environment(
+            prompt,
+            environment,
+        ))
     }
 
     async fn suspend_session(&mut self, session_id: SessionId) -> Result<(), RuntimeError> {

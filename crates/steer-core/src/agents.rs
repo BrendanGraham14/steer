@@ -1,4 +1,3 @@
-use once_cell::sync::Lazy;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -69,13 +68,14 @@ pub enum AgentSpecError {
     AlreadyRegistered(String),
 }
 
-static AGENT_SPECS: Lazy<RwLock<HashMap<String, AgentSpec>>> = Lazy::new(|| {
-    let mut specs = HashMap::new();
-    for spec in default_agent_specs() {
-        specs.insert(spec.id.clone(), spec);
-    }
-    RwLock::new(specs)
-});
+static AGENT_SPECS: std::sync::LazyLock<RwLock<HashMap<String, AgentSpec>>> =
+    std::sync::LazyLock::new(|| {
+        let mut specs = HashMap::new();
+        for spec in default_agent_specs() {
+            specs.insert(spec.id.clone(), spec);
+        }
+        RwLock::new(specs)
+    });
 
 pub fn register_agent_spec(spec: AgentSpec) -> Result<(), AgentSpecError> {
     let mut registry = AGENT_SPECS

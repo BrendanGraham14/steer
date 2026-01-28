@@ -172,21 +172,21 @@ impl TuiCommand {
                     TuiCommandType::New => Ok(TuiCommand::New),
                     TuiCommandType::ReloadFiles => Ok(TuiCommand::ReloadFiles),
                     TuiCommandType::Theme => {
-                        let theme_name = parts.get(1).map(|s| s.to_string());
+                        let theme_name = parts.get(1).map(|s| (*s).to_string());
                         Ok(TuiCommand::Theme(theme_name))
                     }
                     TuiCommandType::Auth => Ok(TuiCommand::Auth),
                     TuiCommandType::Help => {
-                        let command_name = parts.get(1).map(|s| s.to_string());
+                        let command_name = parts.get(1).map(|s| (*s).to_string());
                         Ok(TuiCommand::Help(command_name))
                     }
                     TuiCommandType::EditingMode => {
-                        let mode_name = parts.get(1).map(|s| s.to_string());
+                        let mode_name = parts.get(1).map(|s| (*s).to_string());
                         Ok(TuiCommand::EditingMode(mode_name))
                     }
                     TuiCommandType::Mcp => Ok(TuiCommand::Mcp),
                     TuiCommandType::Workspace => {
-                        let workspace_id = parts.get(1).map(|s| s.to_string());
+                        let workspace_id = parts.get(1).map(|s| (*s).to_string());
                         Ok(TuiCommand::Workspace(workspace_id))
                     }
                 };
@@ -250,9 +250,8 @@ impl AppCommand {
                 let args: Vec<&str> = parts.into_iter().skip(1).collect();
                 if let Some(core_cmd) = core_type.to_core_command(&args) {
                     return Ok(AppCommand::Core(core_cmd));
-                } else {
-                    return Err(TuiCommandError::UnknownCommand(command.to_string()));
                 }
+                return Err(TuiCommandError::UnknownCommand(command.to_string()));
             }
         }
 

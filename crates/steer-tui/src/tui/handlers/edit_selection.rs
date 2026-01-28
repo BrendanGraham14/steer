@@ -15,10 +15,10 @@ impl Tui {
                     self.edit_selection_state.clear();
                 }
             }
-            (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+            (KeyCode::Up | KeyCode::Char('k'), _) => {
                 self.edit_selection_state.select_prev();
             }
-            (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+            (KeyCode::Down | KeyCode::Char('j'), _) => {
                 self.edit_selection_state.select_next();
             }
             _ => {}

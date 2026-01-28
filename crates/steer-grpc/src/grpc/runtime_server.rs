@@ -18,7 +18,20 @@ use steer_core::auth::{
     ModelVisibilityPolicy, ProviderId as AuthProviderId,
 };
 use steer_core::session::state::SessionConfig;
-use steer_proto::agent::v1::{self as proto, *};
+use steer_proto::agent::v1::{
+    self as proto, ApproveToolRequest, ApproveToolResponse, CancelOperationRequest,
+    CancelOperationResponse, CompactSessionRequest, CompactSessionResponse, CreateSessionRequest,
+    CreateSessionResponse, DeleteSessionRequest, DeleteSessionResponse, DequeueQueuedItemRequest,
+    DequeueQueuedItemResponse, EditMessageRequest, EditMessageResponse, ExecuteBashCommandRequest,
+    ExecuteBashCommandResponse, GetConversationFooter, GetConversationRequest,
+    GetConversationResponse, GetMcpServersRequest, GetMcpServersResponse, GetSessionRequest,
+    GetSessionResponse, ListFilesRequest, ListFilesResponse, ListModelsRequest, ListModelsResponse,
+    ListProvidersRequest, ListProvidersResponse, ListSessionsRequest, ListSessionsResponse,
+    Operation, OperationStatus, OperationType, SendMessageRequest, SendMessageResponse,
+    SessionEvent, SessionInfo, SessionStateFooter, SessionStateHeader,
+    SubscribeSessionEventsRequest, SwitchPrimaryAgentRequest, SwitchPrimaryAgentResponse,
+    agent_service_server, get_conversation_response, get_session_response,
+};
 use steer_workspace::{EnvironmentManager, RepoManager, WorkspaceManager};
 use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
@@ -96,7 +109,7 @@ impl RuntimeAgentService {
         }
     }
 
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     fn parse_session_id(session_id: &str) -> Result<SessionId, Status> {
         Uuid::parse_str(session_id)
             .map(SessionId::from)
@@ -604,26 +617,26 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     queued_head: state
                         .queued_work
                         .front()
-                        .and_then(|item| match item {
+                        .map(|item| match item {
                             steer_core::app::domain::state::QueuedWorkItem::UserMessage(message) => {
-                                Some(proto::QueuedWorkItem {
+                                proto::QueuedWorkItem {
                                     kind: proto::queued_work_item::Kind::UserMessage as i32,
                                     content: message.text.as_str().to_string(),
                                     model: Some(model_to_proto(message.model.clone())),
                                     queued_at: message.queued_at,
                                     op_id: message.op_id.to_string(),
                                     message_id: message.message_id.to_string(),
-                                })
+                                }
                             }
                             steer_core::app::domain::state::QueuedWorkItem::DirectBash(command) => {
-                                Some(proto::QueuedWorkItem {
+                                proto::QueuedWorkItem {
                                     kind: proto::queued_work_item::Kind::DirectBash as i32,
                                     content: command.command.clone(),
                                     model: None,
                                     queued_at: command.queued_at,
                                     op_id: command.op_id.to_string(),
                                     message_id: command.message_id.to_string(),
-                                })
+                                }
                             }
                         }),
                     queued_count: state.queued_work.len() as u32,
@@ -1135,8 +1148,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     .parameters
                     .as_ref()
                     .and_then(|p| p.thinking_config.as_ref())
-                    .map(|tc| tc.enabled)
-                    .unwrap_or(false),
+                    .is_some_and(|tc| tc.enabled),
                 aliases: model.aliases.clone(),
             });
         }

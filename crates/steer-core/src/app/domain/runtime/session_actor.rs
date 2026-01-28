@@ -540,10 +540,8 @@ impl SessionActor {
             }
 
             Effect::ReloadToolSchemas { session_id } => {
-                let resolver = self
-                    .session_mcp_backends
-                    .as_ref()
-                    as &dyn crate::tools::BackendResolver;
+                let resolver =
+                    self.session_mcp_backends.as_ref() as &dyn crate::tools::BackendResolver;
                 let schemas = self
                     .tool_executor
                     .get_tool_schemas_with_resolver(Some(resolver))

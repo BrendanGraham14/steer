@@ -295,7 +295,7 @@ impl JjStatusUtils {
 
         let mut parents = Vec::new();
         let parent_ids = wc_commit.parent_ids();
-        for parent_id in parent_ids.iter() {
+        for parent_id in parent_ids {
             let parent_commit = repo
                 .store()
                 .get_commit(parent_id)

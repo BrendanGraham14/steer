@@ -32,31 +32,31 @@ impl WorkspaceRegistry {
 
     async fn init_schema(&self) -> WorkspaceManagerResult<()> {
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS repos (
                 repo_id TEXT PRIMARY KEY NOT NULL,
                 environment_id TEXT NOT NULL,
                 root_path TEXT NOT NULL,
                 vcs_kind TEXT NULL
             );
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE UNIQUE INDEX IF NOT EXISTS idx_repos_root
             ON repos(environment_id, root_path);
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS workspaces (
                 workspace_id TEXT PRIMARY KEY NOT NULL,
                 environment_id TEXT NOT NULL,
@@ -65,7 +65,7 @@ impl WorkspaceRegistry {
                 name TEXT NULL,
                 path TEXT NOT NULL
             );
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await
@@ -74,10 +74,10 @@ impl WorkspaceRegistry {
         self.ensure_workspace_repo_id_column().await?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE INDEX IF NOT EXISTS idx_workspaces_environment
             ON workspaces(environment_id);
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await
@@ -114,14 +114,14 @@ impl WorkspaceRegistry {
     pub async fn upsert_repo(&self, info: &RepoInfo) -> WorkspaceManagerResult<()> {
         let root_path = Self::canonicalize_path(&info.root_path);
         sqlx::query(
-            r#"
+            r"
             INSERT OR IGNORE INTO repos (
                 repo_id,
                 environment_id,
                 root_path,
                 vcs_kind
             ) VALUES (?1, ?2, ?3, ?4);
-            "#,
+            ",
         )
         .bind(info.repo_id.as_uuid().to_string())
         .bind(info.environment_id.as_uuid().to_string())
@@ -136,11 +136,11 @@ impl WorkspaceRegistry {
 
     pub async fn fetch_repo(&self, repo_id: RepoId) -> WorkspaceManagerResult<Option<RepoInfo>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT repo_id, environment_id, root_path, vcs_kind
             FROM repos
             WHERE repo_id = ?1;
-            "#,
+            ",
         )
         .bind(repo_id.as_uuid().to_string())
         .fetch_optional(&self.pool)
@@ -150,7 +150,7 @@ impl WorkspaceRegistry {
         row.map(|row| self.row_to_repo_info(row)).transpose()
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub async fn find_repo_by_path(
         &self,
         environment_id: EnvironmentId,
@@ -158,11 +158,11 @@ impl WorkspaceRegistry {
     ) -> WorkspaceManagerResult<Option<RepoInfo>> {
         let root_path = Self::canonicalize_path(path);
         let row = sqlx::query(
-            r#"
+            r"
             SELECT repo_id, environment_id, root_path, vcs_kind
             FROM repos
             WHERE environment_id = ?1 AND root_path = ?2;
-            "#,
+            ",
         )
         .bind(environment_id.as_uuid().to_string())
         .bind(root_path.to_string_lossy().to_string())
@@ -178,12 +178,12 @@ impl WorkspaceRegistry {
         environment_id: EnvironmentId,
     ) -> WorkspaceManagerResult<Vec<RepoInfo>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT repo_id, environment_id, root_path, vcs_kind
             FROM repos
             WHERE environment_id = ?1
             ORDER BY root_path ASC;
-            "#,
+            ",
         )
         .bind(environment_id.as_uuid().to_string())
         .fetch_all(&self.pool)
@@ -198,7 +198,7 @@ impl WorkspaceRegistry {
     pub async fn insert_workspace(&self, info: &WorkspaceInfo) -> WorkspaceManagerResult<()> {
         let path = Self::canonicalize_path(&info.path);
         sqlx::query(
-            r#"
+            r"
             INSERT INTO workspaces (
                 workspace_id,
                 environment_id,
@@ -207,7 +207,7 @@ impl WorkspaceRegistry {
                 name,
                 path
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6);
-            "#,
+            ",
         )
         .bind(info.workspace_id.as_uuid().to_string())
         .bind(info.environment_id.as_uuid().to_string())
@@ -236,11 +236,11 @@ impl WorkspaceRegistry {
         workspace_id: WorkspaceId,
     ) -> WorkspaceManagerResult<Option<WorkspaceInfo>> {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT workspace_id, environment_id, repo_id, parent_workspace_id, name, path
             FROM workspaces
             WHERE workspace_id = ?1;
-            "#,
+            ",
         )
         .bind(workspace_id.as_uuid().to_string())
         .fetch_optional(&self.pool)
@@ -253,11 +253,11 @@ impl WorkspaceRegistry {
     pub async fn find_by_path(&self, path: &Path) -> WorkspaceManagerResult<Option<WorkspaceInfo>> {
         let path = Self::canonicalize_path(path);
         let row = sqlx::query(
-            r#"
+            r"
             SELECT workspace_id, environment_id, repo_id, parent_workspace_id, name, path
             FROM workspaces
             WHERE path = ?1;
-            "#,
+            ",
         )
         .bind(path.to_string_lossy().to_string())
         .fetch_optional(&self.pool)

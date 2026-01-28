@@ -42,12 +42,12 @@ impl UserContent {
         exit_code: i32,
     ) -> String {
         format!(
-            r#"<executed_command>
+            r"<executed_command>
     <command>{command}</command>
     <stdout>{stdout}</stdout>
     <stderr>{stderr}</stderr>
     <exit_code>{exit_code}</exit_code>
-</executed_command>"#
+</executed_command>"
         )
     }
 }
@@ -96,13 +96,17 @@ impl ThoughtContent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantContent {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolCall {
         tool_call: ToolCall,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thought_signature: Option<ThoughtSignature>,
     },
-    Thought { thought: ThoughtContent },
+    Thought {
+        thought: ThoughtContent,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

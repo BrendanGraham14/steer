@@ -6,10 +6,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
 use crate::api::provider::StreamChunk;
+use crate::app::SystemContext;
 use crate::app::conversation::{AssistantContent, Message};
 use crate::app::domain::delta::{StreamDelta, ToolCallDelta};
 use crate::app::domain::types::{MessageId, OpId, SessionId, ToolCallId};
-use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use crate::tools::{SessionMcpBackends, ToolExecutor};
 use steer_tools::{ToolCall, ToolError, ToolResult, ToolSchema};

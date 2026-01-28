@@ -215,10 +215,10 @@ mod tests {
 
     #[test]
     fn test_model_parameters_partial() {
-        let toml_str = r#"
+        let toml_str = r"
             temperature = 0.5
             max_tokens = 2048
-        "#;
+        ";
 
         let params: ModelParameters =
             toml::from_str(toml_str).expect("Failed to deserialize parameters");

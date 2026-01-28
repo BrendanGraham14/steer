@@ -10,8 +10,8 @@ use crate::api::error::{ApiError, StreamError};
 use crate::api::provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
 use crate::api::sse::parse_sse_stream;
 use crate::api::util::normalize_chat_url;
-use crate::app::conversation::{AssistantContent, Message as AppMessage, ToolResult, UserContent};
 use crate::app::SystemContext;
+use crate::app::conversation::{AssistantContent, Message as AppMessage, ToolResult, UserContent};
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
@@ -273,17 +273,17 @@ struct DebugOutput {
 
 #[derive(Debug, Deserialize)]
 struct XAIStreamChunk {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     id: String,
     choices: Vec<XAIStreamChoice>,
 }
 
 #[derive(Debug, Deserialize)]
 struct XAIStreamChoice {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     index: u32,
     delta: XAIStreamDelta,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     finish_reason: Option<String>,
 }
 
@@ -437,15 +437,14 @@ impl XAIClient {
                     ..
                 } => {
                     // Convert ToolResult to xAI format
-                    let content_text = match result {
-                        ToolResult::Error(e) => format!("Error: {e}"),
-                        _ => {
-                            let text = result.llm_format();
-                            if text.trim().is_empty() {
-                                "(No output)".to_string()
-                            } else {
-                                text
-                            }
+                    let content_text = if let ToolResult::Error(e) = result {
+                        format!("Error: {e}")
+                    } else {
+                        let text = result.llm_format();
+                        if text.trim().is_empty() {
+                            "(No output)".to_string()
+                        } else {
+                            text
                         }
                     };
 
@@ -498,7 +497,7 @@ impl Provider for XAIClient {
         let (supports_thinking, reasoning_effort) = call_options
             .as_ref()
             .and_then(|opts| opts.thinking_config)
-            .map(|tc| {
+            .map_or((false, None), |tc| {
                 let effort = tc.effort.map(|e| match e {
                     crate::config::toml_types::ThinkingEffort::Low => ReasoningEffort::Low,
                     crate::config::toml_types::ThinkingEffort::Medium => ReasoningEffort::High, // xAI has Low/High only
@@ -506,8 +505,7 @@ impl Provider for XAIClient {
                     crate::config::toml_types::ThinkingEffort::XHigh => ReasoningEffort::High, // xAI has Low/High only
                 });
                 (tc.enabled, effort)
-            })
-            .unwrap_or((false, None));
+            });
 
         // grok-4 supports thinking by default but not the reasoning_effort parameter
         let reasoning_effort = if supports_thinking && model_id.id != "grok-4-0709" {
@@ -588,7 +586,7 @@ impl Provider for XAIClient {
         }
 
         let response_text = tokio::select! {
-            _ = token.cancelled() => {
+            () = token.cancelled() => {
                 debug!(target: "grok::complete", "Cancellation token triggered while reading successful response body.");
                 return Err(ApiError::Cancelled { provider: self.name().to_string() });
             }
@@ -678,7 +676,7 @@ impl Provider for XAIClient {
         let (supports_thinking, reasoning_effort) = call_options
             .as_ref()
             .and_then(|opts| opts.thinking_config)
-            .map(|tc| {
+            .map_or((false, None), |tc| {
                 let effort = tc.effort.map(|e| match e {
                     crate::config::toml_types::ThinkingEffort::Low => ReasoningEffort::Low,
                     crate::config::toml_types::ThinkingEffort::Medium => ReasoningEffort::High,
@@ -686,8 +684,7 @@ impl Provider for XAIClient {
                     crate::config::toml_types::ThinkingEffort::XHigh => ReasoningEffort::High, // xAI has Low/High only
                 });
                 (tc.enabled, effort)
-            })
-            .unwrap_or((false, None));
+            });
 
         let reasoning_effort = if supports_thinking && model_id.id != "grok-4-0709" {
             reasoning_effort.or(Some(ReasoningEffort::High))
@@ -802,7 +799,7 @@ impl XAIClient {
 
                 let event_result = tokio::select! {
                     biased;
-                    _ = token.cancelled() => {
+                    () = token.cancelled() => {
                         yield StreamChunk::Error(StreamError::Cancelled);
                         break;
                     }
@@ -869,31 +866,25 @@ impl XAIClient {
 
                 if let Some(choice) = chunk.choices.first() {
                     if let Some(text_delta) = &choice.delta.content {
-                        match content.last_mut() {
-                            Some(AssistantContent::Text { text }) => text.push_str(text_delta),
-                            _ => {
-                                content.push(AssistantContent::Text {
-                                    text: text_delta.clone(),
-                                });
-                                tool_call_indices.push(None);
-                            }
+                        if let Some(AssistantContent::Text { text }) = content.last_mut() { text.push_str(text_delta) } else {
+                            content.push(AssistantContent::Text {
+                                text: text_delta.clone(),
+                            });
+                            tool_call_indices.push(None);
                         }
                         yield StreamChunk::TextDelta(text_delta.clone());
                     }
 
                     if let Some(thinking_delta) = &choice.delta.reasoning_content {
-                        match content.last_mut() {
-                            Some(AssistantContent::Thought {
+                        if let Some(AssistantContent::Thought {
                                 thought: crate::app::conversation::ThoughtContent::Simple { text },
-                            }) => text.push_str(thinking_delta),
-                            _ => {
-                                content.push(AssistantContent::Thought {
-                                    thought: crate::app::conversation::ThoughtContent::Simple {
-                                        text: thinking_delta.clone(),
-                                    },
-                                });
-                                tool_call_indices.push(None);
-                            }
+                            }) = content.last_mut() { text.push_str(thinking_delta) } else {
+                            content.push(AssistantContent::Thought {
+                                thought: crate::app::conversation::ThoughtContent::Simple {
+                                    text: thinking_delta.clone(),
+                                },
+                            });
+                            tool_call_indices.push(None);
                         }
                         yield StreamChunk::ThinkingDelta(thinking_delta.clone());
                     }

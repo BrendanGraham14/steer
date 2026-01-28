@@ -4,7 +4,6 @@
 //! instead of using hardcoded ones.
 
 use itertools::{Itertools, Position};
-use once_cell::sync::Lazy;
 use pulldown_cmark::{CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -17,7 +16,8 @@ use unicode_width::UnicodeWidthStr;
 use crate::tui::theme::{Component, Theme};
 
 /// Lazy-loaded syntax set for highlighting
-static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
+static SYNTAX_SET: std::sync::LazyLock<SyntaxSet> =
+    std::sync::LazyLock::new(SyntaxSet::load_defaults_newlines);
 
 /// Convert a syntect style to ratatui style
 fn syntect_style_to_ratatui(syntect_style: syntect::highlighting::Style) -> Style {
@@ -266,11 +266,11 @@ where
             Event::Code(code) => self.code(code),
             Event::Html(html) => {
                 warn!("Rich html not yet supported: {}", html);
-                self.text(html)
+                self.text(html);
             }
             Event::FootnoteReference(reference) => {
                 warn!("Footnote reference not yet supported: {}", reference);
-                self.text(reference)
+                self.text(reference);
             }
             Event::SoftBreak => self.soft_break(),
             Event::HardBreak => self.hard_break(),
@@ -312,7 +312,7 @@ where
                     self.push_list_marker();
                     self.in_list_item_start = false;
                 }
-                self.push_link(dest_url)
+                self.push_link(dest_url);
             }
             Tag::Image(_link_type, _dest_url, _title) => warn!("Image not yet supported"),
         }
@@ -349,7 +349,7 @@ where
     }
 
     fn end_paragraph(&mut self) {
-        self.needs_newline = true
+        self.needs_newline = true;
     }
 
     fn start_heading(&mut self, level: HeadingLevel) {
@@ -375,7 +375,7 @@ where
     fn end_heading(&mut self) {
         // Pop the heading style we pushed in start_heading
         self.pop_inline_style();
-        self.needs_newline = true
+        self.needs_newline = true;
     }
 
     fn start_blockquote(&mut self) {
@@ -465,7 +465,7 @@ where
                     }
 
                     // Create a span with the exact line content, preserving all whitespace
-                    let span = Span::styled(line.to_string(), base_style);
+                    let span = Span::styled((*line).to_string(), base_style);
                     self.push_span(span);
                 }
 
@@ -557,10 +557,10 @@ where
         self.code_block_language = match kind {
             CodeBlockKind::Fenced(lang) => {
                 let lang_str = lang.as_ref();
-                if !lang_str.is_empty() {
-                    Some(lang_str.to_string())
-                } else {
+                if lang_str.is_empty() {
                     None
+                } else {
+                    Some(lang_str.to_string())
                 }
             }
             CodeBlockKind::Indented => None,
@@ -947,12 +947,12 @@ mod tests {
 
     #[test]
     fn test_table_parsing() {
-        let markdown = r#"## Test Results Table
+        let markdown = r"## Test Results Table
 
 | Test Suite | Status | Passed | Failed | Skipped | Duration |
 |------------|--------|--------|--------|---------|----------|
 | Unit Tests | ✅ | 247 | 0 | 3 | 2m 15s |
-| Integration Tests | ✅ | 89 | 0 | 1 | 5m 42s |"#;
+| Integration Tests | ✅ | 89 | 0 | 1 | 5m 42s |";
 
         let mut options = Options::empty();
         options.insert(Options::ENABLE_TABLES);
@@ -971,9 +971,9 @@ mod tests {
 
     #[test]
     fn test_simple_table() {
-        let markdown = r#"| Col1 | Col2 |
+        let markdown = r"| Col1 | Col2 |
 |------|------|
-| A    | B    |"#;
+| A    | B    |";
 
         let mut options = Options::empty();
         options.insert(Options::ENABLE_TABLES);
@@ -992,12 +992,12 @@ mod tests {
 
     #[test]
     fn test_table_rendering() {
-        let markdown = r#"## Test Results Table
+        let markdown = r"## Test Results Table
 
 | Test Suite | Status | Passed | Failed | Skipped | Duration |
 |------------|--------|--------|--------|---------|----------|
 | Unit Tests | ✅ | 247 | 0 | 3 | 2m 15s |
-| Integration Tests | ✅ | 89 | 0 | 1 | 5m 42s |"#;
+| Integration Tests | ✅ | 89 | 0 | 1 | 5m 42s |";
 
         // Create a dummy theme for testing
         let theme = Theme::default();
@@ -1018,10 +1018,10 @@ mod tests {
 
     #[test]
     fn test_table_alignment() {
-        let markdown = r#"| Left | Center | Right |
+        let markdown = r"| Left | Center | Right |
 |:-----|:------:|------:|
 | L    | C      | R     |
-| Long Left Text | Centered | Right Aligned |"#;
+| Long Left Text | Centered | Right Aligned |";
 
         let mut options = Options::empty();
         options.insert(Options::ENABLE_TABLES);
@@ -1053,11 +1053,11 @@ mod tests {
 
     #[test]
     fn test_table_edge_cases() {
-        let markdown = r#"| Empty | Unicode | Mixed |
+        let markdown = r"| Empty | Unicode | Mixed |
 |-------|---------|-------|
 |       | 你好 🌍   | Test  |
 | A     |         | 123   |
-|       |         |       |"#;
+|       |         |       |";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1080,13 +1080,13 @@ mod tests {
 
     #[test]
     fn test_table_with_star_emojis() {
-        let markdown = r#"## Complex Data Table
+        let markdown = r"## Complex Data Table
 
 | ID  | Product       | Price   | Stock | Category     | Rating |
 |-----|---------------|---------|-------|--------------|--------|
 | 001 | MacBook Pro   | $2,399  | 12    | Electronics  | ⭐⭐⭐⭐⭐ |
 | 002 | Coffee Mug    | $15.99  | 250   | Kitchen      | ⭐⭐⭐⭐   |
-| 003 | Desk Chair    | $299.00 | 5     | Furniture    | ⭐⭐⭐     |"#;
+| 003 | Desk Chair    | $299.00 | 5     | Furniture    | ⭐⭐⭐     |";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1106,7 +1106,7 @@ mod tests {
 
     #[test]
     fn test_line_breaks() {
-        let markdown = r#"This is a line with a hard break  
+        let markdown = r"This is a line with a hard break  
 at the end.
 
 This is a soft break
@@ -1117,7 +1117,7 @@ soft
 breaks
 in
 a
-row."#;
+row.";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1137,7 +1137,7 @@ row."#;
 
     #[test]
     fn test_horizontal_rules() {
-        let markdown = r#"Some text before
+        let markdown = r"Some text before
 
 ---
 
@@ -1149,7 +1149,7 @@ Another section
 
 ___
 
-Final section"#;
+Final section";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1178,7 +1178,7 @@ Final section"#;
 
     #[test]
     fn test_task_lists() {
-        let markdown = r#"## Todo List
+        let markdown = r"## Todo List
 
 - [x] Complete the parser implementation
 - [ ] Add more tests
@@ -1192,7 +1192,7 @@ Regular list items:
 Mixed list:
 1. [x] First task (done)
 2. [ ] Second task (pending)
-3. Regular numbered item"#;
+3. Regular numbered item";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1229,7 +1229,7 @@ Mixed list:
     #[test]
     fn test_empty_list_items() {
         // Test #2: Empty list items that might leave in_list_item_start as true
-        let markdown = r#"Empty list items:
+        let markdown = r"Empty list items:
 - 
 - Item with content
 - 
@@ -1238,7 +1238,7 @@ Mixed list:
 Empty numbered items:
 1. 
 2. Content here
-3. "#;
+3. ";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1262,7 +1262,7 @@ Empty numbered items:
     #[test]
     fn test_malformed_lists() {
         // Test #3: Various edge cases that might cause state issues
-        let markdown = r#"List interrupted by other content:
+        let markdown = r"List interrupted by other content:
 - Item 1
 This is a paragraph, not in the list
 - Item 2
@@ -1281,7 +1281,7 @@ Task list edge cases:
 Mixed content:
 1. [ ] Task in numbered list
 Regular text
-2. Another item"#;
+2. Another item";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1305,13 +1305,13 @@ Regular text
     #[test]
     fn test_state_tracking_debug() {
         // Test with debug output to track state
-        let markdown = r#"- Item 1
+        let markdown = r"- Item 1
 - 
 - [ ] Task item
 - 
 Regular paragraph
 
-- New list"#;
+- New list";
 
         let mut options = Options::empty();
         options.insert(Options::ENABLE_TASKLISTS);
@@ -1353,7 +1353,7 @@ Regular paragraph
         use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;
 
         // Plain, deterministic words to control wrapping exactly
-        let markdown = r#"- aaaa bbbb cccc dddd eeee ffff gggg"#;
+        let markdown = r"- aaaa bbbb cccc dddd eeee ffff gggg";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1391,8 +1391,8 @@ Regular paragraph
         use crate::tui::widgets::formatters::helpers::style_wrap_with_indent;
 
         // Include a parent item so the nested marker is parsed as a sub-list
-        let markdown = r#"- outer
-    - aaaa bbbb cccc dddd eeee ffff"#;
+        let markdown = r"- outer
+    - aaaa bbbb cccc dddd eeee ffff";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1482,7 +1482,7 @@ def hello():
 
     #[test]
     fn test_numbered_list_with_formatting() {
-        let markdown = r#"### TUI State Management: A Broader View
+        let markdown = r"### TUI State Management: A Broader View
 
 The TUI's state architecture is a well-defined, multi-layered system that separates data, UI state, and asynchronous process management.
 
@@ -1497,7 +1497,7 @@ Also test with other inline formatting:
 1. *Emphasized text*: Should work with emphasis
 2. ~~Strikethrough text~~: Should work with strikethrough
 3. [Link text](https://example.com): Should work with links
-4. `Code text`: Should work with inline code"#;
+4. `Code text`: Should work with inline code";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);
@@ -1549,9 +1549,9 @@ Also test with other inline formatting:
 
     #[test]
     fn test_list_item_bullet_rendering() {
-        let markdown = r#"3. A ChatItem is visible when:
+        let markdown = r"3. A ChatItem is visible when:
 • it is a Message whose id is in lineage, or
-• it has a parent_chat_item_id that (recursively) leads to a Message whose id is in lineage."#;
+• it has a parent_chat_item_id that (recursively) leads to a Message whose id is in lineage.";
 
         // First, let's see what parser events we get
         let options = Options::empty();
@@ -1612,12 +1612,12 @@ Also test with other inline formatting:
 
     #[test]
     fn test_nested_list_with_soft_breaks() {
-        let markdown = r#"1. First level item
+        let markdown = r"1. First level item
    - Nested bullet one
    - Nested bullet two
      with continuation
    - Nested bullet three
-2. Second level item"#;
+2. Second level item";
 
         let theme = Theme::default();
         let styles = MarkdownStyles::from_theme(&theme);

@@ -15,7 +15,10 @@ impl SystemContext {
     }
 
     pub fn with_environment(prompt: String, environment: Option<EnvironmentInfo>) -> Self {
-        Self { prompt, environment }
+        Self {
+            prompt,
+            environment,
+        }
     }
 
     pub fn render(&self) -> Option<String> {

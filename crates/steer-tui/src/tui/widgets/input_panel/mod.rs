@@ -110,8 +110,7 @@ impl InputPanelState {
             let new_cursor_row = new_content[..new_cursor_byte_pos].matches('\n').count();
             let last_newline_pos = new_content[..new_cursor_byte_pos]
                 .rfind('\n')
-                .map(|pos| pos + 1)
-                .unwrap_or(0);
+                .map_or(0, |pos| pos + 1);
             let new_cursor_col = new_content[last_newline_pos..new_cursor_byte_pos]
                 .chars()
                 .count();
@@ -142,7 +141,7 @@ impl InputPanelState {
     pub fn activate_command_fuzzy(&mut self) {
         let cursor_pos = self.get_cursor_byte_offset();
         let content = self.content();
-        if content.get(cursor_pos..cursor_pos + 1) == Some("/") {
+        if content.get(cursor_pos..=cursor_pos) == Some("/") {
             self.fuzzy_finder
                 .activate(cursor_pos + 1, FuzzyFinderMode::Commands);
         } else {
@@ -382,11 +381,7 @@ impl StatefulWidget for InputPanel<'_> {
         }
 
         if has_queue {
-            QueuedPreviewWidget::new(
-                self.queued_preview,
-                self.theme,
-            )
-            .render(layout[0], buf);
+            QueuedPreviewWidget::new(self.queued_preview, self.theme).render(layout[0], buf);
         }
 
         let input_area = if has_queue { layout[1] } else { area };

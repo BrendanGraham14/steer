@@ -6,7 +6,7 @@ use steer_grpc::AgentClient;
 use steer_grpc::client_api::{ClientEvent, ModelId, OpId, RequestId, ToolCall};
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub enum ProcessingResult {
     Handled,
     HandledAndComplete,
@@ -17,7 +17,7 @@ pub enum ProcessingResult {
 /// Pending tool approval with request ID and tool call details
 pub type PendingToolApproval = (RequestId, ToolCall);
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct ProcessingContext<'a> {
     pub chat_store: &'a mut ChatStore,
     pub chat_list_state: &'a mut ChatListState,

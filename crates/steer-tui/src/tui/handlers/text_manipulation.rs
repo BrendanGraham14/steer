@@ -61,7 +61,9 @@ impl Tui {
                 Ok(true)
             }
             (KeyCode::Home, _) => {
-                self.input_panel_state.textarea.move_cursor(CursorMove::Head);
+                self.input_panel_state
+                    .textarea
+                    .move_cursor(CursorMove::Head);
                 Ok(true)
             }
             (KeyCode::End, _) => {
@@ -69,7 +71,9 @@ impl Tui {
                 Ok(true)
             }
             (KeyCode::Char('a'), m) if m.contains(KeyModifiers::CONTROL) => {
-                self.input_panel_state.textarea.move_cursor(CursorMove::Head);
+                self.input_panel_state
+                    .textarea
+                    .move_cursor(CursorMove::Head);
                 Ok(true)
             }
             (KeyCode::Char('e'), m) if m.contains(KeyModifiers::CONTROL) => {

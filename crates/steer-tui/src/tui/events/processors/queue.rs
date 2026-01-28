@@ -48,7 +48,9 @@ mod tests {
     use crate::tui::state::{ChatStore, ToolCallRegistry};
     use crate::tui::widgets::ChatListState;
     use steer_grpc::AgentClient;
-    use steer_grpc::client_api::{MessageId, ModelId, OpId, QueuedWorkItem, QueuedWorkKind, builtin};
+    use steer_grpc::client_api::{
+        MessageId, ModelId, OpId, QueuedWorkItem, QueuedWorkKind, builtin,
+    };
 
     struct TestContext {
         chat_store: ChatStore,

@@ -54,7 +54,12 @@ impl ChatRenderable for ToolWidget {
 
         // Add tool name header to the first line
         let header = format!("{} ", self.tool_call.name);
-        if !compact_lines.is_empty() {
+        if compact_lines.is_empty() {
+            compact_lines.push(Line::from(ratatui::text::Span::styled(
+                header.clone(),
+                theme.style(crate::tui::theme::Component::ToolCallHeader),
+            )));
+        } else {
             // Prepend header to first line
             let mut first_spans = Vec::new();
             first_spans.push(ratatui::text::Span::styled(
@@ -63,15 +68,15 @@ impl ChatRenderable for ToolWidget {
             ));
             first_spans.extend(compact_lines[0].spans.clone());
             compact_lines[0] = Line::from(first_spans);
-        } else {
-            compact_lines.push(Line::from(ratatui::text::Span::styled(
-                header.clone(),
-                theme.style(crate::tui::theme::Component::ToolCallHeader),
-            )));
         }
 
         // Do the same for detailed view
-        if !detailed_lines.is_empty() {
+        if detailed_lines.is_empty() {
+            detailed_lines.push(Line::from(ratatui::text::Span::styled(
+                header,
+                theme.style(crate::tui::theme::Component::ToolCallHeader),
+            )));
+        } else {
             let mut first_spans = Vec::new();
             first_spans.push(ratatui::text::Span::styled(
                 header,
@@ -79,11 +84,6 @@ impl ChatRenderable for ToolWidget {
             ));
             first_spans.extend(detailed_lines[0].spans.clone());
             detailed_lines[0] = Line::from(first_spans);
-        } else {
-            detailed_lines.push(Line::from(ratatui::text::Span::styled(
-                header,
-                theme.style(crate::tui::theme::Component::ToolCallHeader),
-            )));
         }
 
         self.rendered_compact_lines = Some(compact_lines);
@@ -123,7 +123,12 @@ impl ChatRenderable for PendingToolCallWidget {
 
             // Build header line "<tool> ⋯ "
             let header = format!("{} ⋯ ", self.tool_call.name);
-            if !lines.is_empty() {
+            if lines.is_empty() {
+                lines.push(Line::from(ratatui::text::Span::styled(
+                    header,
+                    theme.style(crate::tui::theme::Component::ToolCallHeader),
+                )));
+            } else {
                 // prepend header into first line
                 let mut first_spans = Vec::new();
                 first_spans.push(ratatui::text::Span::styled(
@@ -132,11 +137,6 @@ impl ChatRenderable for PendingToolCallWidget {
                 ));
                 first_spans.extend(lines[0].spans.clone());
                 lines[0] = Line::from(first_spans);
-            } else {
-                lines.push(Line::from(ratatui::text::Span::styled(
-                    header,
-                    theme.style(crate::tui::theme::Component::ToolCallHeader),
-                )));
             }
             self.rendered_lines = Some(lines);
         }
@@ -224,7 +224,7 @@ mod tests {
             command: "echo 'Hello, world!'".to_string(),
             exit_code: 0,
             stdout: "Hello, world!\n".to_string(),
-            stderr: "".to_string(),
+            stderr: String::new(),
         }));
 
         let mut widget = ToolWidget::new(tool_call, result);

@@ -72,7 +72,7 @@ impl SqliteEventStore {
 
     async fn run_migrations(&self) -> Result<(), EventStoreError> {
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS domain_sessions (
                 id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -81,7 +81,7 @@ impl SqliteEventStore {
                 message_count INTEGER NOT NULL DEFAULT 0,
                 last_model TEXT
             )
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await
@@ -90,7 +90,7 @@ impl SqliteEventStore {
         })?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS domain_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
@@ -101,7 +101,7 @@ impl SqliteEventStore {
                 FOREIGN KEY (session_id) REFERENCES domain_sessions(id) ON DELETE CASCADE,
                 UNIQUE(session_id, sequence_num)
             )
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await
@@ -110,10 +110,10 @@ impl SqliteEventStore {
         })?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE INDEX IF NOT EXISTS idx_domain_events_session_seq 
             ON domain_events(session_id, sequence_num)
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await
@@ -122,14 +122,14 @@ impl SqliteEventStore {
         })?;
 
         sqlx::query(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS session_todos (
                 session_id TEXT PRIMARY KEY,
                 todos_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (session_id) REFERENCES domain_sessions(id) ON DELETE CASCADE
             )
-            "#,
+            ",
         )
         .execute(&self.pool)
         .await
@@ -233,10 +233,10 @@ impl EventStore for SqliteEventStore {
         .map_err(|e| EventStoreError::database(format!("Failed to get next sequence: {e}")))?;
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO domain_events (session_id, sequence_num, event_type, event_data)
             VALUES (?1, ?2, ?3, ?4)
-            "#,
+            ",
         )
         .bind(&session_id_str)
         .bind(next_seq)
@@ -266,12 +266,12 @@ impl EventStore for SqliteEventStore {
         let session_id_str = session_id.0.to_string();
 
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT sequence_num, event_data
             FROM domain_events
             WHERE session_id = ?1
             ORDER BY sequence_num ASC
-            "#,
+            ",
         )
         .bind(&session_id_str)
         .fetch_all(&self.pool)
@@ -298,12 +298,12 @@ impl EventStore for SqliteEventStore {
         let session_id_str = session_id.0.to_string();
 
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT sequence_num, event_data
             FROM domain_events
             WHERE session_id = ?1 AND sequence_num > ?2
             ORDER BY sequence_num ASC
-            "#,
+            ",
         )
         .bind(&session_id_str)
         .bind(after_seq as i64)
@@ -429,17 +429,18 @@ impl EventStore for SqliteEventStore {
         todos: &[TodoItem],
     ) -> Result<(), EventStoreError> {
         let session_id_str = session_id.0.to_string();
-        let todos_json = serde_json::to_string(todos)
-            .map_err(|e| EventStoreError::serialization(format!("Failed to serialize todos: {e}")))?;
+        let todos_json = serde_json::to_string(todos).map_err(|e| {
+            EventStoreError::serialization(format!("Failed to serialize todos: {e}"))
+        })?;
 
         sqlx::query(
-            r#"
+            r"
             INSERT INTO session_todos (session_id, todos_json, updated_at)
             VALUES (?1, ?2, datetime('now'))
             ON CONFLICT(session_id) DO UPDATE SET
                 todos_json = excluded.todos_json,
                 updated_at = datetime('now')
-            "#,
+            ",
         )
         .bind(&session_id_str)
         .bind(&todos_json)
@@ -511,12 +512,10 @@ impl SessionCatalog for SqliteEventStore {
                 })?;
 
                 let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now());
+                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
 
                 let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now());
+                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
 
                 Ok(Some(SessionSummary {
                     id: SessionId(uuid),
@@ -538,12 +537,12 @@ impl SessionCatalog for SqliteEventStore {
         let offset = filter.offset.unwrap_or(0) as i64;
 
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT id, created_at, updated_at, message_count, last_model 
             FROM domain_sessions 
             ORDER BY updated_at DESC
             LIMIT ?1 OFFSET ?2
-            "#,
+            ",
         )
         .bind(limit)
         .bind(offset)
@@ -564,12 +563,10 @@ impl SessionCatalog for SqliteEventStore {
             })?;
 
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
 
             let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+                .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
 
             summaries.push(SessionSummary {
                 id: SessionId(uuid),
@@ -650,11 +647,11 @@ mod tests {
     use crate::app::domain::types::ToolCallId;
     use crate::config::model::builtin;
     use crate::session::state::{SessionConfig, ToolVisibility};
+    use std::collections::{HashMap, HashSet};
     use steer_tools::error::{ToolError, ToolExecutionError, WorkspaceOpError};
     use steer_tools::result::ToolResult;
     use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
     use steer_tools::tools::view::ViewError;
-    use std::collections::{HashMap, HashSet};
 
     fn sample_todos() -> Vec<TodoItem> {
         vec![

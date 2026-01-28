@@ -12,10 +12,7 @@ pub struct QueuedPreviewWidget<'a> {
 
 impl<'a> QueuedPreviewWidget<'a> {
     pub fn new(preview: Option<&'a str>, theme: &'a Theme) -> Self {
-        Self {
-            preview,
-            theme,
-        }
+        Self { preview, theme }
     }
 
     fn title(&self) -> Line<'static> {
@@ -32,7 +29,7 @@ impl<'a> QueuedPreviewWidget<'a> {
 
         for line in text.lines() {
             let len = line.chars().count().max(1);
-            line_count += (len + inner_width - 1) / inner_width;
+            line_count += len.div_ceil(inner_width);
         }
 
         if line_count == 0 {
@@ -43,7 +40,7 @@ impl<'a> QueuedPreviewWidget<'a> {
     }
 }
 
-impl<'a> Widget for QueuedPreviewWidget<'a> {
+impl Widget for QueuedPreviewWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let preview = self.preview.unwrap_or("");
         let block = Block::default()

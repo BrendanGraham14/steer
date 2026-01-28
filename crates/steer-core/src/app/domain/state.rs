@@ -1,11 +1,11 @@
+use crate::app::SystemContext;
 use crate::app::conversation::MessageGraph;
 use crate::app::domain::action::McpServerState;
 use crate::app::domain::types::{
     MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
 };
-use crate::app::SystemContext;
-use crate::prompts::system_prompt_for_model;
 use crate::config::model::ModelId;
+use crate::prompts::system_prompt_for_model;
 use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -220,7 +220,8 @@ impl AppState {
                 return;
             }
         }
-        self.queued_work.push_back(QueuedWorkItem::UserMessage(item));
+        self.queued_work
+            .push_back(QueuedWorkItem::UserMessage(item));
     }
 
     pub fn queue_bash_command(&mut self, item: QueuedBashCommand) {
@@ -312,8 +313,7 @@ impl AppState {
         self.pending_approval = None;
         self.approval_queue.clear();
 
-        if let Some(primary_agent_id) =
-            primary_agent_id.or_else(|| config.primary_agent_id.clone())
+        if let Some(primary_agent_id) = primary_agent_id.or_else(|| config.primary_agent_id.clone())
         {
             self.primary_agent_id = Some(primary_agent_id);
         }

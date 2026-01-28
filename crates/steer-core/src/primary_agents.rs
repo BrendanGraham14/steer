@@ -1,4 +1,3 @@
-use once_cell::sync::Lazy;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -18,7 +17,7 @@ pub const PLANNER_PRIMARY_AGENT_ID: &str = "planner";
 pub const YOLO_PRIMARY_AGENT_ID: &str = "yolo";
 pub const DEFAULT_PRIMARY_AGENT_ID: &str = NORMAL_PRIMARY_AGENT_ID;
 
-static PLANNER_SYSTEM_PROMPT: Lazy<String> = Lazy::new(|| {
+static PLANNER_SYSTEM_PROMPT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
         r#"You are in planner mode. Produce a concise, step-by-step plan only.
 
@@ -44,8 +43,6 @@ Validation:
 - ...
 
 Finish by asking the user to switch back to "{NORMAL_PRIMARY_AGENT_ID}" or "{YOLO_PRIMARY_AGENT_ID}" to execute."#,
-        NORMAL_PRIMARY_AGENT_ID = NORMAL_PRIMARY_AGENT_ID,
-        YOLO_PRIMARY_AGENT_ID = YOLO_PRIMARY_AGENT_ID,
     )
 });
 
@@ -60,13 +57,14 @@ pub struct PrimaryAgentSpec {
     pub approval_policy: ToolApprovalPolicy,
 }
 
-static PRIMARY_AGENT_SPECS: Lazy<RwLock<HashMap<String, PrimaryAgentSpec>>> = Lazy::new(|| {
-    let mut specs = HashMap::new();
-    for spec in default_primary_agent_specs() {
-        specs.insert(spec.id.clone(), spec);
-    }
-    RwLock::new(specs)
-});
+static PRIMARY_AGENT_SPECS: std::sync::LazyLock<RwLock<HashMap<String, PrimaryAgentSpec>>> =
+    std::sync::LazyLock::new(|| {
+        let mut specs = HashMap::new();
+        for spec in default_primary_agent_specs() {
+            specs.insert(spec.id.clone(), spec);
+        }
+        RwLock::new(specs)
+    });
 
 pub fn primary_agent_spec(id: &str) -> Option<PrimaryAgentSpec> {
     let registry = PRIMARY_AGENT_SPECS.read().ok()?;
@@ -95,22 +93,20 @@ pub fn resolve_effective_config(base_config: &SessionConfig) -> SessionConfig {
         .clone()
         .unwrap_or_else(|| DEFAULT_PRIMARY_AGENT_ID.to_string());
 
-    let (primary_agent_id, spec) = match primary_agent_spec(&requested_agent_id) {
-        Some(spec) => (requested_agent_id, spec),
-        None => {
-            let fallback_spec = primary_agent_spec(DEFAULT_PRIMARY_AGENT_ID).unwrap_or_else(|| {
-                PrimaryAgentSpec {
-                    id: DEFAULT_PRIMARY_AGENT_ID.to_string(),
-                    name: "Normal".to_string(),
-                    description: "Default agent".to_string(),
-                    model: None,
-                    system_prompt: None,
-                    tool_visibility: ToolVisibility::All,
-                    approval_policy: ToolApprovalPolicy::default(),
-                }
+    let (primary_agent_id, spec) = if let Some(spec) = primary_agent_spec(&requested_agent_id) {
+        (requested_agent_id, spec)
+    } else {
+        let fallback_spec =
+            primary_agent_spec(DEFAULT_PRIMARY_AGENT_ID).unwrap_or_else(|| PrimaryAgentSpec {
+                id: DEFAULT_PRIMARY_AGENT_ID.to_string(),
+                name: "Normal".to_string(),
+                description: "Default agent".to_string(),
+                model: None,
+                system_prompt: None,
+                tool_visibility: ToolVisibility::All,
+                approval_policy: ToolApprovalPolicy::default(),
             });
-            (DEFAULT_PRIMARY_AGENT_ID.to_string(), fallback_spec)
-        }
+        (DEFAULT_PRIMARY_AGENT_ID.to_string(), fallback_spec)
     };
 
     let effective_model = resolve_default_model(&config, &spec, &base_config.policy_overrides);
@@ -123,8 +119,12 @@ pub fn resolve_effective_config(base_config: &SessionConfig) -> SessionConfig {
         .policy_overrides
         .approval_policy
         .apply_to(&spec.approval_policy);
-    let effective_system_prompt =
-        resolve_system_prompt(&config, &spec, &effective_model, &base_config.policy_overrides);
+    let effective_system_prompt = resolve_system_prompt(
+        &config,
+        &spec,
+        &effective_model,
+        &base_config.policy_overrides,
+    );
 
     config.primary_agent_id = Some(primary_agent_id);
     config.default_model = effective_model;
@@ -233,8 +233,8 @@ mod tests {
     use super::*;
     use crate::config::model::builtin;
     use crate::session::state::{
-        ApprovalRulesOverrides, SessionPolicyOverrides, SessionToolConfig, ToolApprovalPolicyOverrides,
-        ToolRule, ToolRuleOverrides, WorkspaceConfig,
+        ApprovalRulesOverrides, SessionPolicyOverrides, SessionToolConfig,
+        ToolApprovalPolicyOverrides, ToolRule, ToolRuleOverrides, WorkspaceConfig,
     };
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
     use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
@@ -309,12 +309,14 @@ mod tests {
             updated.tool_config.approval_policy.default_behavior,
             UnapprovedBehavior::Allow
         );
-        assert!(updated
-            .tool_config
-            .approval_policy
-            .preapproved
-            .tools
-            .contains("custom_tool"));
+        assert!(
+            updated
+                .tool_config
+                .approval_policy
+                .preapproved
+                .tools
+                .contains("custom_tool")
+        );
 
         let rule = updated
             .tool_config

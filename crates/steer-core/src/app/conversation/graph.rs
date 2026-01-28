@@ -48,7 +48,7 @@ impl MessageGraph {
     }
 
     pub fn find_tool_name_by_id(&self, tool_id: &str) -> Option<String> {
-        for message in self.messages.iter() {
+        for message in &self.messages {
             if let MessageData::Assistant { content, .. } = &message.data {
                 for content_block in content {
                     if let AssistantContent::ToolCall { tool_call, .. } = content_block {
@@ -149,7 +149,7 @@ impl MessageGraph {
         let head_id = if let Some(ref active_id) = self.active_message_id {
             active_id.as_str()
         } else {
-            self.messages.last().map(|m| m.id()).unwrap_or("")
+            self.messages.last().map_or("", |m| m.id())
         };
 
         let mut current_msg = self.messages.iter().find(|m| m.id() == head_id);

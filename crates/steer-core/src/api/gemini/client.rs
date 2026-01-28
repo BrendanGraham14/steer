@@ -9,11 +9,11 @@ use tracing::{debug, error, info, warn};
 use crate::api::error::{ApiError, StreamError};
 use crate::api::provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
 use crate::api::sse::parse_sse_stream;
+use crate::app::SystemContext;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ThoughtSignature, ToolResult,
     UserContent,
 };
-use crate::app::SystemContext;
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
@@ -104,7 +104,7 @@ struct GeminiThinkingConfig {
     thinking_budget: Option<i32>,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum GeminiMimeType {
@@ -276,7 +276,7 @@ enum GeminiBlockReason {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct GeminiSafetyRating {
     category: GeminiHarmCategory,
     probability: GeminiHarmProbability,
@@ -286,7 +286,7 @@ struct GeminiSafetyRating {
 
 #[derive(Debug, Deserialize, Serialize)] // Add Serialize for potential use in SafetySetting
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[allow(clippy::enum_variant_names)]
+#[expect(clippy::enum_variant_names)]
 enum GeminiHarmCategory {
     HarmCategoryUnspecified,
     HarmCategoryDerogatory,
@@ -312,7 +312,7 @@ enum GeminiHarmProbability {
     High,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GeminiCitationMetadata {
     #[serde(rename = "citationSources")]
@@ -320,7 +320,7 @@ struct GeminiCitationMetadata {
     citation_sources: Option<Vec<GeminiCitationSource>>,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Debug, Deserialize)]
 struct GeminiCitationSource {
     #[serde(rename = "startIndex")]
@@ -366,7 +366,7 @@ struct GeminiExecutableCode {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct GeminiContentResponse {
     role: String,
     parts: Vec<GeminiResponsePart>,
@@ -416,17 +416,15 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                         AssistantContent::ToolCall {
                             tool_call,
                             thought_signature,
-                        } => {
-                            Some(GeminiRequestPart::FunctionCall {
-                                function_call: GeminiFunctionCall {
-                                    name: tool_call.name.clone(),
-                                    args: tool_call.parameters.clone(),
-                                },
-                                thought_signature: thought_signature
-                                    .as_ref()
-                                    .map(|signature| signature.as_str().to_string()),
-                            })
-                        }
+                        } => Some(GeminiRequestPart::FunctionCall {
+                            function_call: GeminiFunctionCall {
+                                name: tool_call.name.clone(),
+                                args: tool_call.parameters.clone(),
+                            },
+                            thought_signature: thought_signature
+                                .as_ref()
+                                .map(|signature| signature.as_str().to_string()),
+                        }),
                         AssistantContent::Thought { .. } => {
                             // Gemini doesn't send thought blocks in requests
                             None
@@ -501,11 +499,11 @@ fn infer_type_from_enum(values: &[Value]) -> Option<String> {
         }
     }
 
-    let kind_count = has_string as u8
-        + has_number as u8
-        + has_bool as u8
-        + has_object as u8
-        + has_array as u8;
+    let kind_count = u8::from(has_string)
+        + u8::from(has_number)
+        + u8::from(has_bool)
+        + u8::from(has_object)
+        + u8::from(has_array);
 
     if kind_count != 1 {
         return None;
@@ -534,7 +532,7 @@ fn normalize_type(value: &Value) -> Value {
     if let Some(type_array) = value.as_array()
         && let Some(primary_type) = type_array
             .iter()
-            .find_map(|v| if !v.is_null() { v.as_str() } else { None })
+            .find_map(|v| if v.is_null() { None } else { v.as_str() })
     {
         return Value::String(primary_type.to_string());
     }
@@ -565,11 +563,7 @@ fn extract_enum_values(value: &Value) -> Vec<Value> {
     Vec::new()
 }
 
-fn merge_property(
-    properties: &mut serde_json::Map<String, Value>,
-    key: &str,
-    value: &Value,
-) {
+fn merge_property(properties: &mut serde_json::Map<String, Value>, key: &str, value: &Value) {
     match properties.get_mut(key) {
         None => {
             properties.insert(key.to_string(), value.clone());
@@ -744,10 +738,8 @@ fn sanitize_for_gemini(root: &Value, schema: &Value) -> Value {
                 if let Some(props) = value.as_object() {
                     let mut sanitized_props = serde_json::Map::new();
                     for (prop_key, prop_value) in props {
-                        sanitized_props.insert(
-                            prop_key.clone(),
-                            sanitize_for_gemini(root, prop_value),
-                        );
+                        sanitized_props
+                            .insert(prop_key.clone(), sanitize_for_gemini(root, prop_value));
                     }
                     out.insert("properties".to_string(), Value::Object(sanitized_props));
                 }
@@ -788,7 +780,10 @@ fn sanitize_for_gemini(root: &Value, schema: &Value) -> Value {
     if out.get("type") == Some(&Value::String("object".to_string()))
         && !out.contains_key("properties")
     {
-        out.insert("properties".to_string(), Value::Object(serde_json::Map::new()));
+        out.insert(
+            "properties".to_string(),
+            Value::Object(serde_json::Map::new()),
+        );
     }
 
     if !out.contains_key("type") {
@@ -818,7 +813,7 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
             if let Some(type_array) = type_val.as_array() {
                 if let Some(primary_type) = type_array
                     .iter()
-                    .find_map(|v| if !v.is_null() { v.as_str() } else { None })
+                    .find_map(|v| if v.is_null() { None } else { v.as_str() })
                 {
                     *type_val = serde_json::Value::String(primary_type.to_string());
                 } else {
@@ -848,8 +843,7 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
             let should_remove_format = simplified_prop
                 .get("format")
                 .and_then(|f| f.as_str())
-                .map(|format_str| format_str != "enum" && format_str != "date-time")
-                .unwrap_or(false);
+                .is_some_and(|format_str| format_str != "enum" && format_str != "date-time");
 
             if should_remove_format {
                 if let Some(format_val) = simplified_prop.remove("format") {
@@ -933,9 +927,9 @@ fn convert_tools(tools: Vec<ToolSchema>) -> Vec<GeminiTool> {
 
             // Construct the parameters object using the specific struct
             let parameters = GeminiParameterSchema {
-                schema_type, // Use schema_type field (usually "object")
-                properties: simplified_properties,          // Use simplified properties
-                required: summary.required,                 // Use required field
+                schema_type,                       // Use schema_type field (usually "object")
+                properties: simplified_properties, // Use simplified properties
+                required: summary.required,        // Use required field
             };
 
             GeminiFunctionDeclaration {
@@ -969,26 +963,23 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
     }
 
     // Check candidates *after* checking for prompt blocking
-    let candidates = match response.candidates {
-        Some(cands) => {
-            if cands.is_empty() {
-                // If it was blocked, the previous check should have caught it.
-                // So, this means no candidates were generated for other reasons.
-                warn!(target: "gemini::convert_response", "No candidates received, and prompt was not blocked.");
-                // Use NoChoices error here
-                return Err(ApiError::NoChoices {
-                    provider: "google".to_string(),
-                });
-            }
-            cands // Return the non-empty vector
-        }
-        None => {
-            warn!(target: "gemini::convert_response", "No candidates field in Gemini response.");
-            // Use NoChoices error here as well
+    let candidates = if let Some(cands) = response.candidates {
+        if cands.is_empty() {
+            // If it was blocked, the previous check should have caught it.
+            // So, this means no candidates were generated for other reasons.
+            warn!(target: "gemini::convert_response", "No candidates received, and prompt was not blocked.");
+            // Use NoChoices error here
             return Err(ApiError::NoChoices {
                 provider: "google".to_string(),
             });
         }
+        cands // Return the non-empty vector
+    } else {
+        warn!(target: "gemini::convert_response", "No candidates field in Gemini response.");
+        // Use NoChoices error here as well
+        return Err(ApiError::NoChoices {
+            provider: "google".to_string(),
+        });
     };
 
     // For simplicity, still taking the first candidate. Multi-candidate handling could be added.
@@ -1033,18 +1024,15 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
             if part.thought {
                 debug!(target: "gemini::convert_response", "Received thought part: {:?}", part);
                 // For thought parts, extract text content and create a Thought block
-                match &part.data {
-                    GeminiResponsePartData::Text { text } => {
-                        Some(AssistantContent::Thought {
-                            thought: ThoughtContent::Simple {
-                                text: text.clone(),
-                            },
-                        })
-                    }
-                    _ => {
-                        warn!(target: "gemini::convert_response", "Thought part contains non-text data: {:?}", part.data);
-                        None
-                    }
+                if let GeminiResponsePartData::Text { text } = &part.data {
+                    Some(AssistantContent::Thought {
+                        thought: ThoughtContent::Simple {
+                            text: text.clone(),
+                        },
+                    })
+                } else {
+                    warn!(target: "gemini::convert_response", "Thought part contains non-text data: {:?}", part.data);
+                    None
                 }
             } else {
                 // Regular (non-thought) content processing
@@ -1140,13 +1128,13 @@ impl Provider for GeminiClient {
             .as_ref()
             .and_then(|o| o.thinking_config)
             .and_then(|tc| {
-                if !tc.enabled {
-                    None
-                } else {
+                if tc.enabled {
                     Some(GeminiThinkingConfig {
                         include_thoughts: tc.include_thoughts,
                         thinking_budget: tc.budget_tokens.map(|v| v as i32),
                     })
+                } else {
+                    None
                 }
             });
 
@@ -1155,9 +1143,9 @@ impl Provider for GeminiClient {
             system_instruction,
             tools: gemini_tools,
             generation_config: Some(GeminiGenerationConfig {
+                max_output_tokens,
                 temperature,
                 top_p,
-                max_output_tokens,
                 thinking_config,
                 ..Default::default()
             }),
@@ -1165,7 +1153,7 @@ impl Provider for GeminiClient {
 
         let response = tokio::select! {
             biased;
-            _ = token.cancelled() => {
+            () = token.cancelled() => {
                 debug!(target: "gemini::complete", "Cancellation token triggered before sending request.");
                 return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
@@ -1264,13 +1252,13 @@ impl Provider for GeminiClient {
             .as_ref()
             .and_then(|o| o.thinking_config)
             .and_then(|tc| {
-                if !tc.enabled {
-                    None
-                } else {
+                if tc.enabled {
                     Some(GeminiThinkingConfig {
                         include_thoughts: tc.include_thoughts,
                         thinking_budget: tc.budget_tokens.map(|v| v as i32),
                     })
+                } else {
+                    None
                 }
             });
 
@@ -1279,9 +1267,9 @@ impl Provider for GeminiClient {
             system_instruction,
             tools: gemini_tools,
             generation_config: Some(GeminiGenerationConfig {
+                max_output_tokens,
                 temperature,
                 top_p,
-                max_output_tokens,
                 thinking_config,
                 ..Default::default()
             }),
@@ -1289,7 +1277,7 @@ impl Provider for GeminiClient {
 
         let response = tokio::select! {
             biased;
-            _ = token.cancelled() => {
+            () = token.cancelled() => {
                 return Err(ApiError::Cancelled{ provider: self.name().to_string()});
             }
             res = self.client.post(&url).json(&request).send() => {
@@ -1351,7 +1339,7 @@ impl GeminiClient {
 
                 let event_result = tokio::select! {
                     biased;
-                    _ = token.cancelled() => {
+                    () = token.cancelled() => {
                         yield StreamChunk::Error(StreamError::Cancelled);
                         break;
                     }

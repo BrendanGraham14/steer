@@ -114,7 +114,7 @@ async fn run_api_with_tool_response(client: &Client, model: &ModelId) -> Result<
     ];
 
     let response = client
-        .complete(&model, messages, None, None, None, CancellationToken::new())
+        .complete(model, messages, None, None, None, CancellationToken::new())
         .await;
 
     let response = response.map_err(|e| {
@@ -199,7 +199,7 @@ async fn run_api_with_cancelled_tool_execution(
     ];
 
     let response = client
-        .complete(&model, messages, None, None, None, CancellationToken::new())
+        .complete(model, messages, None, None, None, CancellationToken::new())
         .await;
 
     let response = response.map_err(|e| {
@@ -240,7 +240,7 @@ async fn run_streaming_basic(client: &Client, model: &ModelId) -> Result<(), Api
     }];
 
     let stream_result = client
-        .stream_complete(&model, messages, None, None, None, CancellationToken::new())
+        .stream_complete(model, messages, None, None, None, CancellationToken::new())
         .await;
 
     let mut stream = stream_result.map_err(|e| {
@@ -291,7 +291,7 @@ async fn run_streaming_basic(client: &Client, model: &ModelId) -> Result<(), Api
         .map(|r| r.extract_text())
         .unwrap_or_default();
     assert!(
-        final_text.contains("4") || final_text.to_lowercase().contains("four"),
+        final_text.contains('4') || final_text.to_lowercase().contains("four"),
         "Response for model {model:?} should contain '4', got: '{final_text}'"
     );
 
@@ -333,7 +333,7 @@ async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> Result<()
 
     let stream_result = client
         .stream_complete(
-            &model,
+            model,
             messages,
             None,
             Some(tools),
@@ -422,7 +422,7 @@ async fn run_streaming_with_reasoning(client: &Client, model: &ModelId) -> Resul
     }];
 
     let stream_result = client
-        .stream_complete(&model, messages, None, None, None, CancellationToken::new())
+        .stream_complete(model, messages, None, None, None, CancellationToken::new())
         .await;
 
     let mut stream = stream_result.map_err(|e| {

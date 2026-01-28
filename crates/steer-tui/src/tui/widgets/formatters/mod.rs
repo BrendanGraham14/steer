@@ -65,7 +65,7 @@ pub trait ToolFormatter: Send + Sync {
 
 lazy_static! {
     static ref FORMATTERS: HashMap<&'static str, Box<dyn ToolFormatter>> = {
-        use steer_tools::tools::*;
+        use steer_tools::tools::{BASH_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, GLOB_TOOL_NAME, VIEW_TOOL_NAME, EDIT_TOOL_NAME, edit, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, AST_GREP_TOOL_NAME, FETCH_TOOL_NAME, DISPATCH_AGENT_TOOL_NAME};
 
         let mut map: HashMap<&'static str, Box<dyn ToolFormatter>> = HashMap::new();
 

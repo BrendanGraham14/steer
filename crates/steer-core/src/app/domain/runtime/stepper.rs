@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use crate::app::SystemContext;
 use crate::app::conversation::{AssistantContent, Message, MessageData};
 use crate::app::domain::types::{MessageId, ToolCallId};
-use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use steer_tools::{ToolCall, ToolError, ToolResult, ToolSchema};
 
@@ -639,7 +639,7 @@ mod tests {
         match &tool_message.data {
             MessageData::Tool { result, .. } => match result {
                 ToolResult::Error(error) => {
-                    assert!(matches!(error, ToolError::DeniedByUser(name) if name == "test_tool"))
+                    assert!(matches!(error, ToolError::DeniedByUser(name) if name == "test_tool"));
                 }
                 _ => panic!("expected denied tool error"),
             },
@@ -679,7 +679,7 @@ mod tests {
         match &tool_message.data {
             MessageData::Tool { result, .. } => match result {
                 ToolResult::Error(error) => {
-                    assert!(matches!(error, ToolError::Cancelled(name) if name == "test_tool"))
+                    assert!(matches!(error, ToolError::Cancelled(name) if name == "test_tool"));
                 }
                 _ => panic!("expected cancelled tool error"),
             },

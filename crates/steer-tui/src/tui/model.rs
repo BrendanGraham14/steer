@@ -1,5 +1,5 @@
 use crate::tui::core_commands::{CommandResponse as CoreCommandResponse, CoreCommandType};
-use steer_grpc::client_api::{Message, McpServerInfo};
+use steer_grpc::client_api::{McpServerInfo, Message};
 use steer_tools::ToolCall;
 use time::OffsetDateTime;
 

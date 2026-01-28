@@ -49,9 +49,8 @@ impl Tui {
                         if i == row {
                             offset += col;
                             break;
-                        } else {
-                            offset += line.len() + 1;
                         }
+                        offset += line.len() + 1;
                     }
                     // Check if we have a stored trigger position
                     if let Some(trigger_pos) =

@@ -3,8 +3,8 @@ use std::fs;
 use steer_core::catalog::CatalogConfig;
 use steer_core::config::model::ModelId;
 use steer_core::config::provider::ProviderId;
-use steer_grpc::local_server::{LocalGrpcSetup, setup_local_grpc_with_catalog};
 use steer_grpc::AgentClient;
+use steer_grpc::local_server::{LocalGrpcSetup, setup_local_grpc_with_catalog};
 use tempfile::TempDir;
 
 async fn setup_client(catalog_paths: Vec<String>) -> (AgentClient, LocalGrpcSetup) {
@@ -149,10 +149,7 @@ recommended = true
     let (client, setup) = setup_client(vec![path]).await;
 
     let resolved = resolve_with_fallback(&client, Some("not-a-model")).await;
-    assert_eq!(
-        resolved,
-        ModelId::new(ProviderId::from("aaa"), "aaa-model")
-    );
+    assert_eq!(resolved, ModelId::new(ProviderId::from("aaa"), "aaa-model"));
 
     shutdown(setup).await;
 }

@@ -63,11 +63,11 @@ edition = "2024"
 
     tokio::fs::write(
         workspace_path.join("src/lib.rs"),
-        r#"//! Test library
+        r"//! Test library
 pub fn add(a: i32, b: i32) -> i32 {
     a + b
 }
-"#,
+",
     )
     .await?;
 
@@ -82,11 +82,11 @@ pub fn add(a: i32, b: i32) -> i32 {
 
     tokio::fs::write(
         workspace_path.join("tests/integration_test.rs"),
-        r#"#[test]
+        r"#[test]
 fn test_something() {
     assert_eq!(2 + 2, 4);
 }
-"#,
+",
     )
     .await?;
 
@@ -373,7 +373,7 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
 
     let default_model = steer_core::config::model::builtin::claude_sonnet_4_5();
     let session_params = CreateSessionParams {
-       workspace: ClientWorkspaceConfig::Local {
+        workspace: ClientWorkspaceConfig::Local {
             path: workspace_path.clone(),
         },
         tool_config: SessionToolConfig::default(),
@@ -403,7 +403,7 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
     wait_for_mcp_event(&mut event_rx, "test-mcp-1").await;
 
     let session_params = CreateSessionParams {
-       workspace: ClientWorkspaceConfig::Local {
+        workspace: ClientWorkspaceConfig::Local {
             path: workspace_path.clone(),
         },
         tool_config: SessionToolConfig::default(),

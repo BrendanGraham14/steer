@@ -119,10 +119,7 @@ impl ChatRenderable for RowWidget {
                     Style::default(),
                 ));
             } else if left_inset > 0 {
-                acc.push(Span::styled(
-                    " ".repeat(left_inset as usize),
-                    padding_style,
-                ));
+                acc.push(Span::styled(" ".repeat(left_inset as usize), padding_style));
             }
             if let Some(accent) = self.accent_style {
                 acc.push(Span::styled("▌", accent));
@@ -159,7 +156,7 @@ impl ChatRenderable for RowWidget {
             lines.push(make_padding_line(width));
         }
 
-        for line in body_lines.iter() {
+        for line in body_lines {
             let spans = line.spans.clone();
             let mut acc = Vec::with_capacity(6 + spans.len());
 
@@ -169,10 +166,7 @@ impl ChatRenderable for RowWidget {
                     Style::default(),
                 ));
             } else if left_inset > 0 {
-                acc.push(Span::styled(
-                    " ".repeat(left_inset as usize),
-                    padding_style,
-                ));
+                acc.push(Span::styled(" ".repeat(left_inset as usize), padding_style));
             }
             if let Some(accent) = self.accent_style {
                 acc.push(Span::styled("▌", accent));
@@ -202,10 +196,7 @@ impl ChatRenderable for RowWidget {
             let used_width = if has_row_bg {
                 accent_width + (gap_after_accent as usize) + content_width
             } else {
-                (left_inset as usize)
-                    + accent_width
-                    + (gap_after_accent as usize)
-                    + content_width
+                (left_inset as usize) + accent_width + (gap_after_accent as usize) + content_width
             };
             let remaining = if has_row_bg {
                 bubble_width as usize

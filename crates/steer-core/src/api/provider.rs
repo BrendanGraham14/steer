@@ -7,8 +7,8 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::error::{ApiError, StreamError};
-use crate::app::conversation::{AssistantContent, Message};
 use crate::app::SystemContext;
+use crate::app::conversation::{AssistantContent, Message};
 use crate::auth::{AuthStorage, DynAuthenticationFlow};
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::{ToolCall, ToolSchema};
@@ -43,8 +43,7 @@ impl CompletionResponse {
                     None
                 }
             })
-            .collect::<Vec<String>>()
-            .join("")
+            .collect::<String>()
     }
 
     /// Check if the response contains any tool calls

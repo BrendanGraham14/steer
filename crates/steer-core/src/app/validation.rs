@@ -68,7 +68,6 @@ impl ValidatorRegistry {
 }
 
 // Bash validator implementation
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -93,66 +92,67 @@ impl BashValidator {
 
     /// Check if a command is banned (basic, fast check) - matches src/tools/bash.rs
     fn is_banned_command(&self, command: &str) -> bool {
-        static BANNED_COMMAND_REGEXES: Lazy<Vec<Regex>> = Lazy::new(|| {
-            let banned_commands = [
-                // Network tools
-                "curl",
-                "wget",
-                "nc",
-                "telnet",
-                "ssh",
-                "scp",
-                "ftp",
-                "sftp",
-                // Web browsers/clients
-                "lynx",
-                "w3m",
-                "links",
-                "elinks",
-                "httpie",
-                "xh",
-                "http-prompt",
-                "chrome",
-                "firefox",
-                "safari",
-                "edge",
-                "opera",
-                "chromium",
-                // Download managers
-                "axel",
-                "aria2c",
-                // Shell utilities that might be risky if misused
-                "alias",
-                "unalias",
-                "exec",
-                "source",
-                ".",
-                "history",
-                // Potentially dangerous system modification tools
-                "sudo",
-                "su",
-                "chown",
-                "chmod",
-                "useradd",
-                "userdel",
-                "groupadd",
-                "groupdel",
-                // File editors (could be used to modify sensitive files)
-                "vi",
-                "vim",
-                "nano",
-                "pico",
-                "emacs",
-                "ed",
-            ];
-            banned_commands
-                .iter()
-                .map(|cmd| {
-                    Regex::new(&format!(r"^\s*(\S*/)?{}\b", regex::escape(cmd)))
-                        .expect("Failed to compile banned command regex")
-                })
-                .collect()
-        });
+        static BANNED_COMMAND_REGEXES: std::sync::LazyLock<Vec<Regex>> =
+            std::sync::LazyLock::new(|| {
+                let banned_commands = [
+                    // Network tools
+                    "curl",
+                    "wget",
+                    "nc",
+                    "telnet",
+                    "ssh",
+                    "scp",
+                    "ftp",
+                    "sftp",
+                    // Web browsers/clients
+                    "lynx",
+                    "w3m",
+                    "links",
+                    "elinks",
+                    "httpie",
+                    "xh",
+                    "http-prompt",
+                    "chrome",
+                    "firefox",
+                    "safari",
+                    "edge",
+                    "opera",
+                    "chromium",
+                    // Download managers
+                    "axel",
+                    "aria2c",
+                    // Shell utilities that might be risky if misused
+                    "alias",
+                    "unalias",
+                    "exec",
+                    "source",
+                    ".",
+                    "history",
+                    // Potentially dangerous system modification tools
+                    "sudo",
+                    "su",
+                    "chown",
+                    "chmod",
+                    "useradd",
+                    "userdel",
+                    "groupadd",
+                    "groupdel",
+                    // File editors (could be used to modify sensitive files)
+                    "vi",
+                    "vim",
+                    "nano",
+                    "pico",
+                    "emacs",
+                    "ed",
+                ];
+                banned_commands
+                    .iter()
+                    .map(|cmd| {
+                        Regex::new(&format!(r"^\s*(\S*/)?{}\b", regex::escape(cmd)))
+                            .expect("Failed to compile banned command regex")
+                    })
+                    .collect()
+            });
 
         BANNED_COMMAND_REGEXES.iter().any(|re| re.is_match(command))
     }

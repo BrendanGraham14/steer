@@ -1,9 +1,7 @@
 /// Normalize a chat completions URL.
 /// Ensures the URL ends with the correct path for chat completions.
 pub fn normalize_chat_url(base_url: Option<&str>, default_url: &str) -> String {
-    let base_url = base_url
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| default_url.to_string());
+    let base_url = base_url.map_or_else(|| default_url.to_string(), |s| s.to_string());
 
     // If URL already ends with chat/completions, return as-is
     if base_url.ends_with("/chat/completions") || base_url.ends_with("/v1/chat/completions") {
@@ -38,9 +36,7 @@ pub fn normalize_chat_url(base_url: Option<&str>, default_url: &str) -> String {
 /// Normalize a responses URL.
 /// Ensures the URL ends with the correct path for Responses API.
 pub fn normalize_responses_url(base_url: Option<&str>, default_url: &str) -> String {
-    let base_url = base_url
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| default_url.to_string());
+    let base_url = base_url.map_or_else(|| default_url.to_string(), |s| s.to_string());
 
     if base_url.ends_with("/responses") || base_url.ends_with("/v1/responses") {
         return base_url;

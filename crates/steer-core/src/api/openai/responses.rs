@@ -12,10 +12,10 @@ use crate::api::openai::responses_types::{
 };
 use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
 use crate::api::sse::parse_sse_stream;
+use crate::app::SystemContext;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
-use crate::app::SystemContext;
 use crate::auth::{
     AuthErrorAction, AuthErrorContext, AuthHeaderContext, InstructionPolicy, OpenAiResponsesAuth,
     RequestKind,
@@ -544,7 +544,7 @@ impl Client {
 
             let response = tokio::select! {
                 biased;
-                _ = token.cancelled() => {
+                () = token.cancelled() => {
                     debug!(target: "openai::responses", "Cancellation token triggered before sending request.");
                     return Err(ApiError::Cancelled{ provider: "openai".to_string()});
                 }
@@ -569,12 +569,12 @@ impl Client {
 
             let status = response.status();
 
-            let body_text = if !status.is_success() {
+            let body_text = if status.is_success() {
                 tokio::select! {
                     biased;
-                    _ = token.cancelled() => {
-                        debug!(target: "openai::responses", "Cancellation token triggered while reading error response body.");
-                        return Err(ApiError::Cancelled{ provider: "openai".to_string()});
+                    () = token.cancelled() => {
+                        debug!(target: "openai::responses", "Cancellation token triggered while reading successful response body.");
+                        return Err(ApiError::Cancelled { provider: "openai".to_string() });
                     }
                     text_res = response.text() => {
                         text_res.map_err(|e| {
@@ -593,9 +593,9 @@ impl Client {
             } else {
                 tokio::select! {
                     biased;
-                    _ = token.cancelled() => {
-                        debug!(target: "openai::responses", "Cancellation token triggered while reading successful response body.");
-                        return Err(ApiError::Cancelled { provider: "openai".to_string() });
+                    () = token.cancelled() => {
+                        debug!(target: "openai::responses", "Cancellation token triggered while reading error response body.");
+                        return Err(ApiError::Cancelled{ provider: "openai".to_string()});
                     }
                     text_res = response.text() => {
                         text_res.map_err(|e| {
@@ -705,7 +705,7 @@ impl Client {
 
             let response = tokio::select! {
                 biased;
-                _ = token.cancelled() => {
+                () = token.cancelled() => {
                     debug!(target: "openai::responses::stream", "Cancellation token triggered before sending request.");
                     return Err(ApiError::Cancelled{ provider: "openai".to_string()});
                 }
@@ -729,7 +729,7 @@ impl Client {
             if !status.is_success() {
                 let body_text = tokio::select! {
                     biased;
-                    _ = token.cancelled() => {
+                    () = token.cancelled() => {
                         debug!(target: "openai::responses::stream", "Cancellation token triggered while reading error response body.");
                         return Err(ApiError::Cancelled{ provider: "openai".to_string()});
                     }
@@ -807,214 +807,145 @@ impl Client {
         token: CancellationToken,
     ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
         async_stream::stream! {
-            let mut content: Vec<AssistantContent> = Vec::new();
-            let mut tool_call_keys: Vec<Option<String>> = Vec::new();
-            let mut tool_calls: std::collections::HashMap<String, (String, String)> =
-                std::collections::HashMap::new();
-            let mut tool_calls_started: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            let mut item_to_call_id: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
-            let mut tool_call_positions: std::collections::HashMap<String, usize> =
-                std::collections::HashMap::new();
-            let mut pending_tool_deltas: std::collections::HashMap<String, Vec<String>> =
-                std::collections::HashMap::new();
-            let mut summary_deltas_seen: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            let mut summary_done_emitted: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+                    let mut content: Vec<AssistantContent> = Vec::new();
+                    let mut tool_call_keys: Vec<Option<String>> = Vec::new();
+                    let mut tool_calls: std::collections::HashMap<String, (String, String)> =
+                        std::collections::HashMap::new();
+                    let mut tool_calls_started: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    let mut item_to_call_id: std::collections::HashMap<String, String> =
+                        std::collections::HashMap::new();
+                    let mut tool_call_positions: std::collections::HashMap<String, usize> =
+                        std::collections::HashMap::new();
+                    let mut pending_tool_deltas: std::collections::HashMap<String, Vec<String>> =
+                        std::collections::HashMap::new();
+                    let mut summary_deltas_seen: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    let mut summary_done_emitted: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
 
-            loop {
-                if token.is_cancelled() {
-                    yield StreamChunk::Error(StreamError::Cancelled);
-                    break;
-                }
-
-                let event_result = tokio::select! {
-                    biased;
-                    _ = token.cancelled() => {
-                        yield StreamChunk::Error(StreamError::Cancelled);
-                        break;
-                    }
-                    event = sse_stream.next() => event
-                };
-
-                let Some(event_result) = event_result else {
-                    break;
-                };
-
-                let event = match event_result {
-                    Ok(e) => e,
-                    Err(e) => {
-                        yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
-                        break;
-                    }
-                };
-
-                match event.event_type.as_deref() {
-                    Some("response.output_text.delta") | Some("response.refusal.delta") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                append_text_delta(&mut content, &mut tool_call_keys, delta);
-                                yield StreamChunk::TextDelta(delta.to_string());
-                            }
+                    loop {
+                        if token.is_cancelled() {
+                            yield StreamChunk::Error(StreamError::Cancelled);
+                            break;
                         }
-                    }
-                    Some("response.reasoning.delta")
-                    | Some("response.reasoning_text.delta")
-                    | Some("response.reasoning_summary_text.delta") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                if matches!(event.event_type.as_deref(), Some("response.reasoning_summary_text.delta")) {
-                                    if let Some(key) = summary_key_from_event(&data) {
-                                        summary_deltas_seen.insert(key);
+
+                        let event_result = tokio::select! {
+                            biased;
+                            () = token.cancelled() => {
+                                yield StreamChunk::Error(StreamError::Cancelled);
+                                break;
+                            }
+                            event = sse_stream.next() => event
+                        };
+
+                        let Some(event_result) = event_result else {
+                            break;
+                        };
+
+                        let event = match event_result {
+                            Ok(e) => e,
+                            Err(e) => {
+                                yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                                break;
+                            }
+                        };
+
+                        match event.event_type.as_deref() {
+                            Some("response.output_text.delta" | "response.refusal.delta") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data)
+                                    && let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+                                        append_text_delta(&mut content, &mut tool_call_keys, delta);
+                                        yield StreamChunk::TextDelta(delta.to_string());
+                                    }
+                            }
+                            Some("response.reasoning.delta" | "response.reasoning_text.delta" |
+        "response.reasoning_summary_text.delta") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data)
+                                    && let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+                                        if matches!(event.event_type.as_deref(), Some("response.reasoning_summary_text.delta"))
+                                            && let Some(key) = summary_key_from_event(&data) {
+                                                summary_deltas_seen.insert(key);
+                                            }
+                                        append_thinking_delta(&mut content, &mut tool_call_keys, delta);
+                                        yield StreamChunk::ThinkingDelta(delta.to_string());
+                                    }
+                            }
+                            Some("response.reasoning_summary_text.done" |
+        "response.reasoning_summary_part.done") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data)
+                                    && let Some(text) = summary_text_from_event(&data) {
+                                        let key = summary_key_from_event(&data);
+                                        if should_emit_summary(&key, &summary_deltas_seen, &summary_done_emitted) {
+                                            append_thinking_delta(&mut content, &mut tool_call_keys, &text);
+                                            yield StreamChunk::ThinkingDelta(text.clone());
+                                            if let Some(key) = key {
+                                                summary_done_emitted.insert(key);
+                                            }
+                                        }
+                                    }
+                            }
+                            Some("response.in_progress" | "response.reasoning_summary_part.added" |
+        "response.created" | "response.output_item.done" | "response.output_text.done"
+        | "response.content_part.added" | "response.content_part.done" |
+        "response.refusal.done") => {
+                                // No-op: informational events that don't affect streamed content.
+                            }
+                            Some("response.function_call_arguments.delta" |
+        "response.custom_tool_call_input.delta" | "response.mcp_call_arguments.delta") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                                    match handle_tool_call_delta(
+                                        &data,
+                                        &item_to_call_id,
+                                        &mut tool_calls,
+                                        &mut tool_call_positions,
+                                        &mut content,
+                                        &mut tool_call_keys,
+                                        &mut pending_tool_deltas,
+                                        &tool_calls_started,
+                                        &["delta", "input", "arguments"],
+                                    ) {
+                                        ToolDeltaOutcome::Emit { id, delta } => {
+                                            yield StreamChunk::ToolUseInputDelta { id, delta };
+                                        }
+                                        ToolDeltaOutcome::Buffered => {}
+                                        ToolDeltaOutcome::Missing => {
+                                            debug!(
+                                                target: "openai::responses::stream",
+                                                "Ignoring tool_call delta without call_id or delta: {}",
+                                                event.data
+                                            );
+                                        }
                                     }
                                 }
-                                append_thinking_delta(&mut content, &mut tool_call_keys, delta);
-                                yield StreamChunk::ThinkingDelta(delta.to_string());
                             }
-                        }
-                    }
-                    Some("response.reasoning_summary_text.done")
-                    | Some("response.reasoning_summary_part.done") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            if let Some(text) = summary_text_from_event(&data) {
-                                let key = summary_key_from_event(&data);
-                                if should_emit_summary(&key, &summary_deltas_seen, &summary_done_emitted) {
-                                    append_thinking_delta(&mut content, &mut tool_call_keys, &text);
-                                    yield StreamChunk::ThinkingDelta(text.to_string());
-                                    if let Some(key) = key {
-                                        summary_done_emitted.insert(key);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Some("response.in_progress")
-                    | Some("response.reasoning_summary_part.added")
-                    | Some("response.created")
-                    | Some("response.output_item.done")
-                    | Some("response.output_text.done")
-                    | Some("response.content_part.added")
-                    | Some("response.content_part.done")
-                    | Some("response.refusal.done") => {
-                        // No-op: informational events that don't affect streamed content.
-                    }
-                    Some("response.function_call_arguments.delta")
-                    | Some("response.custom_tool_call_input.delta")
-                    | Some("response.mcp_call_arguments.delta") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            match handle_tool_call_delta(
-                                &data,
-                                &item_to_call_id,
-                                &mut tool_calls,
-                                &mut tool_call_positions,
-                                &mut content,
-                                &mut tool_call_keys,
-                                &mut pending_tool_deltas,
-                                &tool_calls_started,
-                                &["delta", "input", "arguments"],
-                            ) {
-                                ToolDeltaOutcome::Emit { id, delta } => {
-                                    yield StreamChunk::ToolUseInputDelta { id, delta };
-                                }
-                                ToolDeltaOutcome::Buffered => {}
-                                ToolDeltaOutcome::Missing => {
-                                    debug!(
-                                        target: "openai::responses::stream",
-                                        "Ignoring tool_call delta without call_id or delta: {}",
-                                        event.data
+                            Some("response.function_call_arguments.done" |
+        "response.custom_tool_call_input.done" | "response.mcp_call_arguments.done") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                                    handle_tool_call_done(
+                                        &data,
+                                        &item_to_call_id,
+                                        &mut tool_calls,
+                                        &mut tool_call_positions,
+                                        &mut content,
+                                        &mut tool_call_keys,
+                                        &["arguments", "input", "delta"],
                                     );
                                 }
                             }
-                        }
-                    }
-                    Some("response.function_call_arguments.done")
-                    | Some("response.custom_tool_call_input.done")
-                    | Some("response.mcp_call_arguments.done") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            handle_tool_call_done(
-                                &data,
-                                &item_to_call_id,
-                                &mut tool_calls,
-                                &mut tool_call_positions,
-                                &mut content,
-                                &mut tool_call_keys,
-                                &["arguments", "input", "delta"],
-                            );
-                        }
-                    }
-                    Some("response.function_call.created") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            let call_id = resolve_call_id(&data, &item_to_call_id);
-                            let Some(call_id) = call_id else {
-                                debug!(
-                                    target: "openai::responses::stream",
-                                    "Ignoring function_call.created without call_id: {}",
-                                    event.data
-                                );
-                                continue;
-                            };
-                            let name = extract_first_non_empty_str(&data, &["name", "tool_name"]);
-                            let args = extract_first_non_empty_str(&data, &["arguments", "input"]);
-                            if let Some(chunk) = register_tool_call(
-                                &call_id,
-                                name,
-                                args,
-                                &mut tool_calls,
-                                &mut tool_call_positions,
-                                &mut content,
-                                &mut tool_call_keys,
-                                &mut tool_calls_started,
-                            ) {
-                                yield chunk;
-                            }
-                            if tool_calls_started.contains(&call_id) {
-                                for delta in drain_pending_tool_deltas(
-                                    &call_id,
-                                    &mut pending_tool_deltas,
-                                ) {
-                                    yield StreamChunk::ToolUseInputDelta {
-                                        id: call_id.clone(),
-                                        delta,
-                                    };
-                                }
-                            }
-                        }
-                    }
-                    Some("response.output_item.added") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            if let Some(item) = data.get("item") {
-                                let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                if matches!(item_type, "function_call" | "custom_tool_call" | "mcp_call") {
-                                    let item_id = extract_non_empty_str(item, "id")
-                                        .or_else(|| extract_non_empty_str(item, "item_id"));
-                                    let call_id = resolve_call_id(item, &item_to_call_id);
+                            Some("response.function_call.created") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                                    let call_id = resolve_call_id(&data, &item_to_call_id);
                                     let Some(call_id) = call_id else {
                                         debug!(
                                             target: "openai::responses::stream",
-                                            "Ignoring output_item.added without call_id: {}",
+                                            "Ignoring function_call.created without call_id: {}",
                                             event.data
                                         );
                                         continue;
                                     };
-                                    if let Some(item_id) = item_id {
-                                        if !item_id.is_empty() {
-                                            item_to_call_id.insert(item_id.clone(), call_id.clone());
-                                            promote_tool_call_id(
-                                                &item_id,
-                                                &call_id,
-                                                &mut tool_calls,
-                                                &mut tool_call_positions,
-                                                &mut content,
-                                                &mut tool_call_keys,
-                                                &mut pending_tool_deltas,
-                                                &mut tool_calls_started,
-                                            );
-                                        }
-                                    }
-                                    let name = extract_first_non_empty_str(item, &["name", "tool_name"]);
-                                    let args = extract_first_non_empty_str(item, &["arguments", "input"]);
+                                    let name = extract_first_non_empty_str(&data, &["name", "tool_name"]);
+                                    let args = extract_first_non_empty_str(&data, &["arguments", "input"]);
                                     if let Some(chunk) = register_tool_call(
                                         &call_id,
                                         name,
@@ -1040,78 +971,134 @@ impl Client {
                                     }
                                 }
                             }
-                        }
-                    }
-                    Some("response.completed") => {
-                        let tool_calls = std::mem::take(&mut tool_calls);
-                        let mut final_content = Vec::new();
+                            Some("response.output_item.added") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data)
+                                    && let Some(item) = data.get("item") {
+                                        let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                        if matches!(item_type, "function_call" | "custom_tool_call" | "mcp_call") {
+                                            let item_id = extract_non_empty_str(item, "id")
+                                                .or_else(|| extract_non_empty_str(item, "item_id"));
+                                            let call_id = resolve_call_id(item, &item_to_call_id);
+                                            let Some(call_id) = call_id else {
+                                                debug!(
+                                                    target: "openai::responses::stream",
+                                                    "Ignoring output_item.added without call_id: {}",
+                                                    event.data
+                                                );
+                                                continue;
+                                            };
+                                            if let Some(item_id) = item_id
+                                                && !item_id.is_empty() {
+                                                    item_to_call_id.insert(item_id.clone(), call_id.clone());
+                                                    promote_tool_call_id(
+                                                        &item_id,
+                                                        &call_id,
+                                                        &mut tool_calls,
+                                                        &mut tool_call_positions,
+                                                        &mut content,
+                                                        &mut tool_call_keys,
+                                                        &mut pending_tool_deltas,
+                                                        &mut tool_calls_started,
+                                                    );
+                                                }
+                                            let name = extract_first_non_empty_str(item, &["name", "tool_name"]);
+                                            let args = extract_first_non_empty_str(item, &["arguments", "input"]);
+                                            if let Some(chunk) = register_tool_call(
+                                                &call_id,
+                                                name,
+                                                args,
+                                                &mut tool_calls,
+                                                &mut tool_call_positions,
+                                                &mut content,
+                                                &mut tool_call_keys,
+                                                &mut tool_calls_started,
+                                            ) {
+                                                yield chunk;
+                                            }
+                                            if tool_calls_started.contains(&call_id) {
+                                                for delta in drain_pending_tool_deltas(
+                                                    &call_id,
+                                                    &mut pending_tool_deltas,
+                                                ) {
+                                                    yield StreamChunk::ToolUseInputDelta {
+                                                        id: call_id.clone(),
+                                                        delta,
+                                                    };
+                                                }
+                                            }
+                                        }
+                                    }
+                            }
+                            Some("response.completed") => {
+                                let tool_calls = std::mem::take(&mut tool_calls);
+                                let mut final_content = Vec::new();
 
-                        for (block, tool_key) in content.into_iter().zip(tool_call_keys.into_iter())
-                        {
-                            if let Some(call_id) = tool_key {
-                                let Some((name, args)) = tool_calls.get(&call_id) else {
-                                    continue;
-                                };
-                                if call_id.is_empty() || name.is_empty() {
-                                    debug!(
-                                        target: "openai::responses::stream",
-                                        "Skipping tool call with missing id/name: id='{}' name='{}'",
-                                        call_id,
-                                        name
-                                    );
-                                    continue;
+                                for (block, tool_key) in content.into_iter().zip(tool_call_keys.into_iter())
+                                {
+                                    if let Some(call_id) = tool_key {
+                                        let Some((name, args)) = tool_calls.get(&call_id) else {
+                                            continue;
+                                        };
+                                        if call_id.is_empty() || name.is_empty() {
+                                            debug!(
+                                                target: "openai::responses::stream",
+                                                "Skipping tool call with missing id/name: id='{}' name='{}'",
+                                                call_id,
+                                                name
+                                            );
+                                            continue;
+                                        }
+                                        let parameters = parse_tool_parameters(name, args);
+                                        final_content.push(AssistantContent::ToolCall {
+                                            tool_call: steer_tools::ToolCall {
+                                                id: call_id.clone(),
+                                                name: name.clone(),
+                                                parameters,
+                                            },
+                                            thought_signature: None,
+                                        });
+                                    } else {
+                                        final_content.push(block);
+                                    }
                                 }
-                                let parameters = parse_tool_parameters(name, args);
-                                final_content.push(AssistantContent::ToolCall {
-                                    tool_call: steer_tools::ToolCall {
-                                        id: call_id.clone(),
-                                        name: name.clone(),
-                                        parameters,
-                                    },
-                                    thought_signature: None,
-                                });
-                            } else {
-                                final_content.push(block);
+
+                                yield StreamChunk::MessageComplete(CompletionResponse { content: final_content });
+                                break;
+                            }
+                            Some("error") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                                    let message = data.get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("Unknown error");
+                                    yield StreamChunk::Error(StreamError::Provider {
+                                        provider: "openai".into(),
+                                        error_type: "stream_error".into(),
+                                        message: message.to_string(),
+                                    });
+                                    break;
+                                }
+                            }
+                            Some("response.failed") => {
+                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                                    let (error_type, message) = extract_stream_error(&data)
+                                        .unwrap_or_else(|| ("response_failed".to_string(), "Unknown error".to_string()));
+                                    yield StreamChunk::Error(StreamError::Provider {
+                                        provider: "openai".into(),
+                                        error_type,
+                                        message,
+                                    });
+                                    break;
+                                }
+                            }
+                            _ => {
+                                debug!(
+                                    target: "openai::responses::stream",
+                                    "Unhandled event type: {:?}", event.event_type
+                                );
                             }
                         }
-
-                        yield StreamChunk::MessageComplete(CompletionResponse { content: final_content });
-                        break;
-                    }
-                    Some("error") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            let message = data.get("message")
-                                .and_then(|m| m.as_str())
-                                .unwrap_or("Unknown error");
-                            yield StreamChunk::Error(StreamError::Provider {
-                                provider: "openai".into(),
-                                error_type: "stream_error".into(),
-                                message: message.to_string(),
-                            });
-                            break;
-                        }
-                    }
-                    Some("response.failed") => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            let (error_type, message) = extract_stream_error(&data)
-                                .unwrap_or_else(|| ("response_failed".to_string(), "Unknown error".to_string()));
-                            yield StreamChunk::Error(StreamError::Provider {
-                                provider: "openai".into(),
-                                error_type,
-                                message,
-                            });
-                            break;
-                        }
-                    }
-                    _ => {
-                        debug!(
-                            target: "openai::responses::stream",
-                            "Unhandled event type: {:?}", event.event_type
-                        );
                     }
                 }
-            }
-        }
     }
 }
 
@@ -1167,9 +1154,11 @@ fn resolve_tool_call_id_for_event(
 
 fn summary_index_from_container(value: &serde_json::Value) -> Option<i64> {
     let summary_index = value.get("summary_index")?;
-    summary_index
-        .as_i64()
-        .or_else(|| summary_index.as_str().and_then(|value| value.parse::<i64>().ok()))
+    summary_index.as_i64().or_else(|| {
+        summary_index
+            .as_str()
+            .and_then(|value| value.parse::<i64>().ok())
+    })
 }
 
 fn summary_index_from_event(data: &serde_json::Value) -> Option<i64> {
@@ -1216,14 +1205,13 @@ fn append_text_delta(
     tool_call_keys: &mut Vec<Option<String>>,
     delta: &str,
 ) {
-    match content.last_mut() {
-        Some(AssistantContent::Text { text }) => text.push_str(delta),
-        _ => {
-            content.push(AssistantContent::Text {
-                text: delta.to_string(),
-            });
-            tool_call_keys.push(None);
-        }
+    if let Some(AssistantContent::Text { text }) = content.last_mut() {
+        text.push_str(delta);
+    } else {
+        content.push(AssistantContent::Text {
+            text: delta.to_string(),
+        });
+        tool_call_keys.push(None);
     }
 }
 
@@ -1232,18 +1220,18 @@ fn append_thinking_delta(
     tool_call_keys: &mut Vec<Option<String>>,
     delta: &str,
 ) {
-    match content.last_mut() {
-        Some(AssistantContent::Thought {
-            thought: ThoughtContent::Simple { text },
-        }) => text.push_str(delta),
-        _ => {
-            content.push(AssistantContent::Thought {
-                thought: ThoughtContent::Simple {
-                    text: delta.to_string(),
-                },
-            });
-            tool_call_keys.push(None);
-        }
+    if let Some(AssistantContent::Thought {
+        thought: ThoughtContent::Simple { text },
+    }) = content.last_mut()
+    {
+        text.push_str(delta);
+    } else {
+        content.push(AssistantContent::Thought {
+            thought: ThoughtContent::Simple {
+                text: delta.to_string(),
+            },
+        });
+        tool_call_keys.push(None);
     }
 }
 
@@ -1306,10 +1294,7 @@ fn handle_tool_call_delta(
             if tool_calls_started.contains(&call_id) {
                 ToolDeltaOutcome::Emit { id: call_id, delta }
             } else {
-                pending_tool_deltas
-                    .entry(call_id)
-                    .or_default()
-                    .push(delta);
+                pending_tool_deltas.entry(call_id).or_default().push(delta);
                 ToolDeltaOutcome::Buffered
             }
         }
@@ -1325,10 +1310,7 @@ fn handle_tool_call_delta(
                 content,
                 tool_call_keys,
             );
-            pending_tool_deltas
-                .entry(item_id)
-                .or_default()
-                .push(delta);
+            pending_tool_deltas.entry(item_id).or_default().push(delta);
             ToolDeltaOutcome::Buffered
         }
     }
@@ -1708,13 +1690,13 @@ fn apply_instruction_policy(
 mod tests {
     use super::*;
 
-    use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
     use crate::app::SystemContext;
+    use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
     use crate::workspace::EnvironmentInfo;
 
+    use schemars::schema_for;
     use steer_tools::ToolSchema;
     use steer_tools::tools::dispatch_agent::DispatchAgentParams;
-    use schemars::schema_for;
 
     #[test]
     fn test_responses_api_message_conversion() {
@@ -1842,7 +1824,12 @@ mod tests {
         let model_id = ModelId::new(crate::config::provider::openai(), "gpt-4.1-2025-04-14");
         let request = client.build_request(&model_id, messages, None, Some(tools), None);
 
-        let tool = request.tools.expect("expected tools").into_iter().next().unwrap();
+        let tool = request
+            .tools
+            .expect("expected tools")
+            .into_iter()
+            .next()
+            .unwrap();
         let parameters = tool.parameters.clone();
         let summary = steer_tools::InputSchema::from(parameters.clone()).summary();
 
@@ -1859,7 +1846,7 @@ mod tests {
             vcs: None,
             platform: "linux".to_string(),
             date: "2025-01-01".to_string(),
-            directory_structure: "".to_string(),
+            directory_structure: String::new(),
             readme_content: None,
             memory_file_name: None,
             memory_file_content: None,
@@ -1901,13 +1888,7 @@ mod tests {
                 ..Default::default()
             }),
         });
-        let request = client.build_request(
-            &model_id,
-            messages.clone(),
-            None,
-            None,
-            call_options,
-        );
+        let request = client.build_request(&model_id, messages.clone(), None, None, call_options);
 
         assert!(request.reasoning.is_some());
         let reasoning = request.reasoning.unwrap();
@@ -2139,7 +2120,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{}"#.to_string(),
+                data: r"{}".to_string(),
                 id: None,
             }),
         ];
@@ -2177,7 +2158,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{}"#.to_string(),
+                data: r"{}".to_string(),
                 id: None,
             }),
         ];
@@ -2231,7 +2212,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{}"#.to_string(),
+                data: r"{}".to_string(),
                 id: None,
             }),
         ];
@@ -2293,7 +2274,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{}"#.to_string(),
+                data: r"{}".to_string(),
                 id: None,
             }),
         ];
@@ -2355,7 +2336,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{}"#.to_string(),
+                data: r"{}".to_string(),
                 id: None,
             }),
         ];
@@ -2417,7 +2398,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{}"#.to_string(),
+                data: r"{}".to_string(),
                 id: None,
             }),
         ];
@@ -2474,7 +2455,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{}"#.to_string(),
+                data: r"{}".to_string(),
                 id: None,
             }),
         ];
@@ -2541,7 +2522,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{}"#.to_string(),
+                data: r"{}".to_string(),
                 id: None,
             }),
         ];

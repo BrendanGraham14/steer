@@ -173,7 +173,7 @@ async fn trigger_notification_subprocess(
     tokio::spawn(async move {
         sleep(Duration::from_secs(2)).await;
         match child.start_kill() {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
                 debug!("Failed to kill notification subprocess: {}", e);
             }
@@ -206,7 +206,7 @@ pub async fn notify_with_title_and_sound(
             None
         };
         match trigger_notification_subprocess(title, message, sound_option).await {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
                 debug!("Failed to trigger notification subprocess: {}", e);
             }

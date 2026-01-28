@@ -220,7 +220,8 @@ mod tests {
             *self
                 .last_system
                 .lock()
-                .expect("system prompt lock poisoned") = system.and_then(|context| context.render());
+                .expect("system prompt lock poisoned") =
+                system.and_then(|context| context.render());
 
             Ok(CompletionResponse {
                 content: vec![AssistantContent::Text {

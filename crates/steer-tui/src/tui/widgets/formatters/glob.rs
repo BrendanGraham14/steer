@@ -1,4 +1,7 @@
-use super::{ToolFormatter, helpers::*};
+use super::{
+    ToolFormatter,
+    helpers::{separator_line, tool_error_user_message},
+};
 use crate::tui::theme::Theme;
 use ratatui::{
     style::Style,
@@ -79,7 +82,12 @@ impl ToolFormatter for GlobFormatter {
         if let Some(result) = result {
             match result {
                 ToolResult::Glob(glob_result) => {
-                    if !glob_result.matches.is_empty() {
+                    if glob_result.matches.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            "No matches found",
+                            theme.subtle_text(),
+                        )));
+                    } else {
                         lines.push(separator_line(wrap_width, theme.dim_text()));
 
                         const MAX_FILES: usize = 20;
@@ -95,11 +103,6 @@ impl ToolFormatter for GlobFormatter {
                                 theme.subtle_text(),
                             )));
                         }
-                    } else {
-                        lines.push(Line::from(Span::styled(
-                            "No matches found",
-                            theme.subtle_text(),
-                        )));
                     }
                 }
                 ToolResult::Error(error) => {

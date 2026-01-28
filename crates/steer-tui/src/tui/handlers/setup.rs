@@ -28,8 +28,7 @@ impl SetupHandler {
             .auth_providers
             .insert(provider_id.clone(), AuthStatus::InProgress);
 
-        if let Some(AuthProgress::OAuthStarted { auth_url }) = setup_state.auth_progress.as_ref()
-        {
+        if let Some(AuthProgress::OAuthStarted { auth_url }) = setup_state.auth_progress.as_ref() {
             if let Err(e) = open::that(auth_url) {
                 setup_state.error_message = Some(format!("Failed to open browser: {e}"));
             }
@@ -83,9 +82,7 @@ impl SetupHandler {
                 state.next_step();
                 Ok(None)
             }
-            (KeyCode::Char('s'), KeyModifiers::NONE)
-            | (KeyCode::Char('S'), KeyModifiers::NONE)
-            | (KeyCode::Esc, KeyModifiers::NONE)
+            (KeyCode::Char('s' | 'S') | KeyCode::Esc, KeyModifiers::NONE)
             | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 state.skip_setup = true;
                 Ok(Some(InputMode::Simple))
@@ -112,7 +109,7 @@ impl SetupHandler {
         );
 
         match (key.code, key.modifiers) {
-            (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+            (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
                 debug!("Up/k pressed");
                 if state.provider_cursor > 0 {
                     state.provider_cursor -= 1;
@@ -122,7 +119,7 @@ impl SetupHandler {
                 debug!("New cursor: {}", state.provider_cursor);
                 Ok(None)
             }
-            (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+            (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
                 debug!("Down/j pressed");
                 state.provider_cursor = (state.provider_cursor + 1) % providers.len();
                 debug!("New cursor: {}", state.provider_cursor);
@@ -135,7 +132,7 @@ impl SetupHandler {
                 }
                 Ok(None)
             }
-            (KeyCode::Char('s'), KeyModifiers::NONE) | (KeyCode::Char('S'), KeyModifiers::NONE) => {
+            (KeyCode::Char('s' | 'S'), KeyModifiers::NONE) => {
                 state.skip_setup = true;
                 Ok(Some(InputMode::Simple))
             }
@@ -178,8 +175,7 @@ impl SetupHandler {
 
                 let expects_input = matches!(
                     progress_state,
-                    Some(AuthProgress::NeedInput { .. })
-                        | Some(AuthProgress::OAuthStarted { .. })
+                    Some(AuthProgress::NeedInput { .. } | AuthProgress::OAuthStarted { .. })
                 );
 
                 let flow_id = tui
@@ -242,17 +238,12 @@ impl SetupHandler {
             }
             KeyCode::Char(c) => {
                 let state = tui.setup_state.as_mut().unwrap();
-                let expects_input = state
-                    .auth_progress
-                    .as_ref()
-                    .map(|progress| {
-                        matches!(
-                            progress,
-                            AuthProgress::NeedInput { .. }
-                                | AuthProgress::OAuthStarted { .. }
-                        )
-                    })
-                    .unwrap_or(false);
+                let expects_input = state.auth_progress.as_ref().is_some_and(|progress| {
+                    matches!(
+                        progress,
+                        AuthProgress::NeedInput { .. } | AuthProgress::OAuthStarted { .. }
+                    )
+                });
                 if expects_input {
                     state.auth_input.push(c);
                 }
@@ -260,17 +251,12 @@ impl SetupHandler {
             }
             KeyCode::Backspace => {
                 let state = tui.setup_state.as_mut().unwrap();
-                let expects_input = state
-                    .auth_progress
-                    .as_ref()
-                    .map(|progress| {
-                        matches!(
-                            progress,
-                            AuthProgress::NeedInput { .. }
-                                | AuthProgress::OAuthStarted { .. }
-                        )
-                    })
-                    .unwrap_or(false);
+                let expects_input = state.auth_progress.as_ref().is_some_and(|progress| {
+                    matches!(
+                        progress,
+                        AuthProgress::NeedInput { .. } | AuthProgress::OAuthStarted { .. }
+                    )
+                });
                 if expects_input {
                     state.auth_input.pop();
                 }
@@ -352,8 +338,7 @@ impl SetupHandler {
         if tui
             .setup_state
             .as_ref()
-            .map(|state| !state.auth_input.is_empty())
-            .unwrap_or(false)
+            .is_some_and(|state| !state.auth_input.is_empty())
         {
             return Ok(false);
         }
@@ -362,13 +347,12 @@ impl SetupHandler {
             .setup_state
             .as_ref()
             .and_then(|state| state.auth_progress.as_ref())
-            .map(|progress| {
+            .is_some_and(|progress| {
                 matches!(
                     progress,
                     AuthProgress::OAuthStarted { .. } | AuthProgress::InProgress { .. }
                 )
-            })
-            .unwrap_or(false);
+            });
 
         if !should_poll {
             return Ok(false);

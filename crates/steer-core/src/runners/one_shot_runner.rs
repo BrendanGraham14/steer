@@ -285,8 +285,7 @@ fn tool_is_preapproved(tool_call: &ToolCall, policy: &ToolApprovalPolicy) -> boo
                     let agent_id = agent
                         .as_deref()
                         .filter(|value| !value.trim().is_empty())
-                        .map(str::to_string)
-                        .unwrap_or_else(|| default_agent_spec_id().to_string());
+                        .map_or_else(|| default_agent_spec_id().to_string(), str::to_string);
                     policy.is_dispatch_agent_pattern_preapproved(&agent_id)
                 }
             };
@@ -666,7 +665,7 @@ mod tests {
         let content = text_content.expect("No text content found in assistant message");
         assert!(!content.is_empty(), "Response should not be empty");
         assert!(
-            content.contains("4"),
+            content.contains('4'),
             "Expected response to contain '4', got: {content}"
         );
 

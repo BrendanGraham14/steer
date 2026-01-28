@@ -162,8 +162,7 @@ impl StaticTool for DispatchAgentTool {
         if let Some(manager) = ctx.services.repo_manager() {
             let repo_env_id = workspace_ref
                 .as_ref()
-                .map(|reference| reference.environment_id)
-                .unwrap_or_else(EnvironmentId::local);
+                .map_or_else(EnvironmentId::local, |reference| reference.environment_id);
             if let Ok(info) = manager.resolve_repo(repo_env_id, &base_path).await {
                 if repo_id.is_none() {
                     repo_id = Some(info.repo_id);
@@ -282,8 +281,7 @@ Notes:
         let agent_id = agent
             .as_deref()
             .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or_else(|| default_agent_spec_id().to_string());
+            .map_or_else(|| default_agent_spec_id().to_string(), str::to_string);
 
         let agent_spec = agent_spec(&agent_id).ok_or_else(|| {
             let available = agent_specs()
@@ -318,8 +316,7 @@ Notes:
 
         let parent_model = parent_session_config
             .as_ref()
-            .map(|config| config.default_model.clone())
-            .unwrap_or_else(default_model);
+            .map_or_else(default_model, |config| config.default_model.clone());
 
         let allow_mcp_tools = agent_spec.mcp_access.allow_mcp_tools();
         let mcp_backends = match &agent_spec.mcp_access {
@@ -1273,7 +1270,7 @@ mod tests {
         session_config.policy_overrides = SessionPolicyOverrides {
             default_model: None,
             tool_visibility: Some(ToolVisibility::Whitelist(HashSet::from([
-                VIEW_TOOL_NAME.to_string(),
+                VIEW_TOOL_NAME.to_string()
             ]))),
             approval_policy: ToolApprovalPolicyOverrides {
                 default_behavior: Some(UnapprovedBehavior::Deny),

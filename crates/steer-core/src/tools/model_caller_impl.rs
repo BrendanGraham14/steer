@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
-use crate::app::conversation::{Message, MessageData};
 use crate::app::SystemContext;
+use crate::app::conversation::{Message, MessageData};
 use crate::config::model::ModelId;
 use crate::tools::services::{ModelCallError, ModelCaller};
 

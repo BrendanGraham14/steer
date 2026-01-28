@@ -42,7 +42,9 @@ impl CompletionWidget {
             })
             .collect();
 
-        if !authenticated_providers.is_empty() {
+        if authenticated_providers.is_empty() {
+            lines.push(Line::from("No providers authenticated yet."));
+        } else {
             lines.push(Line::from(Span::styled(
                 "Authenticated Providers:",
                 theme
@@ -52,8 +54,6 @@ impl CompletionWidget {
             for provider in authenticated_providers {
                 lines.push(Line::from(format!("  • {provider}")));
             }
-        } else {
-            lines.push(Line::from("No providers authenticated yet."));
         }
 
         lines.push(Line::from(""));

@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 impl Tui {
     pub async fn handle_confirm_exit_mode(&mut self, key: KeyEvent) -> Result<bool> {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
+            KeyCode::Char('y' | 'Y') => {
                 // User confirmed exit
                 return Ok(true);
             }

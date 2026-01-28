@@ -7,9 +7,11 @@ use crate::app::AppConfig;
 use crate::auth::{AuthStorage, CredentialType};
 use crate::config::LlmConfigProvider;
 use crate::config::model::ModelId;
-use crate::session::state::{SessionConfig, SessionPolicyOverrides, SessionToolConfig, WorkspaceConfig};
-use std::sync::Arc;
+use crate::session::state::{
+    SessionConfig, SessionPolicyOverrides, SessionToolConfig, WorkspaceConfig,
+};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// In-memory storage for testing - doesn't use keyring or filesystem
 pub struct InMemoryAuthStorage {

@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -40,8 +39,8 @@ pub struct LocalWorkspace {
 const MAX_READ_BYTES: usize = 50 * 1024;
 const MAX_LINE_LENGTH: usize = 2000;
 
-static FILE_LOCKS: Lazy<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static FILE_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 async fn get_file_lock(file_path: &str) -> Arc<Mutex<()>> {
     let mut locks_map_guard = FILE_LOCKS.lock().await;
@@ -288,18 +287,17 @@ fn grep_search_internal(
         return Err(format!("Path does not exist: {}", base_path.display()));
     }
 
-    let matcher = match RegexMatcherBuilder::new()
+    let matcher = if let Ok(m) = RegexMatcherBuilder::new()
         .line_terminator(Some(b'\n'))
         .build(pattern)
     {
-        Ok(m) => m,
-        Err(_) => {
-            let escaped = regex::escape(pattern);
-            RegexMatcherBuilder::new()
-                .line_terminator(Some(b'\n'))
-                .build(&escaped)
-                .map_err(|e| format!("Failed to create matcher: {e}"))?
-        }
+        m
+    } else {
+        let escaped = regex::escape(pattern);
+        RegexMatcherBuilder::new()
+            .line_terminator(Some(b'\n'))
+            .build(&escaped)
+            .map_err(|e| format!("Failed to create matcher: {e}"))?
     };
 
     let mut searcher = SearcherBuilder::new()
@@ -562,14 +560,10 @@ fn find_matches(
         let start_pos = node.start_pos();
         let matched_code = node.text();
 
-        let line_start = content[..range.start]
-            .rfind('\n')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let line_start = content[..range.start].rfind('\n').map_or(0, |i| i + 1);
         let line_end = content[range.end..]
             .find('\n')
-            .map(|i| range.end + i)
-            .unwrap_or(content.len());
+            .map_or(content.len(), |i| range.end + i);
         let context = &content[line_start..line_end];
 
         results.push(AstGrepMatch {

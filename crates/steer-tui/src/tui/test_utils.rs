@@ -8,13 +8,10 @@ pub async fn local_client_and_server(
 ) -> (AgentClient, tokio::task::JoinHandle<()>) {
     use steer_grpc::client_api::builtin;
     use steer_grpc::local_server::setup_local_grpc;
-    let (channel, server_handle) = setup_local_grpc(
-        builtin::claude_sonnet_4_5(),
-        session_dir,
-        workspace_root,
-    )
-    .await
-    .unwrap();
+    let (channel, server_handle) =
+        setup_local_grpc(builtin::claude_sonnet_4_5(), session_dir, workspace_root)
+            .await
+            .unwrap();
     let client = AgentClient::from_channel(channel.clone()).await.unwrap();
     (client, server_handle)
 }

@@ -117,9 +117,8 @@ mod tests {
             // Single entry may be either project or user-level file
             let single = &configs[0];
             let is_project = *single == PathBuf::from(".steer/session.toml");
-            let is_user = AppPaths::user_config_dir()
-                .map(|d| single == &d.join("session.toml"))
-                .unwrap_or(false);
+            let is_user =
+                AppPaths::user_config_dir().is_some_and(|d| single == &d.join("session.toml"));
             assert!(is_project || is_user);
         }
     }

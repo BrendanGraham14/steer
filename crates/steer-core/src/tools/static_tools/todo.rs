@@ -22,7 +22,7 @@ Usage:
 - Use this information to track progress and plan next steps
 - If no todos exist yet, an empty list will be returned"#;
 
-const TODO_WRITE_DESCRIPTION: &str = r#"Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
+const TODO_WRITE_DESCRIPTION: &str = r"Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
 
 When to Use This Tool:
 1. Complex multi-step tasks - When a task requires 3 or more distinct steps
@@ -46,7 +46,7 @@ Task States:
 Task Management:
 - Update status in real-time
 - Mark tasks complete IMMEDIATELY after finishing
-- Only have ONE task in_progress at any time"#;
+- Only have ONE task in_progress at any time";
 
 pub struct TodoReadTool;
 

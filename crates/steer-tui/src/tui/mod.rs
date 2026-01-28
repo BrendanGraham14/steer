@@ -27,7 +27,9 @@ use crate::tui::events::processor::PendingToolApproval;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-fn auth_status_from_source(source: Option<&steer_grpc::client_api::AuthSource>) -> crate::tui::state::AuthStatus {
+fn auth_status_from_source(
+    source: Option<&steer_grpc::client_api::AuthSource>,
+) -> crate::tui::state::AuthStatus {
     match source {
         Some(steer_grpc::client_api::AuthSource::ApiKey { .. }) => {
             crate::tui::state::AuthStatus::ApiKeySet
@@ -42,8 +44,10 @@ fn auth_status_from_source(source: Option<&steer_grpc::client_api::AuthSource>) 
 fn has_any_auth_source(source: Option<&steer_grpc::client_api::AuthSource>) -> bool {
     matches!(
         source,
-        Some(steer_grpc::client_api::AuthSource::ApiKey { .. })
-            | Some(steer_grpc::client_api::AuthSource::Plugin { .. })
+        Some(
+            steer_grpc::client_api::AuthSource::ApiKey { .. }
+                | steer_grpc::client_api::AuthSource::Plugin { .. }
+        )
     )
 }
 
@@ -730,19 +734,18 @@ impl Tui {
                         if self.input_mode == InputMode::Setup {
                             // Handle paste in setup mode
                             if let Some(setup_state) = &mut self.setup_state {
-                                match &setup_state.current_step {
-                                    crate::tui::state::SetupStep::Authentication(_) => {
-                                        setup_state.auth_input.push_str(&data);
-                                        debug!(
-                                            target:"tui.run",
-                                            "Pasted {} chars in Setup mode",
-                                            data.len()
-                                        );
-                                        needs_redraw = true;
-                                    }
-                                    _ => {
-                                        // Other setup steps don't accept paste
-                                    }
+                                if let crate::tui::state::SetupStep::Authentication(_) =
+                                    &setup_state.current_step
+                                {
+                                    setup_state.auth_input.push_str(&data);
+                                    debug!(
+                                        target:"tui.run",
+                                        "Pasted {} chars in Setup mode",
+                                        data.len()
+                                    );
+                                    needs_redraw = true;
+                                } else {
+                                    // Other setup steps don't accept paste
                                 }
                             }
                         } else {
@@ -928,10 +931,7 @@ impl Tui {
 
             let terminal_size = f.area();
 
-            let queue_preview = self
-                .queued_head
-                .as_ref()
-                .map(|item| item.content.as_str());
+            let queue_preview = self.queued_head.as_ref().map(|item| item.content.as_str());
             let input_area_height = self.input_panel_state.required_height(
                 current_tool_call,
                 terminal_size.width,
@@ -1145,7 +1145,9 @@ impl Tui {
         EventPipeline::new()
             .add_processor(Box::new(ProcessingStateProcessor::new()))
             .add_processor(Box::new(MessageEventProcessor::new()))
-            .add_processor(Box::new(crate::tui::events::processors::queue::QueueEventProcessor::new()))
+            .add_processor(Box::new(
+                crate::tui::events::processors::queue::QueueEventProcessor::new(),
+            ))
             .add_processor(Box::new(ToolEventProcessor::new()))
             .add_processor(Box::new(SystemEventProcessor::new()))
     }
@@ -1260,7 +1262,7 @@ impl Tui {
                             } => {
                                 self.client
                                     .send_message(prompt, self.current_model.clone())
-                                    .await?
+                                    .await?;
                             }
                         }
                     }
@@ -1456,25 +1458,25 @@ impl Tui {
                         let target_id = if let Some(workspace_id) = workspace_id.clone() {
                             Some(workspace_id)
                         } else {
-                            let session = match self.client.get_session(&self.session_id).await? {
-                                Some(session) => session,
-                                None => {
-                                    self.push_notice(
-                                        NoticeLevel::Error,
-                                        "Session not found for workspace status".to_string(),
-                                    );
-                                    return Ok(());
-                                }
+                            let session = if let Some(session) =
+                                self.client.get_session(&self.session_id).await?
+                            {
+                                session
+                            } else {
+                                self.push_notice(
+                                    NoticeLevel::Error,
+                                    "Session not found for workspace status".to_string(),
+                                );
+                                return Ok(());
                             };
-                            let config = match session.config {
-                                Some(config) => config,
-                                None => {
-                                    self.push_notice(
-                                        NoticeLevel::Error,
-                                        "Session config missing for workspace status".to_string(),
-                                    );
-                                    return Ok(());
-                                }
+                            let config = if let Some(config) = session.config {
+                                config
+                            } else {
+                                self.push_notice(
+                                    NoticeLevel::Error,
+                                    "Session config missing for workspace status".to_string(),
+                                );
+                                return Ok(());
                             };
                             config.workspace_id.or_else(|| {
                                 config.workspace_ref.map(|reference| reference.workspace_id)

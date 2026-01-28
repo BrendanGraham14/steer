@@ -30,9 +30,7 @@ impl AuthenticationWidget {
 
         // Header
         let provider_config = state.registry.get(&provider_id);
-        let provider_name = provider_config
-            .map(|c| c.name.as_str())
-            .unwrap_or("Unknown Provider");
+        let provider_name = provider_config.map_or("Unknown Provider", |c| c.name.as_str());
         let is_openai = provider_id == provider::openai();
 
         let header = vec![
@@ -134,7 +132,7 @@ impl AuthenticationWidget {
             }
             Some(AuthProgress::Error { message }) => {
                 content.push(Line::from(""));
-                content.push(Line::from(format!("Error: {}", message)));
+                content.push(Line::from(format!("Error: {message}")));
             }
             None => {
                 content.push(Line::from(""));
@@ -171,7 +169,7 @@ impl AuthenticationWidget {
 
         // Instructions
         let instructions = match state.auth_progress.as_ref() {
-            Some(AuthProgress::OAuthStarted { .. }) | Some(AuthProgress::NeedInput { .. }) => {
+            Some(AuthProgress::OAuthStarted { .. } | AuthProgress::NeedInput { .. }) => {
                 vec![Line::from(vec![
                     Span::raw("Type or paste input, "),
                     Span::styled("Enter", theme.style(Component::SetupKeyBinding)),

@@ -116,7 +116,7 @@ impl ThemeLoader {
 
         // Add bundled themes
         for (theme_name, _) in BUNDLED_THEMES {
-            themes.push(theme_name.to_string());
+            themes.push((*theme_name).to_string());
         }
 
         // Add filesystem themes
@@ -262,9 +262,11 @@ text = { fg = "fg" }
             }
         }
 
-        if !errors.is_empty() {
-            panic!("Theme loading errors:\n\n{}", errors.join("\n\n"));
-        }
+        assert!(
+            errors.is_empty(),
+            "Theme loading errors:\n\n{}",
+            errors.join("\n\n")
+        );
     }
 
     #[test]
@@ -278,9 +280,11 @@ text = { fg = "fg" }
             }
         }
 
-        if !errors.is_empty() {
-            panic!("Bundled theme loading errors:\n\n{}", errors.join("\n\n"));
-        }
+        assert!(
+            errors.is_empty(),
+            "Bundled theme loading errors:\n\n{}",
+            errors.join("\n\n")
+        );
     }
 
     #[test]
@@ -399,9 +403,10 @@ text = { fg = "fg" }
                 .expect("StatusBar component missing");
 
             // StatusBar should at least have a foreground color
-            if status_bar.fg.is_none() && status_bar.bg.is_none() {
-                panic!("Theme '{theme_name}' StatusBar has no colors defined");
-            }
+            assert!(
+                !(status_bar.fg.is_none() && status_bar.bg.is_none()),
+                "Theme '{theme_name}' StatusBar has no colors defined"
+            );
         }
     }
 }

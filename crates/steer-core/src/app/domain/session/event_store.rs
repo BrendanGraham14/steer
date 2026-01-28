@@ -128,7 +128,7 @@ impl EventStore for InMemoryEventStore {
         let mut events = self.events.write().unwrap();
         let session_events = events.entry(session_id).or_default();
 
-        let seq = session_events.last().map(|(s, _)| s + 1).unwrap_or(0);
+        let seq = session_events.last().map_or(0, |(s, _)| s + 1);
         session_events.push((seq, event.clone()));
 
         drop(events);
@@ -215,7 +215,7 @@ impl EventStore for InMemoryEventStore {
 
     async fn list_session_ids(&self) -> Result<Vec<SessionId>, EventStoreError> {
         let events = self.events.read().unwrap();
-        Ok(events.keys().cloned().collect())
+        Ok(events.keys().copied().collect())
     }
 
     async fn load_todos(
@@ -317,7 +317,7 @@ impl SessionCatalog for InMemoryEventStore {
                     config: cfg.clone(),
                     created_at: now,
                     updated_at: now,
-                    message_count: if increment_message_count { 1 } else { 0 },
+                    message_count: u32::from(increment_message_count),
                     last_model: new_model.map(String::from),
                 },
             );
@@ -333,8 +333,8 @@ mod tests {
     use crate::app::domain::event::SessionEvent;
     use crate::config::model::builtin;
     use crate::session::state::SessionConfig;
-    use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
     use std::collections::HashMap;
+    use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
 
     fn sample_todos() -> Vec<TodoItem> {
         vec![

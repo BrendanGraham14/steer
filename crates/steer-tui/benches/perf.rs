@@ -1,7 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use steer_grpc::client_api::{Message, MessageData, UserContent};
 use steer_tui::tui::theme::Theme;
-use steer_tui::tui::widgets::chat_widgets::gutter::{Gutter, RoleGlyph};
 use steer_tui::tui::widgets::chat_widgets::{MessageWidget, RowWidget};
 use steer_tui::tui::widgets::{ChatRenderable, ViewMode};
 
@@ -27,9 +26,8 @@ fn bench_rowwidget_cache_hit(c: &mut Criterion) {
     group.bench_function("cache_hit", |b| {
         b.iter(|| {
             let theme = Theme::default();
-            let gutter = Gutter::new(RoleGlyph::Assistant);
             let msg = long_message(5000);
-            let mut row = RowWidget::new(gutter, Box::new(MessageWidget::new(msg)));
+            let mut row = RowWidget::new(Box::new(MessageWidget::new(msg)));
 
             // Cold render
             let _ = row.lines(100, ViewMode::Compact, &theme);
@@ -38,21 +36,20 @@ fn bench_rowwidget_cache_hit(c: &mut Criterion) {
             for _ in 0..50 {
                 black_box(row.lines(100, ViewMode::Compact, &theme));
             }
-        })
+        });
     });
 
     group.bench_function("resize_invalidate", |b| {
         b.iter(|| {
             let theme = Theme::default();
-            let gutter = Gutter::new(RoleGlyph::Assistant);
             let msg = long_message(5000);
-            let mut row = RowWidget::new(gutter, Box::new(MessageWidget::new(msg)));
+            let mut row = RowWidget::new(Box::new(MessageWidget::new(msg)));
 
             let _ = row.lines(100, ViewMode::Compact, &theme);
             for w in [120u16, 140, 160, 180, 200] {
                 black_box(row.lines(w, ViewMode::Compact, &theme));
             }
-        })
+        });
     });
 
     group.finish();

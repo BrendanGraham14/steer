@@ -507,7 +507,7 @@ mod tests {
 
         match result {
             ToolResult::External(ExternalResult { payload, .. }) => {
-                assert!(payload.contains("8"));
+                assert!(payload.contains('8'));
             }
             _ => unreachable!("External result"),
         }

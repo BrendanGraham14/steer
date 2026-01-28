@@ -122,7 +122,7 @@ impl Tui {
                         self.input_panel_state.textarea.delete_line_by_end();
                     }
                 }
-                KeyCode::Char('0') | KeyCode::Char('^') => {
+                KeyCode::Char('0' | '^') => {
                     if operator == VimOperator::Change {
                         self.input_panel_state.textarea.delete_line_by_head();
                         self.set_mode(InputMode::VimInsert);
@@ -321,7 +321,7 @@ impl Tui {
                 .input_panel_state
                 .textarea
                 .move_cursor(CursorMove::WordBack),
-            KeyCode::Char('0') | KeyCode::Char('^') => self
+            KeyCode::Char('0' | '^') => self
                 .input_panel_state
                 .textarea
                 .move_cursor(CursorMove::Head),
@@ -457,34 +457,32 @@ impl Tui {
 
             KeyCode::Enter => {
                 let content = self.input_panel_state.content().trim().to_string();
-                if !content.is_empty() {
-                    if content.starts_with('!') && content.len() > 1 {
-                        // Execute as bash command
-                        let command = content[1..].trim().to_string();
-                        self.client.execute_bash_command(command).await?;
-                        self.input_panel_state.clear();
-                        self.set_mode(InputMode::VimNormal);
-                    } else if content.starts_with('/') {
-                        // Handle as slash command
-                        let old_editing_mode = self.preferences.ui.editing_mode;
-                        self.handle_slash_command(content).await?;
-                        self.input_panel_state.clear();
-                        // Return to VimNormal only if we're *still* in VimInsert and the
-                        // editing mode hasn’t changed (e.g. not switched into Setup).
-                        if self.input_mode == InputMode::VimInsert
-                            && self.preferences.ui.editing_mode == old_editing_mode
-                        {
-                            self.set_mode(InputMode::VimNormal);
-                        }
-                    } else {
-                        // Send as normal message
-                        self.send_message(content).await?;
-                        self.input_panel_state.clear();
+                if content.is_empty() {
+                    // Just insert a newline if empty
+                    self.input_panel_state.handle_input(Input::from(key));
+                } else if content.starts_with('!') && content.len() > 1 {
+                    // Execute as bash command
+                    let command = content[1..].trim().to_string();
+                    self.client.execute_bash_command(command).await?;
+                    self.input_panel_state.clear();
+                    self.set_mode(InputMode::VimNormal);
+                } else if content.starts_with('/') {
+                    // Handle as slash command
+                    let old_editing_mode = self.preferences.ui.editing_mode;
+                    self.handle_slash_command(content).await?;
+                    self.input_panel_state.clear();
+                    // Return to VimNormal only if we're *still* in VimInsert and the
+                    // editing mode hasn’t changed (e.g. not switched into Setup).
+                    if self.input_mode == InputMode::VimInsert
+                        && self.preferences.ui.editing_mode == old_editing_mode
+                    {
                         self.set_mode(InputMode::VimNormal);
                     }
                 } else {
-                    // Just insert a newline if empty
-                    self.input_panel_state.handle_input(Input::from(key));
+                    // Send as normal message
+                    self.send_message(content).await?;
+                    self.input_panel_state.clear();
+                    self.set_mode(InputMode::VimNormal);
                 }
             }
 

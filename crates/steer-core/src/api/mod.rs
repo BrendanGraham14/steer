@@ -26,8 +26,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::warn;
 
-use crate::app::conversation::Message;
 use crate::app::SystemContext;
+use crate::app::conversation::Message;
 
 #[derive(Clone)]
 pub struct Client {

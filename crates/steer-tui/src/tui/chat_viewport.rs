@@ -5,7 +5,9 @@ use crate::tui::{
     model::{ChatItem, ChatItemData},
     state::chat_store::ChatStore,
     theme::{Component, Theme},
-    widgets::{ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, ScrollTarget, ViewMode},
+    widgets::{
+        ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, ScrollTarget, ViewMode,
+    },
 };
 use ratatui::{
     Frame,
@@ -227,7 +229,7 @@ impl ChatViewport {
             // Filter items to only show those in the lineage or attached to it
             raw.iter()
                 .filter(|item| is_visible(item, &lineage, chat_store))
-                .cloned()
+                .copied()
                 .collect::<Vec<_>>()
         } else {
             // No active branch - show everything
@@ -292,7 +294,7 @@ impl ChatViewport {
     ) -> Vec<FlattenedItem> {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
-        raw.iter().for_each(|item| {
+        for item in raw {
             if let ChatItemData::Message(message) = &item.data {
                 if let MessageData::Tool {
                     tool_use_id,
@@ -303,7 +305,7 @@ impl ChatViewport {
                     tool_results.insert(tool_use_id.clone(), result.clone());
                 }
             }
-        });
+        }
 
         let mut flattened = Vec::new();
 
@@ -578,9 +580,10 @@ impl ChatViewport {
                     RowKind::Item { idx } => {
                         let widget_item = &mut self.items[idx];
 
-                        let lines = widget_item
-                            .widget
-                            .lines(rect.width, self.state.view_mode, theme);
+                        let lines =
+                            widget_item
+                                .widget
+                                .lines(rect.width, self.state.view_mode, theme);
 
                         let start = row.first_visible_line;
                         let end = (start + row.render_h).min(lines.len());
@@ -758,7 +761,7 @@ fn create_widget_for_flattened_item(
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub fn format_command_response(resp: &CommandResponse) -> String {
     match resp {
         CommandResponse::Text(text) => text.clone(),
@@ -783,10 +786,10 @@ fn build_edited_message_ids(chat_store: &ChatStore) -> HashSet<String> {
         }
 
         let parent_id = message.parent_message_id().map(|id| id.to_string());
-        if seen_by_parent.contains_key(&parent_id) {
-            edited_message_ids.insert(message.id().to_string());
+        if let std::collections::hash_map::Entry::Vacant(e) = seen_by_parent.entry(parent_id) {
+            e.insert(message.id().to_string());
         } else {
-            seen_by_parent.insert(parent_id, message.id().to_string());
+            edited_message_ids.insert(message.id().to_string());
         }
     }
 
@@ -1056,7 +1059,7 @@ mod tests {
         println!("Buffer content when scrolled to bottom:");
         for y in 0..10 {
             let line: String = (0..80)
-                .map(|x| buffer.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .map(|x| buffer.cell((x, y)).map_or(" ", |c| c.symbol()))
                 .collect();
             println!("Line {}: {}", y, line.trim_end());
         }
@@ -1333,10 +1336,10 @@ mod tests {
 
         let buffer = terminal.backend().buffer();
         let line0: String = (0..80)
-            .map(|x| buffer.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "))
+            .map(|x| buffer.cell((x, 0)).map_or(" ", |c| c.symbol()))
             .collect();
         let line1: String = (0..80)
-            .map(|x| buffer.cell((x, 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .map(|x| buffer.cell((x, 1)).map_or(" ", |c| c.symbol()))
             .collect();
 
         assert!(
@@ -1796,7 +1799,7 @@ mod tests {
                     tool_use_id: "call_b".to_string(),
                     result: ToolResult::External(ExternalResult {
                         tool_name: "tool_b".to_string(),
-                        payload: "".to_string(),
+                        payload: String::new(),
                     }),
                 },
                 timestamp: 0,

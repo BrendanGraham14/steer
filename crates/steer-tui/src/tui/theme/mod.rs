@@ -4,7 +4,6 @@
 //! the appearance of the TUI without recompilation. Themes are loaded from TOML
 //! files and can be switched at runtime.
 
-use once_cell::sync::Lazy;
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -18,7 +17,7 @@ mod loader;
 pub use loader::ThemeLoader;
 
 /// Load syntect theme sets lazily
-static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
+static THEME_SET: std::sync::LazyLock<ThemeSet> = std::sync::LazyLock::new(ThemeSet::load_defaults);
 
 /// Errors that can occur during theme operations
 #[derive(Debug, Error)]

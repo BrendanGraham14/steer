@@ -20,10 +20,7 @@ impl Command for ListWorkspaceCommand {
             return Ok(());
         }
 
-        println!(
-            "{:<36} {:<16} {:<36} {}",
-            "Workspace", "Name", "Repo", "Path"
-        );
+        println!("{:<36} {:<16} {:<36} Path", "Workspace", "Name", "Repo");
         println!("{}", "-".repeat(128));
 
         for workspace in workspaces {

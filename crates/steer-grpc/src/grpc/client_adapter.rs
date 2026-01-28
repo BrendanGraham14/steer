@@ -11,8 +11,7 @@ use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
     proto_to_provider_auth_status, proto_to_provider_info, proto_to_repo_info,
     proto_to_start_auth_response, proto_to_workspace_info, proto_to_workspace_status,
-    session_policy_overrides_to_proto, session_tool_config_to_proto,
-    workspace_config_to_proto,
+    session_policy_overrides_to_proto, session_tool_config_to_proto, workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
 
@@ -87,9 +86,7 @@ impl AgentClient {
             workspace_config: Some(workspace_config),
             default_model: Some(model_to_proto(params.default_model)),
             primary_agent_id: params.primary_agent_id,
-            policy_overrides: Some(session_policy_overrides_to_proto(
-                &params.policy_overrides,
-            )),
+            policy_overrides: Some(session_policy_overrides_to_proto(&params.policy_overrides)),
         });
 
         let response = self
@@ -765,12 +762,13 @@ impl AgentClient {
             .send_auth_input(request)
             .await
             .map_err(Box::new)?;
-        let progress = response
-            .into_inner()
-            .progress
-            .ok_or_else(|| GrpcError::InvalidSessionState {
-                reason: "Missing auth progress in response".to_string(),
-            })?;
+        let progress =
+            response
+                .into_inner()
+                .progress
+                .ok_or_else(|| GrpcError::InvalidSessionState {
+                    reason: "Missing auth progress in response".to_string(),
+                })?;
         crate::grpc::conversions::proto_to_auth_progress(progress).map_err(GrpcError::from)
     }
 
@@ -786,12 +784,13 @@ impl AgentClient {
             .get_auth_progress(request)
             .await
             .map_err(Box::new)?;
-        let progress = response
-            .into_inner()
-            .progress
-            .ok_or_else(|| GrpcError::InvalidSessionState {
-                reason: "Missing auth progress in response".to_string(),
-            })?;
+        let progress =
+            response
+                .into_inner()
+                .progress
+                .ok_or_else(|| GrpcError::InvalidSessionState {
+                    reason: "Missing auth progress in response".to_string(),
+                })?;
         crate::grpc::conversions::proto_to_auth_progress(progress).map_err(GrpcError::from)
     }
 

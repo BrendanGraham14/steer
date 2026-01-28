@@ -50,7 +50,7 @@ impl StaticTool for FetchTool {
         let content = fetch_url(&params.url, &ctx.cancellation_token).await?;
 
         let user_message = format!(
-            r#"Web page content:
+            r"Web page content:
 ---
 {content}
 ---
@@ -58,7 +58,7 @@ impl StaticTool for FetchTool {
 {}
 
 Provide a concise response based only on the content above.
-"#,
+",
             params.prompt
         );
 
@@ -104,7 +104,7 @@ async fn fetch_url(
 
     let response = tokio::select! {
         result = request.send() => result,
-        _ = token.cancelled() => return Err(StaticToolError::Cancelled),
+        () = token.cancelled() => return Err(StaticToolError::Cancelled),
     };
 
     match response {
@@ -121,7 +121,7 @@ async fn fetch_url(
 
             let text = tokio::select! {
                 result = response.text() => result,
-                _ = token.cancelled() => return Err(StaticToolError::Cancelled),
+                () = token.cancelled() => return Err(StaticToolError::Cancelled),
             };
 
             match text {

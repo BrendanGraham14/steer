@@ -283,28 +283,28 @@ impl MessageEventProcessor {
                         content: blocks, ..
                     } = &mut message.data
                     {
-                        let tool_call = match blocks.iter_mut().find_map(|block| {
-                            if let AssistantContent::ToolCall { tool_call, .. } = block {
-                                if tool_call.id == tool_call_id {
-                                    return Some(tool_call);
+                        let tool_call = if let Some(existing) =
+                            blocks.iter_mut().find_map(|block| {
+                                if let AssistantContent::ToolCall { tool_call, .. } = block {
+                                    if tool_call.id == tool_call_id {
+                                        return Some(tool_call);
+                                    }
                                 }
-                            }
-                            None
-                        }) {
-                            Some(existing) => existing,
-                            None => {
-                                blocks.push(AssistantContent::ToolCall {
-                                    tool_call: ToolCall {
-                                        id: tool_call_id.to_string(),
-                                        name: "unknown".to_string(),
-                                        parameters: serde_json::Value::String(String::new()),
-                                    },
-                                    thought_signature: None,
-                                });
-                                match blocks.last_mut() {
-                                    Some(AssistantContent::ToolCall { tool_call, .. }) => tool_call,
-                                    _ => return false,
-                                }
+                                None
+                            }) {
+                            existing
+                        } else {
+                            blocks.push(AssistantContent::ToolCall {
+                                tool_call: ToolCall {
+                                    id: tool_call_id.to_string(),
+                                    name: "unknown".to_string(),
+                                    parameters: serde_json::Value::String(String::new()),
+                                },
+                                thought_signature: None,
+                            });
+                            match blocks.last_mut() {
+                                Some(AssistantContent::ToolCall { tool_call, .. }) => tool_call,
+                                _ => return false,
                             }
                         };
 
@@ -361,7 +361,9 @@ mod tests {
 
     use crate::tui::events::processor::PendingToolApproval;
     use steer_grpc::AgentClient;
-    use steer_grpc::client_api::{AssistantContent, Message, MessageData, ModelId, ToolCall, builtin};
+    use steer_grpc::client_api::{
+        AssistantContent, Message, MessageData, ModelId, ToolCall, builtin,
+    };
 
     struct TestContext {
         chat_store: ChatStore,

@@ -9,7 +9,7 @@ use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
 
 pub struct EditTool;
 
-const EDIT_DESCRIPTION: &str = r#"This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the replace tool to overwrite files.
+const EDIT_DESCRIPTION: &str = r"This is a tool for editing files. For moving or renaming files, you should generally use the Bash tool with the 'mv' command instead. For larger edits, use the replace tool to overwrite files.
 
 Before using this tool:
 
@@ -56,7 +56,7 @@ If you want to create a new file, use:
  - An empty old_string
  - The new file's contents as new_string
 
-Remember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each."#;
+Remember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each.";
 
 #[async_trait]
 impl StaticTool for EditTool {

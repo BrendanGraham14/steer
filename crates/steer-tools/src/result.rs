@@ -235,7 +235,7 @@ impl ToolResult {
                     for match_item in &r.matches {
                         if match_item.file_path != current_file {
                             if !output.is_empty() {
-                                output.push("".to_string());
+                                output.push(String::new());
                             }
                             current_file = &match_item.file_path;
                         }
@@ -371,11 +371,10 @@ impl ToolResult {
             ToolResult::Fetch(r) => {
                 format!("Fetched content from {}:\n{}", r.url, r.content)
             }
-            ToolResult::Agent(r) => r
-                .session_id
-                .as_ref()
-                .map(|session_id| format!("{}\n\nsession_id: {}", r.content, session_id))
-                .unwrap_or_else(|| r.content.clone()),
+            ToolResult::Agent(r) => r.session_id.as_ref().map_or_else(
+                || r.content.clone(),
+                |session_id| format!("{}\n\nsession_id: {}", r.content, session_id),
+            ),
             ToolResult::External(r) => r.payload.clone(),
             ToolResult::Error(e) => format!("Error: {e}"),
         }

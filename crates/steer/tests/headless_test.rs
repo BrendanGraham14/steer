@@ -40,7 +40,7 @@ async fn test_headless_mode_integration() {
 
         assert!(!text_blocks.is_empty(), "No text blocks found in response");
 
-        let contains_answer = text_blocks.iter().any(|text| text.contains("4"));
+        let contains_answer = text_blocks.iter().any(|text| text.contains('4'));
         assert!(contains_answer, "Response should contain the answer '4'");
     }
 

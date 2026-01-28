@@ -72,11 +72,11 @@ impl ChatListState {
         if let Some(max_offset) = self.max_offset() {
             self.offset = self.offset.min(max_offset);
         }
-        if self.offset != previous {
+        if self.offset == previous {
+            false
+        } else {
             self.user_scrolled = true;
             true
-        } else {
-            false
         }
     }
 
@@ -87,11 +87,11 @@ impl ChatListState {
         if let Some(max_offset) = self.max_offset() {
             self.offset = self.offset.min(max_offset);
         }
-        if self.offset != previous {
+        if self.offset == previous {
+            false
+        } else {
             self.user_scrolled = true;
             true
-        } else {
-            false
         }
     }
 
@@ -158,11 +158,17 @@ mod tests {
         let moved_down = state.scroll_down(5);
         assert!(!moved_down, "Scrolling down at bottom should be a no-op");
         assert_eq!(state.offset, 90, "Offset should remain at max");
-        assert!(!state.user_scrolled, "No-op scroll should not mark user_scrolled");
+        assert!(
+            !state.user_scrolled,
+            "No-op scroll should not mark user_scrolled"
+        );
 
         let moved_up = state.scroll_up(1);
         assert!(moved_up, "Scrolling up should move");
         assert_eq!(state.offset, 89, "Offset should decrease");
-        assert!(state.user_scrolled, "User scroll should be tracked when moving");
+        assert!(
+            state.user_scrolled,
+            "User scroll should be tracked when moving"
+        );
     }
 }

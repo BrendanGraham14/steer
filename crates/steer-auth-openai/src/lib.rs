@@ -121,52 +121,39 @@ You are producing plain text that will later be styled by the CLI. Follow these 
 
 fn steer_codex_bridge_prompt() -> String {
     format!(
-        r#"## Codex Running in Steer
+        r"## Codex Running in Steer
 
 You are running Codex inside Steer, an open-source terminal coding assistant.
 
 ### CRITICAL tool replacements
-- apply_patch does NOT exist. Use `{edit_tool}` instead.
-- update_plan does NOT exist. Use `{todo_write_tool}` instead.
-- read_plan does NOT exist. Use `{todo_read_tool}` instead.
+- apply_patch does NOT exist. Use `{EDIT_TOOL_NAME}` instead.
+- update_plan does NOT exist. Use `{TODO_WRITE_TOOL_NAME}` instead.
+- read_plan does NOT exist. Use `{TODO_READ_TOOL_NAME}` instead.
 
 ### Steer tool names
-- File: `{read_tool}`, `{write_tool}`, `{edit_tool}`, `{multi_edit_tool}`
-- Search: `{grep_tool}` (text), `{astgrep_tool}` (syntax), `{glob_tool}` (paths), `{ls_tool}` (list directories)
-- Exec: `{bash_tool}`
-- Web: `{fetch_tool}`
-- Agents: `{dispatch_tool}`
-- Todos: `{todo_read_tool}`, `{todo_write_tool}`
+- File: `{VIEW_TOOL_NAME}`, `{REPLACE_TOOL_NAME}`, `{EDIT_TOOL_NAME}`, `{MULTI_EDIT_TOOL_NAME}`
+- Search: `{GREP_TOOL_NAME}` (text), `{AST_GREP_TOOL_NAME}` (syntax), `{GLOB_TOOL_NAME}` (paths), `{LS_TOOL_NAME}` (list directories)
+- Exec: `{BASH_TOOL_NAME}`
+- Web: `{FETCH_TOOL_NAME}`
+- Agents: `{DISPATCH_AGENT_TOOL_NAME}`
+- Todos: `{TODO_READ_TOOL_NAME}`, `{TODO_WRITE_TOOL_NAME}`
 
 Tool names are case-sensitive; use exact casing.
 
 ### File path rules
-- `{read_tool}`, `{write_tool}`, `{edit_tool}`, `{multi_edit_tool}`, and `{ls_tool}` require absolute paths.
+- `{VIEW_TOOL_NAME}`, `{REPLACE_TOOL_NAME}`, `{EDIT_TOOL_NAME}`, `{MULTI_EDIT_TOOL_NAME}`, and `{LS_TOOL_NAME}` require absolute paths.
 
 ### Edit semantics
-- `{edit_tool}` uses exact string replacement (empty `old_string` creates a file).
-- `{multi_edit_tool}` applies multiple exact replacements in a single file.
-- `{write_tool}` overwrites the entire file contents.
+- `{EDIT_TOOL_NAME}` uses exact string replacement (empty `old_string` creates a file).
+- `{MULTI_EDIT_TOOL_NAME}` applies multiple exact replacements in a single file.
+- `{REPLACE_TOOL_NAME}` overwrites the entire file contents.
 
 ### Search guidance
-- Prefer `{grep_tool}`/`{astgrep_tool}`/`{glob_tool}`/`{ls_tool}` over shelling out to `rg` via `{bash_tool}`.
+- Prefer `{GREP_TOOL_NAME}`/`{AST_GREP_TOOL_NAME}`/`{GLOB_TOOL_NAME}`/`{LS_TOOL_NAME}` over shelling out to `rg` via `{BASH_TOOL_NAME}`.
 
 ### Todo guidance
-- Use `{todo_read_tool}`/`{todo_write_tool}` for complex or multi-step tasks; skip them for simple, single-step work unless the user asks.
-"#,
-        edit_tool = EDIT_TOOL_NAME,
-        todo_write_tool = TODO_WRITE_TOOL_NAME,
-        todo_read_tool = TODO_READ_TOOL_NAME,
-        read_tool = VIEW_TOOL_NAME,
-        write_tool = REPLACE_TOOL_NAME,
-        multi_edit_tool = MULTI_EDIT_TOOL_NAME,
-        grep_tool = GREP_TOOL_NAME,
-        astgrep_tool = AST_GREP_TOOL_NAME,
-        glob_tool = GLOB_TOOL_NAME,
-        ls_tool = LS_TOOL_NAME,
-        bash_tool = BASH_TOOL_NAME,
-        fetch_tool = FETCH_TOOL_NAME,
-        dispatch_tool = DISPATCH_AGENT_TOOL_NAME,
+- Use `{TODO_READ_TOOL_NAME}`/`{TODO_WRITE_TOOL_NAME}` for complex or multi-step tasks; skip them for simple, single-step work unless the user asks.
+",
     )
 }
 

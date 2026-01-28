@@ -6,10 +6,10 @@ pub use steer_core::app::conversation::{
     AssistantContent, Message, MessageData, ThoughtContent, UserContent,
 };
 
-pub use steer_core::config::model::ModelId;
 pub use steer_core::app::domain::types::{
     CompactionRecord, MessageId, OpId, RequestId, ToolCallId,
 };
+pub use steer_core::config::model::ModelId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueuedWorkKind {

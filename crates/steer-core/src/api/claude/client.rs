@@ -11,10 +11,10 @@ use crate::api::error::StreamError;
 use crate::api::provider::{CompletionStream, StreamChunk};
 use crate::api::sse::parse_sse_stream;
 use crate::api::{CompletionResponse, Provider, error::ApiError};
+use crate::app::SystemContext;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
-use crate::app::SystemContext;
 use crate::auth::{
     AnthropicAuth, AuthErrorAction, AuthErrorContext, AuthHeaderContext, InstructionPolicy,
     RequestKind,
@@ -553,6 +553,7 @@ fn sanitize_for_claude_inner(
 
     Value::Object(out)
 }
+
 fn default_cache_type() -> String {
     "ephemeral".to_string()
 }
@@ -804,7 +805,7 @@ struct ClaudeUsage {
 enum ClaudeStreamEvent {
     #[serde(rename = "message_start")]
     MessageStart {
-        #[allow(dead_code)]
+        #[expect(dead_code)]
         message: ClaudeMessageStart,
     },
     #[serde(rename = "content_block_start")]
@@ -818,9 +819,9 @@ enum ClaudeStreamEvent {
     ContentBlockStop { index: usize },
     #[serde(rename = "message_delta")]
     MessageDelta {
-        #[allow(dead_code)]
+        #[expect(dead_code)]
         delta: ClaudeMessageDeltaData,
-        #[allow(dead_code)]
+        #[expect(dead_code)]
         #[serde(default)]
         usage: Option<ClaudeUsage>,
     },
@@ -834,10 +835,10 @@ enum ClaudeStreamEvent {
 
 #[derive(Debug, Deserialize)]
 struct ClaudeMessageStart {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     #[serde(default)]
     id: String,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     #[serde(default)]
     model: String,
 }
@@ -869,7 +870,7 @@ enum ClaudeDelta {
 
 #[derive(Debug, Deserialize)]
 struct ClaudeMessageDeltaData {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     #[serde(default)]
     stop_reason: Option<String>,
 }
@@ -1082,7 +1083,16 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                 })
                 .collect();
 
-            if !claude_blocks.is_empty() {
+            if claude_blocks.is_empty() {
+                debug!("No content blocks found: {:?}", content);
+                Err(ApiError::InvalidRequest {
+                    provider: "anthropic".to_string(),
+                    details: format!(
+                        "Assistant message ID {} resulted in no valid content blocks",
+                        msg.id
+                    ),
+                })
+            } else {
                 let claude_blocks = ensure_thinking_first(claude_blocks);
                 let claude_content = if claude_blocks.len() == 1 {
                     if let Some(ClaudeContentBlock::Text { text, .. }) = claude_blocks.first() {
@@ -1105,15 +1115,6 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                     content: claude_content,
                     id: Some(msg.id.clone()),
                 })
-            } else {
-                debug!("No content blocks found: {:?}", content);
-                Err(ApiError::InvalidRequest {
-                    provider: "anthropic".to_string(),
-                    details: format!(
-                        "Assistant message ID {} resulted in no valid content blocks",
-                        msg.id
-                    ),
-                })
             }
         }
         crate::app::conversation::MessageData::Tool {
@@ -1123,18 +1124,17 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
         } => {
             // Convert ToolResult to Claude format
             // Claude expects tool results as User messages
-            let (result_text, is_error) = match result {
-                ToolResult::Error(e) => (e.to_string(), Some(true)),
-                _ => {
-                    // For all other variants, use llm_format
-                    let text = result.llm_format();
-                    let text = if text.trim().is_empty() {
-                        "(No output)".to_string()
-                    } else {
-                        text
-                    };
-                    (text, None)
-                }
+            let (result_text, is_error) = if let ToolResult::Error(e) = result {
+                (e.to_string(), Some(true))
+            } else {
+                // For all other variants, use llm_format
+                let text = result.llm_format();
+                let text = if text.trim().is_empty() {
+                    "(No output)".to_string()
+                } else {
+                    text
+                };
+                (text, None)
             };
 
             let claude_blocks = vec![ClaudeContentBlock::ToolResult {
@@ -1168,7 +1168,7 @@ fn ensure_thinking_first(blocks: Vec<ClaudeContentBlock>) -> Vec<ClaudeContentBl
     for block in blocks {
         match block {
             ClaudeContentBlock::Thinking { .. } | ClaudeContentBlock::RedactedThinking { .. } => {
-                thinking_blocks.push(block)
+                thinking_blocks.push(block);
             }
             _ => other_blocks.push(block),
         }
@@ -1262,7 +1262,7 @@ impl Provider for AnthropicClient {
 
         match &mut last_message.content {
             ClaudeMessageContent::StructuredContent { content } => {
-                for block in content.0.iter_mut() {
+                for block in &mut content.0 {
                     if let ClaudeContentBlock::ToolResult { cache_control, .. } = block {
                         *cache_control = cache_setting.clone();
                     }
@@ -1284,8 +1284,7 @@ impl Provider for AnthropicClient {
         let supports_thinking = call_options
             .as_ref()
             .and_then(|opts| opts.thinking_config.as_ref())
-            .map(|tc| tc.enabled)
-            .unwrap_or(false);
+            .is_some_and(|tc| tc.enabled);
 
         let request = if supports_thinking {
             // Use catalog/call options to configure thinking budget when provided
@@ -1304,8 +1303,7 @@ impl Provider for AnthropicClient {
                 max_tokens: call_options
                     .as_ref()
                     .and_then(|o| o.max_tokens)
-                    .map(|v| v as usize)
-                    .unwrap_or(32_000),
+                    .map_or(32_000, |v| v as usize),
                 system: system_content.clone(),
                 tools,
                 temperature: call_options
@@ -1324,8 +1322,7 @@ impl Provider for AnthropicClient {
                 max_tokens: call_options
                     .as_ref()
                     .and_then(|o| o.max_tokens)
-                    .map(|v| v as usize)
-                    .unwrap_or(8000),
+                    .map_or(8000, |v| v as usize),
                 system: system_content,
                 tools,
                 temperature: call_options
@@ -1358,7 +1355,7 @@ impl Provider for AnthropicClient {
 
             let response = tokio::select! {
                 biased;
-                _ = token.cancelled() => {
+                () = token.cancelled() => {
                     debug!(target: "claude::complete", "Cancellation token triggered before sending request.");
                     return Err(ApiError::Cancelled{ provider: self.name().to_string()});
                 }
@@ -1378,7 +1375,7 @@ impl Provider for AnthropicClient {
             if !status.is_success() {
                 let error_text = tokio::select! {
                     biased;
-                    _ = token.cancelled() => {
+                    () = token.cancelled() => {
                         debug!(target: "claude::complete", "Cancellation token triggered while reading error response body.");
                         return Err(ApiError::Cancelled{ provider: self.name().to_string()});
                     }
@@ -1428,7 +1425,7 @@ impl Provider for AnthropicClient {
 
             let response_text = tokio::select! {
                 biased;
-                _ = token.cancelled() => {
+                () = token.cancelled() => {
                     debug!(target: "claude::complete", "Cancellation token triggered while reading successful response body.");
                     return Err(ApiError::Cancelled { provider: self.name().to_string() });
                 }
@@ -1483,7 +1480,7 @@ impl Provider for AnthropicClient {
 
         match &mut last_message.content {
             ClaudeMessageContent::StructuredContent { content } => {
-                for block in content.0.iter_mut() {
+                for block in &mut content.0 {
                     if let ClaudeContentBlock::ToolResult { cache_control, .. } = block {
                         *cache_control = cache_setting.clone();
                     }
@@ -1504,8 +1501,7 @@ impl Provider for AnthropicClient {
         let supports_thinking = call_options
             .as_ref()
             .and_then(|opts| opts.thinking_config.as_ref())
-            .map(|tc| tc.enabled)
-            .unwrap_or(false);
+            .is_some_and(|tc| tc.enabled);
 
         let request = if supports_thinking {
             let budget = call_options
@@ -1523,8 +1519,7 @@ impl Provider for AnthropicClient {
                 max_tokens: call_options
                     .as_ref()
                     .and_then(|o| o.max_tokens)
-                    .map(|v| v as usize)
-                    .unwrap_or(32_000),
+                    .map_or(32_000, |v| v as usize),
                 system: system_content.clone(),
                 tools,
                 temperature: call_options
@@ -1543,8 +1538,7 @@ impl Provider for AnthropicClient {
                 max_tokens: call_options
                     .as_ref()
                     .and_then(|o| o.max_tokens)
-                    .map(|v| v as usize)
-                    .unwrap_or(8000),
+                    .map_or(8000, |v| v as usize),
                 system: system_content,
                 tools,
                 temperature: call_options
@@ -1577,7 +1571,7 @@ impl Provider for AnthropicClient {
 
             let response = tokio::select! {
                 biased;
-                _ = token.cancelled() => {
+                () = token.cancelled() => {
                     return Err(ApiError::Cancelled { provider: self.name().to_string() });
                 }
                 res = request_builder.send() => {
@@ -1589,7 +1583,7 @@ impl Provider for AnthropicClient {
             if !status.is_success() {
                 let error_text = tokio::select! {
                     biased;
-                    _ = token.cancelled() => {
+                    () = token.cancelled() => {
                         return Err(ApiError::Cancelled { provider: self.name().to_string() });
                     }
                     text_res = response.text() => {

@@ -63,9 +63,7 @@ impl DirectoryStructureUtils {
                 if let Some(path_str) = relative_path.to_str() {
                     if !path_str.is_empty() {
                         // Track immediate child directories that walker saw
-                        if entry.depth() == 1
-                            && entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
-                        {
+                        if entry.depth() == 1 && entry.file_type().is_some_and(|ft| ft.is_dir()) {
                             if let Some(dir_name) = relative_path.file_name() {
                                 walker_seen_dirs.insert(dir_name.to_string_lossy().to_string());
                             }
@@ -76,7 +74,7 @@ impl DirectoryStructureUtils {
                     continue;
                 }
 
-                        if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                        if entry.file_type().is_some_and(|ft| ft.is_dir()) {
                             paths.push(format!("{path_str}/"));
                         } else {
                             paths.push(path_str.to_string());

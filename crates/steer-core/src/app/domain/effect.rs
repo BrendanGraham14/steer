@@ -1,6 +1,6 @@
+use crate::app::SystemContext;
 use crate::app::conversation::Message;
 use crate::app::domain::types::{OpId, RequestId, SessionId};
-use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use steer_tools::{ToolCall, ToolSchema};
 

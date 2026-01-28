@@ -274,8 +274,10 @@ impl McpBackend {
             .as_ref()
             .and_then(|annotations| annotations.title.as_deref())
             .filter(|title| !title.trim().is_empty())
-            .map(|title| format!("{}: {}", self.server_name, title))
-            .unwrap_or_else(|| format!("{}: {}", self.server_name, tool.name));
+            .map_or_else(
+                || format!("{}: {}", self.server_name, tool.name),
+                |title| format!("{}: {}", self.server_name, title),
+            );
 
         let description = match &tool.description {
             Some(desc) if !desc.is_empty() => desc.to_string(),

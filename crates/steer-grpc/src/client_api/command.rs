@@ -1,4 +1,4 @@
-use super::types::*;
+use super::types::{MessageId, RequestId};
 
 #[derive(Debug, Clone)]
 pub enum ClientCommand {

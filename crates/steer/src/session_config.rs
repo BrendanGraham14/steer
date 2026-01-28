@@ -859,10 +859,10 @@ patterns = [
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(
             temp_file,
-            r#"
+            r"
 [tool_config.approvals.bash]
 patterns = []
-"#
+"
         )
         .unwrap();
 
@@ -964,7 +964,10 @@ agent_patterns = ["explore", "explore-*"]
             .preapproved
             .per_tool
             .get("dispatch_agent");
-        assert!(dispatch_rule.is_some(), "Dispatch agent rule should be present");
+        assert!(
+            dispatch_rule.is_some(),
+            "Dispatch agent rule should be present"
+        );
 
         match dispatch_rule.unwrap() {
             ToolRuleOverrides::DispatchAgent { agent_patterns } => {

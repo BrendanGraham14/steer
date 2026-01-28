@@ -130,9 +130,7 @@ mod tests {
                     SessionEvent::ToolCallFailed { .. } => "ToolCallFailed".to_string(),
                     SessionEvent::Error { .. } => "Error".to_string(),
                     SessionEvent::SessionCreated { .. } => "SessionCreated".to_string(),
-                    SessionEvent::SessionConfigUpdated { .. } => {
-                        "SessionConfigUpdated".to_string()
-                    }
+                    SessionEvent::SessionConfigUpdated { .. } => "SessionConfigUpdated".to_string(),
                     SessionEvent::MessageUpdated { .. } => "MessageUpdated".to_string(),
                     SessionEvent::WorkspaceChanged => "WorkspaceChanged".to_string(),
                     SessionEvent::ConversationCompacted { .. } => {

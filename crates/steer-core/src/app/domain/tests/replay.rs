@@ -232,7 +232,7 @@ mod tests {
             let request_id = deterministic_request_id(100 + i as u128);
             let tool_call = ToolCall {
                 id: format!("tc_{i}"),
-                name: tool_name.to_string(),
+                name: (*tool_name).to_string(),
                 parameters: serde_json::json!({}),
             };
 

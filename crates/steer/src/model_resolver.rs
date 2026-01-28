@@ -129,10 +129,8 @@ recommended = true
         );
         fs::write(&catalog_path, catalog).unwrap();
 
-        let selection = resolve_model_selection(
-            None,
-            &[catalog_path.to_string_lossy().to_string()],
-        );
+        let selection =
+            resolve_model_selection(None, &[catalog_path.to_string_lossy().to_string()]);
 
         assert_eq!(selection.default_model, builtin_default);
     }
@@ -165,10 +163,8 @@ recommended = true
         );
         fs::write(&catalog_path, catalog).unwrap();
 
-        let selection = resolve_model_selection(
-            None,
-            &[catalog_path.to_string_lossy().to_string()],
-        );
+        let selection =
+            resolve_model_selection(None, &[catalog_path.to_string_lossy().to_string()]);
 
         assert_eq!(
             selection.default_model,

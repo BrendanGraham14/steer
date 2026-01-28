@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
+use crate::app::SystemContext;
 use crate::app::conversation::Message;
 use crate::app::domain::session::EventStore;
 use crate::app::domain::types::SessionId;
-use crate::app::SystemContext;
 use crate::config::model::ModelId;
 use crate::session::state::BackendConfig;
 use crate::workspace::{RepoManager, RepoRef, Workspace, WorkspaceId, WorkspaceManager, WorkspaceRef};

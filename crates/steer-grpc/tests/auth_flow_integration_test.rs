@@ -31,7 +31,7 @@ async fn test_auth_progress_polling_without_input() {
     let start_state = start.progress.as_ref().and_then(|p| p.state.as_ref());
     assert!(matches!(
         start_state,
-        Some(State::OauthStarted(_)) | Some(State::NeedInput(_)) | Some(State::InProgress(_))
+        Some(State::OauthStarted(_) | State::NeedInput(_) | State::InProgress(_))
     ));
 
     let progress = client
@@ -76,7 +76,7 @@ async fn test_openai_auth_progress_polling_without_input() {
     let start_state = start.progress.as_ref().and_then(|p| p.state.as_ref());
     assert!(matches!(
         start_state,
-        Some(State::OauthStarted(_)) | Some(State::NeedInput(_)) | Some(State::InProgress(_))
+        Some(State::OauthStarted(_) | State::NeedInput(_) | State::InProgress(_))
     ));
 
     let progress = client

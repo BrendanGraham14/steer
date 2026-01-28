@@ -147,46 +147,41 @@ impl AgentInterpreter {
                 pending_outputs = VecDeque::from(outputs);
             }
 
-            let output = match pending_outputs.pop_front() {
-                Some(o) => o,
-                None => {
-                    if stepper.is_terminal(&state) {
-                        match state {
-                            AgentState::Complete { final_message } => {
-                                self.emit_event(SessionEvent::OperationCompleted {
-                                    op_id: self.op_id,
-                                })
+            let output = if let Some(o) = pending_outputs.pop_front() {
+                o
+            } else {
+                if stepper.is_terminal(&state) {
+                    match state {
+                        AgentState::Complete { final_message } => {
+                            self.emit_event(SessionEvent::OperationCompleted { op_id: self.op_id })
                                 .await?;
-                                return Ok(final_message);
-                            }
-                            AgentState::Failed { error } => {
-                                self.emit_event(SessionEvent::Error {
-                                    message: error.clone(),
-                                })
-                                .await?;
-                                self.emit_event(SessionEvent::OperationCompleted {
-                                    op_id: self.op_id,
-                                })
-                                .await?;
-                                return Err(AgentInterpreterError::Agent(error));
-                            }
-                            AgentState::Cancelled => {
-                                self.emit_event(SessionEvent::OperationCancelled {
-                                    op_id: self.op_id,
-                                    info: CancellationInfo {
-                                        pending_tool_calls: 0,
-                                    },
-                                })
-                                .await?;
-                                return Err(AgentInterpreterError::Cancelled);
-                            }
-                            _ => unreachable!(),
+                            return Ok(final_message);
                         }
+                        AgentState::Failed { error } => {
+                            self.emit_event(SessionEvent::Error {
+                                message: error.clone(),
+                            })
+                            .await?;
+                            self.emit_event(SessionEvent::OperationCompleted { op_id: self.op_id })
+                                .await?;
+                            return Err(AgentInterpreterError::Agent(error));
+                        }
+                        AgentState::Cancelled => {
+                            self.emit_event(SessionEvent::OperationCancelled {
+                                op_id: self.op_id,
+                                info: CancellationInfo {
+                                    pending_tool_calls: 0,
+                                },
+                            })
+                            .await?;
+                            return Err(AgentInterpreterError::Cancelled);
+                        }
+                        _ => unreachable!(),
                     }
-                    return Err(AgentInterpreterError::Agent(
-                        "Stepper stuck with no outputs".to_string(),
-                    ));
                 }
+                return Err(AgentInterpreterError::Agent(
+                    "Stepper stuck with no outputs".to_string(),
+                ));
             };
 
             match output {
@@ -437,8 +432,8 @@ mod tests {
     use super::*;
     use crate::api::error::ApiError;
     use crate::api::provider::{CompletionResponse, Provider};
-    use crate::app::conversation::AssistantContent;
     use crate::app::SystemContext;
+    use crate::app::conversation::AssistantContent;
     use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::app::validation::ValidatorRegistry;
     use crate::auth::ProviderRegistry;
@@ -543,24 +538,21 @@ mod tests {
             .expect("load events");
 
         assert!(
-            events.iter().any(|(_, event)| matches!(
-                event,
-                SessionEvent::AssistantMessageAdded { .. }
-            )),
+            events
+                .iter()
+                .any(|(_, event)| matches!(event, SessionEvent::AssistantMessageAdded { .. })),
             "assistant message should be emitted"
         );
         assert!(
-            events.iter().any(|(_, event)| matches!(
-                event,
-                SessionEvent::OperationCompleted { .. }
-            )),
+            events
+                .iter()
+                .any(|(_, event)| matches!(event, SessionEvent::OperationCompleted { .. })),
             "operation should complete"
         );
         assert!(
-            !events.iter().any(|(_, event)| matches!(
-                event,
-                SessionEvent::OperationCancelled { .. }
-            )),
+            !events
+                .iter()
+                .any(|(_, event)| matches!(event, SessionEvent::OperationCancelled { .. })),
             "operation should not be cancelled"
         );
     }

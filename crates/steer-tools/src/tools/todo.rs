@@ -43,7 +43,7 @@ pub enum TodoWriteFileOperation {
 pub type TodoList = Vec<TodoItem>;
 
 pub mod read {
-    use super::*;
+    use super::{Deserialize, JsonSchema, Serialize, TodoListResult, ToolExecutionError, ToolSpec};
     use thiserror::Error;
 
     pub const TODO_READ_TOOL_NAME: &str = "read_todos";
@@ -76,7 +76,9 @@ pub mod read {
 }
 
 pub mod write {
-    use super::*;
+    use super::{
+        Deserialize, JsonSchema, Serialize, TodoList, TodoWriteResult, ToolExecutionError, ToolSpec,
+    };
     use thiserror::Error;
 
     pub const TODO_WRITE_TOOL_NAME: &str = "write_todos";

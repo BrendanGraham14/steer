@@ -224,7 +224,11 @@ fn proto_to_steer_tools_result(
     proto_result: proto::ToolResult,
 ) -> Result<steer_tools::result::ToolResult, ConversionError> {
     use proto::tool_result::Result as ProtoResult;
-    use steer_tools::result::*;
+    use steer_tools::result::{
+        AgentResult, BashResult, EditResult, ExternalResult, FetchResult, FileContentResult,
+        FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult, TodoListResult,
+        TodoWriteResult, ToolResult,
+    };
 
     let result = proto_result
         .result
@@ -692,7 +696,9 @@ pub(crate) fn session_policy_overrides_to_proto(
         approval_policy: if overrides.approval_policy.is_empty() {
             None
         } else {
-            Some(tool_approval_policy_overrides_to_proto(&overrides.approval_policy))
+            Some(tool_approval_policy_overrides_to_proto(
+                &overrides.approval_policy,
+            ))
         },
     }
 }
@@ -729,11 +735,12 @@ pub(crate) fn proto_to_session_config(
         .ok_or_else(|| ConversionError::MissingField {
             field: "session_config.tool_config".to_string(),
         })?;
-    let workspace_config = proto_config
-        .workspace_config
-        .ok_or_else(|| ConversionError::MissingField {
-            field: "session_config.workspace_config".to_string(),
-        })?;
+    let workspace_config =
+        proto_config
+            .workspace_config
+            .ok_or_else(|| ConversionError::MissingField {
+                field: "session_config.workspace_config".to_string(),
+            })?;
     let default_model = proto_config
         .default_model
         .ok_or_else(|| ConversionError::MissingField {
@@ -792,11 +799,13 @@ pub(crate) fn proto_to_session_config(
     };
 
     let parent_session_id = match proto_config.parent_session_id {
-        Some(parent) => Some(
-            SessionId::parse(&parent).ok_or_else(|| ConversionError::InvalidData {
-                message: format!("Invalid parent_session_id: {parent}"),
-            })?,
-        ),
+        Some(parent) => {
+            Some(
+                SessionId::parse(&parent).ok_or_else(|| ConversionError::InvalidData {
+                    message: format!("Invalid parent_session_id: {parent}"),
+                })?,
+            )
+        }
         None => None,
     };
 
@@ -1403,10 +1412,10 @@ pub(crate) fn proto_to_tool_approval_policy_overrides(
                     proto::UnapprovedBehavior::Allow => Some(UnapprovedBehavior::Allow),
                     proto::UnapprovedBehavior::Unspecified => None,
                 });
-            let preapproved = policy
-                .preapproved
-                .map(proto_to_approval_rules_overrides)
-                .unwrap_or_else(ApprovalRulesOverrides::empty);
+            let preapproved = policy.preapproved.map_or_else(
+                ApprovalRulesOverrides::empty,
+                proto_to_approval_rules_overrides,
+            );
             ToolApprovalPolicyOverrides {
                 default_behavior,
                 preapproved,
@@ -1435,9 +1444,7 @@ fn proto_to_approval_rules_overrides(
         per_tool: proto_rules
             .per_tool
             .into_iter()
-            .filter_map(|(name, rule)| {
-                proto_to_tool_rule_override(rule).map(|r| (name, r))
-            })
+            .filter_map(|(name, rule)| proto_to_tool_rule_override(rule).map(|r| (name, r)))
             .collect(),
     }
 }
@@ -2280,7 +2287,7 @@ pub(crate) fn mcp_transport_to_proto(
             McpTransport::Tcp { host, port } => {
                 proto::mcp_transport_info::Transport::Tcp(proto::McpTcpTransport {
                     host: host.clone(),
-                    port: *port as u32,
+                    port: u32::from(*port),
                 })
             }
             McpTransport::Unix { path } => {
@@ -2733,7 +2740,7 @@ pub(crate) fn proto_to_auth_source(
                 _ => {
                     return Err(ConversionError::InvalidData {
                         message: format!("Invalid api key origin {}", api_key.origin),
-                    })
+                    });
                 }
             };
             ClientAuthSource::ApiKey { origin }
@@ -2745,7 +2752,7 @@ pub(crate) fn proto_to_auth_source(
                 _ => {
                     return Err(ConversionError::InvalidData {
                         message: format!("Invalid auth method {}", plugin.method),
-                    })
+                    });
                 }
             };
             ClientAuthSource::Plugin { method }
@@ -2759,31 +2766,25 @@ pub(crate) fn proto_to_auth_source(
 pub(crate) fn proto_to_auth_progress(
     progress: proto::AuthProgress,
 ) -> Result<ClientAuthProgress, ConversionError> {
-    let state = progress.state.ok_or_else(|| ConversionError::MissingField {
-        field: "auth_progress.state".to_string(),
-    })?;
+    let state = progress
+        .state
+        .ok_or_else(|| ConversionError::MissingField {
+            field: "auth_progress.state".to_string(),
+        })?;
     let mapped = match state {
-        proto::auth_progress::State::NeedInput(need_input) => {
-            ClientAuthProgress::NeedInput {
-                prompt: need_input.prompt,
-            }
-        }
-        proto::auth_progress::State::InProgress(in_progress) => {
-            ClientAuthProgress::InProgress {
-                message: in_progress.message,
-            }
-        }
+        proto::auth_progress::State::NeedInput(need_input) => ClientAuthProgress::NeedInput {
+            prompt: need_input.prompt,
+        },
+        proto::auth_progress::State::InProgress(in_progress) => ClientAuthProgress::InProgress {
+            message: in_progress.message,
+        },
         proto::auth_progress::State::Complete(_) => ClientAuthProgress::Complete,
-        proto::auth_progress::State::Error(error) => {
-            ClientAuthProgress::Error {
-                message: error.message,
-            }
-        }
-        proto::auth_progress::State::OauthStarted(oauth) => {
-            ClientAuthProgress::OAuthStarted {
-                auth_url: oauth.auth_url,
-            }
-        }
+        proto::auth_progress::State::Error(error) => ClientAuthProgress::Error {
+            message: error.message,
+        },
+        proto::auth_progress::State::OauthStarted(oauth) => ClientAuthProgress::OAuthStarted {
+            auth_url: oauth.auth_url,
+        },
     };
 
     Ok(mapped)

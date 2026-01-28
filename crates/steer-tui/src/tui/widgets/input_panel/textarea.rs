@@ -48,7 +48,7 @@ impl<'a> TextAreaWidget<'a> {
     }
 }
 
-impl<'a> Widget for TextAreaWidget<'a> {
+impl Widget for TextAreaWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // Take ownership of block to avoid borrow issues
         let (inner_area, theme, _mode) = if let Some(block) = self.block {

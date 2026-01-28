@@ -8,26 +8,23 @@ use tracing::{debug, error};
 use crate::api::error::{ApiError, StreamError};
 use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
 use crate::api::sse::parse_sse_stream;
+use crate::app::SystemContext;
 use crate::app::conversation::{
     AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
-use crate::app::SystemContext;
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
 use super::types::{OpenAIFunction, OpenAITool, ServiceTier, ToolChoice};
 
-#[allow(dead_code)]
 const DEFAULT_API_URL: &str = "https://api.openai.com/v1/chat/completions";
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub(super) struct Client {
     http_client: reqwest::Client,
     base_url: String,
 }
 
-#[allow(dead_code)]
 impl Client {
     pub(super) fn new(api_key: String) -> Self {
         Self::with_base_url(api_key, None)
@@ -164,7 +161,7 @@ impl Client {
         }
 
         let body_text = tokio::select! {
-            _ = token.cancelled() => {
+            () = token.cancelled() => {
                 return Err(ApiError::Cancelled { provider: super::PROVIDER_NAME.to_string() });
             }
             text = response.text() => {
@@ -476,7 +473,7 @@ impl Client {
 
                 let event_result = tokio::select! {
                     biased;
-                    _ = token.cancelled() => {
+                    () = token.cancelled() => {
                         yield StreamChunk::Error(StreamError::Cancelled);
                         break;
                     }
@@ -543,31 +540,25 @@ impl Client {
 
                 if let Some(choice) = chunk.choices.first() {
                     if let Some(text_delta) = &choice.delta.content {
-                        match content.last_mut() {
-                            Some(AssistantContent::Text { text }) => text.push_str(text_delta),
-                            _ => {
-                                content.push(AssistantContent::Text {
-                                    text: text_delta.clone(),
-                                });
-                                tool_call_indices.push(None);
-                            }
+                        if let Some(AssistantContent::Text { text }) = content.last_mut() { text.push_str(text_delta) } else {
+                            content.push(AssistantContent::Text {
+                                text: text_delta.clone(),
+                            });
+                            tool_call_indices.push(None);
                         }
                         yield StreamChunk::TextDelta(text_delta.clone());
                     }
 
                     if let Some(thinking_delta) = &choice.delta.reasoning_content {
-                        match content.last_mut() {
-                            Some(AssistantContent::Thought {
+                        if let Some(AssistantContent::Thought {
                                 thought: ThoughtContent::Simple { text },
-                            }) => text.push_str(thinking_delta),
-                            _ => {
-                                content.push(AssistantContent::Thought {
-                                    thought: ThoughtContent::Simple {
-                                        text: thinking_delta.clone(),
-                                    },
-                                });
-                                tool_call_indices.push(None);
-                            }
+                            }) = content.last_mut() { text.push_str(thinking_delta) } else {
+                            content.push(AssistantContent::Thought {
+                                thought: ThoughtContent::Simple {
+                                    text: thinking_delta.clone(),
+                                },
+                            });
+                            tool_call_indices.push(None);
                         }
                         yield StreamChunk::ThinkingDelta(thinking_delta.clone());
                     }
@@ -752,7 +743,6 @@ pub struct StreamOptions {
 
 // Request/Response types
 #[derive(Debug, Serialize)]
-#[allow(dead_code)]
 struct OpenAIRequest {
     model: String,
     messages: Vec<OpenAIMessage>,
@@ -795,7 +785,7 @@ struct OpenAIRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct OpenAIResponse {
     id: String,
     object: String,
@@ -807,7 +797,7 @@ struct OpenAIResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct OpenAIChoice {
     index: u32,
     message: OpenAIResponseMessage,
@@ -815,7 +805,7 @@ struct OpenAIChoice {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct OpenAIResponseMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -827,7 +817,7 @@ struct OpenAIResponseMessage {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct OpenAIUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
@@ -836,19 +826,19 @@ struct OpenAIUsage {
 
 #[derive(Debug, Deserialize)]
 struct OpenAIStreamChunk {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     id: String,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     object: String,
     choices: Vec<OpenAIStreamChoice>,
 }
 
 #[derive(Debug, Deserialize)]
 struct OpenAIStreamChoice {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     index: u32,
     delta: OpenAIStreamDelta,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     finish_reason: Option<String>,
 }
 
@@ -1061,7 +1051,7 @@ mod tests {
                         command: "ls -la".to_string(),
                         stdout: "total 24\ndrwxr-xr-x  3 user  staff   96 Jan  1 12:00 ."
                             .to_string(),
-                        stderr: "".to_string(),
+                        stderr: String::new(),
                         exit_code: 0,
                     },
                 ],

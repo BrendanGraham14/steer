@@ -1,4 +1,7 @@
-use super::{ToolFormatter, helpers::*};
+use super::{
+    ToolFormatter,
+    helpers::{separator_line, tool_error_user_message, truncate_lines},
+};
 use crate::tui::theme::{Component, Theme};
 use ratatui::{
     style::{Modifier, Style},
@@ -102,7 +105,14 @@ impl ToolFormatter for ViewFormatter {
         if let Some(result) = result {
             match result {
                 ToolResult::FileContent(file_content) => {
-                    if !file_content.content.is_empty() {
+                    if file_content.content.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            "(Empty file)",
+                            theme
+                                .style(Component::DimText)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                    } else {
                         lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
 
                         let (output_lines, truncated) =
@@ -131,13 +141,6 @@ impl ToolFormatter for ViewFormatter {
                                     .add_modifier(Modifier::ITALIC),
                             )));
                         }
-                    } else {
-                        lines.push(Line::from(Span::styled(
-                            "(Empty file)",
-                            theme
-                                .style(Component::DimText)
-                                .add_modifier(Modifier::ITALIC),
-                        )));
                     }
                 }
                 ToolResult::Error(error) => {

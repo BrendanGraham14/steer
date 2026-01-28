@@ -1,4 +1,4 @@
-use super::{ToolFormatter, helpers::*};
+use super::{ToolFormatter, helpers::tool_error_user_message};
 use crate::tui::theme::{Component, Theme};
 use ratatui::{
     style::{Color, Modifier, Style},

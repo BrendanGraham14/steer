@@ -156,17 +156,17 @@ impl ChatRenderable for MessageWidget {
                                 for wrapped_line in
                                     textwrap::wrap(line, max_width.saturating_sub(prompt.len()))
                                 {
-                                    if !wrote_command {
+                                    if wrote_command {
+                                        lines.push(Line::from(vec![
+                                            Span::styled(indent, ratatui::style::Style::default()),
+                                            Span::styled(wrapped_line.to_string(), command_style),
+                                        ]));
+                                    } else {
                                         lines.push(Line::from(vec![
                                             Span::styled(prompt, prompt_style),
                                             Span::styled(wrapped_line.to_string(), command_style),
                                         ]));
                                         wrote_command = true;
-                                    } else {
-                                        lines.push(Line::from(vec![
-                                            Span::styled(indent, ratatui::style::Style::default()),
-                                            Span::styled(wrapped_line.to_string(), command_style),
-                                        ]));
                                     }
                                 }
                             }
@@ -406,7 +406,7 @@ mod tests {
                 content: vec![UserContent::CommandExecution {
                     command: "ls -la".to_string(),
                     stdout: "file1.txt\nfile2.txt".to_string(),
-                    stderr: "".to_string(),
+                    stderr: String::new(),
                     exit_code: 0,
                 }],
             },

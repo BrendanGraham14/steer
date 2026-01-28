@@ -40,7 +40,7 @@ impl FileListingUtils {
                 if let Some(path_str) = relative_path.to_str() {
                     if !path_str.is_empty() {
                         // Add trailing slash for directories
-                        if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                        if entry.file_type().is_some_and(|ft| ft.is_dir()) {
                             files.push(format!("{path_str}/"));
                         } else {
                             files.push(path_str.to_string());

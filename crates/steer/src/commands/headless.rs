@@ -46,17 +46,14 @@ impl Command for HeadlessCommand {
             crate::create_runtime_with_catalogs(model_to_use.clone(), normalized_catalogs.clone())
                 .await?;
 
-        let result = match &self.session {
-            Some(session_id_str) => {
-                let session_id = SessionId::parse(session_id_str)
-                    .ok_or_else(|| eyre!("Invalid session ID: {}", session_id_str))?;
+        let result = if let Some(session_id_str) = &self.session {
+            let session_id = SessionId::parse(session_id_str)
+                .ok_or_else(|| eyre!("Invalid session ID: {}", session_id_str))?;
 
-                crate::run_once_in_session(&runtime.handle, session_id, message, model).await?
-            }
-            None => {
-                let session_config = self.build_session_config(model.clone()).await?;
-                crate::run_once_new_session(&runtime.handle, session_config, message, model).await?
-            }
+            crate::run_once_in_session(&runtime.handle, session_id, message, model).await?
+        } else {
+            let session_config = self.build_session_config(model.clone()).await?;
+            crate::run_once_new_session(&runtime.handle, session_config, message, model).await?
         };
 
         runtime.shutdown().await;
@@ -110,13 +107,14 @@ impl HeadlessCommand {
         self.catalogs
             .iter()
             .map(|p| {
-                if !p.exists() {
+                if p.exists() {
+                    p.canonicalize().map_or_else(
+                        |_| p.to_string_lossy().to_string(),
+                        |c| c.to_string_lossy().to_string(),
+                    )
+                } else {
                     tracing::warn!("Catalog path does not exist: {}", p.display());
                     p.to_string_lossy().to_string()
-                } else {
-                    p.canonicalize()
-                        .map(|c| c.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| p.to_string_lossy().to_string())
                 }
             })
             .collect()
@@ -156,7 +154,7 @@ impl HeadlessCommand {
                 DISPATCH_AGENT_TOOL_NAME,
             ]
             .iter()
-            .map(|s| s.to_string())
+            .map(|s| (*s).to_string())
             .collect::<std::collections::HashSet<String>>();
             ApprovalRulesOverrides {
                 tools: all_tools,

@@ -1,8 +1,6 @@
+use crate::agents::default_agent_spec_id;
 use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
-use crate::app::domain::action::{
-    Action, ApprovalDecision, ApprovalMemory, McpServerState,
-};
-use crate::app::domain::types::NonEmptyString;
+use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory, McpServerState};
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{
     CancellationInfo, QueuedWorkItemSnapshot, QueuedWorkKind, SessionEvent,
@@ -10,8 +8,10 @@ use crate::app::domain::event::{
 use crate::app::domain::state::{
     AppState, OperationKind, PendingApproval, QueuedApproval, QueuedWorkItem,
 };
-use crate::agents::default_agent_spec_id;
-use crate::primary_agents::{default_primary_agent_id, primary_agent_spec, resolve_effective_config};
+use crate::app::domain::types::NonEmptyString;
+use crate::primary_agents::{
+    default_primary_agent_id, primary_agent_spec, resolve_effective_config,
+};
 use crate::session::state::{BackendConfig, ToolDecision};
 use crate::tools::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams, DispatchAgentTarget};
 use serde_json::Value;
@@ -153,11 +153,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
         } => {
             // When connected, merge MCP tools into state.tools
             if let McpServerState::Connected { tools } = &new_state {
-                let tools = state
-                    .session_config
-                    .as_ref()
-                    .map(|config| config.filter_tools_by_visibility(tools.clone()))
-                    .unwrap_or_else(|| tools.clone());
+                let tools = state.session_config.as_ref().map_or_else(
+                    || tools.clone(),
+                    |config| config.filter_tools_by_visibility(tools.clone()),
+                );
 
                 // Add MCP tools that aren't already present (by name)
                 for tool in tools {
@@ -437,7 +436,7 @@ fn handle_tool_approval_requested(
                 session_id,
                 tool_call,
                 error,
-                format!("Tool '{}' denied by policy", tool_name),
+                format!("Tool '{tool_name}' denied by policy"),
                 "denied",
                 true,
             ));
@@ -511,9 +510,7 @@ fn validate_against_json_schema(
     params: &Value,
 ) -> Result<(), ToolError> {
     let validator = jsonschema::JSONSchema::compile(schema).map_err(|e| {
-        ToolError::InternalError(format!(
-            "Invalid schema for tool '{tool_name}': {e}"
-        ))
+        ToolError::InternalError(format!("Invalid schema for tool '{tool_name}': {e}"))
     })?;
 
     if let Err(errors) = validator.validate(params) {
@@ -615,8 +612,7 @@ fn fail_tool_call_without_execution(
     let all_tools_complete = state
         .current_operation
         .as_ref()
-        .map(|op| op.pending_tool_calls.is_empty())
-        .unwrap_or(true);
+        .is_none_or(|op| op.pending_tool_calls.is_empty());
     let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
 
     if all_tools_complete && no_pending_approvals {
@@ -714,7 +710,7 @@ fn handle_tool_approval_decided(
             session_id,
             pending.tool_call,
             error,
-            format!("Tool '{}' denied by user", tool_name),
+            format!("Tool '{tool_name}' denied by user"),
             "denied",
             false,
         ));
@@ -760,7 +756,7 @@ fn process_next_queued_approval(
                     session_id,
                     queued.tool_call,
                     error,
-                    format!("Tool '{}' denied by policy", tool_name),
+                    format!("Tool '{tool_name}' denied by policy"),
                     "denied",
                     false,
                 ));
@@ -795,8 +791,7 @@ fn process_next_queued_approval(
     let all_tools_complete = state
         .current_operation
         .as_ref()
-        .map(|op| op.pending_tool_calls.is_empty())
-        .unwrap_or(true);
+        .is_none_or(|op| op.pending_tool_calls.is_empty());
     let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
 
     if all_tools_complete && no_pending_approvals {
@@ -842,8 +837,7 @@ fn get_tool_decision(state: &AppState, tool_call: &steer_tools::ToolCall) -> Too
                     let agent_id = agent
                         .as_deref()
                         .filter(|value| !value.trim().is_empty())
-                        .map(str::to_string)
-                        .unwrap_or_else(|| default_agent_spec_id().to_string());
+                        .map_or_else(|| default_agent_spec_id().to_string(), str::to_string);
                     if policy.is_dispatch_agent_pattern_preapproved(&agent_id) {
                         return ToolDecision::Allow;
                     }
@@ -865,13 +859,12 @@ fn get_tool_decision(state: &AppState, tool_call: &steer_tools::ToolCall) -> Too
     state
         .session_config
         .as_ref()
-        .map(|config| {
+        .map_or(ToolDecision::Ask, |config| {
             config
                 .tool_config
                 .approval_policy
                 .tool_decision(&tool_call.name)
         })
-        .unwrap_or(ToolDecision::Ask)
 }
 
 fn handle_tool_execution_started(
@@ -1072,8 +1065,7 @@ fn handle_tool_result(
     let all_tools_complete = state
         .current_operation
         .as_ref()
-        .map(|op| op.pending_tool_calls.is_empty())
-        .unwrap_or(true);
+        .is_none_or(|op| op.pending_tool_calls.is_empty());
     let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
 
     if all_tools_complete && no_pending_approvals {
@@ -1457,7 +1449,7 @@ fn handle_cancel(
                 &pending.tool_call.id,
                 &tool_name,
                 ToolError::Cancelled(tool_name.clone()),
-                format!("Tool '{}' cancelled", tool_name),
+                format!("Tool '{tool_name}' cancelled"),
                 "cancelled",
             ));
         }
@@ -1470,7 +1462,7 @@ fn handle_cancel(
                 &queued.tool_call.id,
                 &tool_name,
                 ToolError::Cancelled(tool_name.clone()),
-                format!("Tool '{}' cancelled", tool_name),
+                format!("Tool '{tool_name}' cancelled"),
                 "cancelled",
             ));
         }
@@ -1483,7 +1475,7 @@ fn handle_cancel(
             let event_error = if tool_name == tool_call_id.as_str() {
                 format!("Tool call '{tool_call_id}' cancelled")
             } else {
-                format!("Tool '{}' cancelled", tool_name)
+                format!("Tool '{tool_name}' cancelled")
             };
             effects.extend(emit_tool_failure_message(
                 state,
@@ -1656,8 +1648,13 @@ fn mcp_backend_diff_effects(
 
 fn collect_mcp_backends(
     config: &crate::session::state::SessionConfig,
-) -> std::collections::HashMap<String, (crate::tools::McpTransport, crate::session::state::ToolFilter)>
-{
+) -> std::collections::HashMap<
+    String,
+    (
+        crate::tools::McpTransport,
+        crate::session::state::ToolFilter,
+    ),
+> {
     let mut map = std::collections::HashMap::new();
 
     for backend_config in &config.tool_config.backends {
@@ -1667,7 +1664,10 @@ fn collect_mcp_backends(
             tool_filter,
         } = backend_config;
 
-        map.insert(server_name.clone(), (transport.clone(), tool_filter.clone()));
+        map.insert(
+            server_name.clone(),
+            (transport.clone(), tool_filter.clone()),
+        );
     }
 
     map
@@ -1746,10 +1746,9 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
                                 text,
                                 op_id: item.op_id,
                                 message_id: item.message_id.clone(),
-                                model: item
-                                    .model
-                                    .clone()
-                                    .unwrap_or_else(crate::config::model::builtin::claude_sonnet_4_5),
+                                model: item.model.clone().unwrap_or_else(
+                                    crate::config::model::builtin::claude_sonnet_4_5,
+                                ),
                                 queued_at: item.queued_at,
                             },
                         ))
@@ -1769,10 +1768,9 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
                                 text,
                                 op_id: item.op_id,
                                 message_id: item.message_id.clone(),
-                                model: item
-                                    .model
-                                    .clone()
-                                    .unwrap_or_else(crate::config::model::builtin::claude_sonnet_4_5),
+                                model: item.model.clone().unwrap_or_else(
+                                    crate::config::model::builtin::claude_sonnet_4_5,
+                                ),
                                 queued_at: item.queued_at,
                             },
                         ))
@@ -1838,17 +1836,16 @@ fn handle_compaction_complete(
         timestamp,
     );
 
-    let model = match state.operation_models.get(&op_id).cloned() {
-        Some(model) => model,
-        None => {
-            state.complete_operation(op_id);
-            return vec![Effect::EmitEvent {
-                session_id,
-                event: SessionEvent::Error {
-                    message: format!("Missing model for compaction operation {op_id}"),
-                },
-            }];
-        }
+    let model = if let Some(model) = state.operation_models.get(&op_id).cloned() {
+        model
+    } else {
+        state.complete_operation(op_id);
+        return vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: format!("Missing model for compaction operation {op_id}"),
+            },
+        }];
     };
 
     state.complete_operation(op_id);
@@ -1958,8 +1955,8 @@ mod tests {
         ApprovalRules, ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides,
         ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolVisibility, UnapprovedBehavior,
     };
-    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
+    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use schemars::schema_for;
     use serde_json::json;
     use std::collections::HashSet;
@@ -2048,9 +2045,11 @@ mod tests {
                 ..
             }
         )));
-        assert!(effects
-            .iter()
-            .any(|e| matches!(e, Effect::ReloadToolSchemas { .. })));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ReloadToolSchemas { .. }))
+        );
     }
 
     #[test]
@@ -2361,7 +2360,9 @@ mod tests {
         match &state.message_graph.messages[0].data {
             MessageData::Tool { result, .. } => match result {
                 ToolResult::Error(error) => {
-                    assert!(matches!(error, ToolError::DeniedByPolicy(name) if name == "test_tool"))
+                    assert!(
+                        matches!(error, ToolError::DeniedByPolicy(name) if name == "test_tool")
+                    );
                 }
                 _ => panic!("expected denied tool error"),
             },
@@ -2431,7 +2432,7 @@ mod tests {
         match &state.message_graph.messages[0].data {
             MessageData::Tool { result, .. } => match result {
                 ToolResult::Error(error) => {
-                    assert!(matches!(error, ToolError::DeniedByUser(name) if name == "test_tool"))
+                    assert!(matches!(error, ToolError::DeniedByUser(name) if name == "test_tool"));
                 }
                 _ => panic!("expected denied tool error"),
             },
@@ -2498,7 +2499,7 @@ mod tests {
         match &tool_message.data {
             MessageData::Tool { result, .. } => match result {
                 ToolResult::Error(error) => {
-                    assert!(matches!(error, ToolError::Cancelled(name) if name == "test_tool"))
+                    assert!(matches!(error, ToolError::Cancelled(name) if name == "test_tool"));
                 }
                 _ => panic!("expected cancelled tool error"),
             },
@@ -2578,7 +2579,7 @@ mod tests {
         match &state.message_graph.messages[0].data {
             MessageData::Tool { result, .. } => match result {
                 ToolResult::Error(error) => {
-                    assert!(matches!(error, ToolError::InvalidParams { .. }))
+                    assert!(matches!(error, ToolError::InvalidParams { .. }));
                 }
                 _ => panic!("expected invalid params tool error"),
             },
@@ -2697,7 +2698,7 @@ mod tests {
         match &state.message_graph.messages[0].data {
             MessageData::Tool { result, .. } => match result {
                 ToolResult::Error(error) => {
-                    assert!(matches!(error, ToolError::InvalidParams { .. }))
+                    assert!(matches!(error, ToolError::InvalidParams { .. }));
                 }
                 _ => panic!("expected invalid params tool error"),
             },
@@ -2844,10 +2845,12 @@ mod tests {
             },
         );
 
-        assert!(state
-            .current_operation
-            .as_ref()
-            .is_some_and(|op| op.op_id == op_b));
+        assert!(
+            state
+                .current_operation
+                .as_ref()
+                .is_some_and(|op| op.op_id == op_b)
+        );
         assert!(state.operation_models.contains_key(&op_b));
         assert!(!state.operation_models.contains_key(&op_a));
 

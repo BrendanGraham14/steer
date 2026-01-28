@@ -37,10 +37,10 @@ impl EditSelectionOverlayState {
 
     pub fn populate(&mut self, messages: Vec<(String, String)>) {
         self.messages = messages;
-        if !self.messages.is_empty() {
-            self.selected_index = self.messages.len() - 1;
-        } else {
+        if self.messages.is_empty() {
             self.selected_index = 0;
+        } else {
+            self.selected_index = self.messages.len() - 1;
         }
     }
 

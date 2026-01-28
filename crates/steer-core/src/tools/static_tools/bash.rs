@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -43,7 +42,7 @@ impl StaticTool for BashTool {
         let working_directory = ctx.services.workspace.working_directory().to_path_buf();
 
         tokio::select! {
-            _ = ctx.cancellation_token.cancelled() => Err(StaticToolError::Cancelled),
+            () = ctx.cancellation_token.cancelled() => Err(StaticToolError::Cancelled),
             res = timeout(timeout_duration, run_command(&params.command, &working_directory, ctx.cancellation_token.clone())) => {
                 match res {
                     Ok(output) => output,
@@ -95,7 +94,7 @@ async fn run_command(
     });
 
     let result = tokio::select! {
-        _ = cancellation_token.cancelled() => {
+        () = cancellation_token.cancelled() => {
             let _ = child.kill().await;
             stdout_handle.abort();
             stderr_handle.abort();
@@ -145,7 +144,7 @@ async fn run_command(
     result
 }
 
-static BANNED_COMMAND_REGEXES: Lazy<Vec<Regex>> = Lazy::new(|| {
+static BANNED_COMMAND_REGEXES: std::sync::LazyLock<Vec<Regex>> = std::sync::LazyLock::new(|| {
     let banned_commands = [
         "curl", "wget", "nc", "telnet", "ssh", "scp", "ftp", "sftp", "lynx", "w3m", "links",
         "elinks", "httpie", "xh", "chrome", "firefox", "safari", "edge", "opera", "chromium",

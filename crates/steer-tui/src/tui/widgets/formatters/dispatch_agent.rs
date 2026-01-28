@@ -1,4 +1,7 @@
-use super::{ToolFormatter, helpers::*};
+use super::{
+    ToolFormatter,
+    helpers::{separator_line, tool_error_user_message, truncate_lines},
+};
 use crate::tui::theme::Theme;
 use ratatui::{
     style::Style,
@@ -40,8 +43,7 @@ impl ToolFormatter for DispatchAgentFormatter {
                 let agent_id = agent
                     .as_deref()
                     .filter(|value| !value.trim().is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| default_agent_spec_id().to_string());
+                    .map_or_else(|| default_agent_spec_id().to_string(), str::to_string);
                 let workspace_summary = match workspace {
                     WorkspaceTarget::Current => "current".to_string(),
                     WorkspaceTarget::New { name } => format!("{name} (new)"),
@@ -74,10 +76,10 @@ impl ToolFormatter for DispatchAgentFormatter {
         lines.push(Line::from(vec![
             Span::styled(format!("agent={agent_id} "), theme.subtle_text()),
             Span::styled(format!("workspace={workspace_summary} "), theme.subtle_text()),
-            session_label
-                .as_ref()
-                .map(|id| Span::styled(format!("session={id} "), theme.subtle_text()))
-                .unwrap_or_else(|| Span::raw("")),
+            session_label.as_ref().map_or_else(
+                || Span::raw(""),
+                |id| Span::styled(format!("session={id} "), theme.subtle_text()),
+            ),
             Span::styled(format!("task='{preview}' "), Style::default()),
             Span::styled(format!("({info})"), theme.subtle_text()),
         ]));
@@ -106,8 +108,7 @@ impl ToolFormatter for DispatchAgentFormatter {
                 let agent_id = agent
                     .as_deref()
                     .filter(|value| !value.trim().is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| default_agent_spec_id().to_string());
+                    .map_or_else(|| default_agent_spec_id().to_string(), str::to_string);
                 let workspace_label = match workspace {
                     WorkspaceTarget::Current => "current".to_string(),
                     WorkspaceTarget::New { name } => format!("{name} (new)"),
@@ -246,8 +247,7 @@ impl ToolFormatter for DispatchAgentFormatter {
                 let agent_id = agent
                     .as_deref()
                     .filter(|value| !value.trim().is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| default_agent_spec_id().to_string());
+                    .map_or_else(|| default_agent_spec_id().to_string(), str::to_string);
                 let workspace_label = match workspace {
                     WorkspaceTarget::Current => "current".to_string(),
                     WorkspaceTarget::New { name } => format!("{name} (new)"),

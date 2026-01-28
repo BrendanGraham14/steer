@@ -152,7 +152,7 @@ impl FuzzyFinder {
                 // Cancel and close
                 Some(FuzzyFinderResult::Close)
             }
-            (KeyCode::Enter, _) | (KeyCode::Tab, _) => {
+            (KeyCode::Enter | KeyCode::Tab, _) => {
                 // Select current item if available
                 if !self.results.is_empty() && self.selected < self.results.len() {
                     let selected_item = self.results[self.selected].clone();

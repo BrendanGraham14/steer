@@ -49,7 +49,10 @@ pub struct EditParams {
 }
 
 pub mod multi_edit {
-    use super::*;
+    use super::{
+        Deserialize, Error, JsonSchema, MultiEditResult, Serialize, SingleEditOperation,
+        ToolExecutionError, ToolSpec, WorkspaceOpError,
+    };
 
     pub const MULTI_EDIT_TOOL_NAME: &str = "multi_edit";
 

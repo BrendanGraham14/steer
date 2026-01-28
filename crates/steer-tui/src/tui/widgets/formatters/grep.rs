@@ -1,4 +1,7 @@
-use super::{ToolFormatter, helpers::*};
+use super::{
+    ToolFormatter,
+    helpers::{separator_line, tool_error_user_message, truncate_middle},
+};
 use crate::tui::theme::{Component, Theme};
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -121,7 +124,14 @@ impl ToolFormatter for GrepFormatter {
         if let Some(result) = result {
             match result {
                 ToolResult::Search(search_result) => {
-                    if !search_result.matches.is_empty() {
+                    if search_result.matches.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            "No matches found",
+                            theme
+                                .style(Component::DimText)
+                                .add_modifier(Modifier::ITALIC),
+                        )));
+                    } else {
                         lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
 
                         const MAX_MATCHES: usize = 15;
@@ -161,13 +171,6 @@ impl ToolFormatter for GrepFormatter {
                                     .add_modifier(Modifier::ITALIC),
                             )));
                         }
-                    } else {
-                        lines.push(Line::from(Span::styled(
-                            "No matches found",
-                            theme
-                                .style(Component::DimText)
-                                .add_modifier(Modifier::ITALIC),
-                        )));
                     }
                 }
                 ToolResult::Error(error) => {
