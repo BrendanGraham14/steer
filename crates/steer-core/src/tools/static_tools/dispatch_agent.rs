@@ -542,8 +542,8 @@ mod tests {
     use crate::config::model::builtin;
     use crate::model_registry::ModelRegistry;
     use crate::session::state::{
-        ApprovalRules, SessionConfig, SessionToolConfig, ToolApprovalPolicy, ToolFilter,
-        ToolVisibility, UnapprovedBehavior,
+        ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides, ToolApprovalPolicyOverrides,
+        ToolFilter, ToolVisibility, UnapprovedBehavior,
     };
     use crate::tools::services::{AgentSpawner, SubAgentError, SubAgentResult, ToolServices};
     use crate::tools::McpTransport;
@@ -1268,21 +1268,21 @@ mod tests {
             Arc::new(ToolCallThenTextProvider::new(tool_call, "done")),
         );
 
-        let mut tool_config = SessionToolConfig::read_only();
-        tool_config.visibility = ToolVisibility::Whitelist(HashSet::from([
-            VIEW_TOOL_NAME.to_string(),
-        ]));
-        tool_config.approval_policy = ToolApprovalPolicy {
-            default_behavior: UnapprovedBehavior::Deny,
-            preapproved: ApprovalRules {
-                tools: HashSet::from([VIEW_TOOL_NAME.to_string()]),
-                per_tool: HashMap::new(),
+        let mut session_config = SessionConfig::read_only(model);
+        session_config.parent_session_id = Some(parent_session_id);
+        session_config.policy_overrides = SessionPolicyOverrides {
+            default_model: None,
+            tool_visibility: Some(ToolVisibility::Whitelist(HashSet::from([
+                VIEW_TOOL_NAME.to_string(),
+            ]))),
+            approval_policy: ToolApprovalPolicyOverrides {
+                default_behavior: Some(UnapprovedBehavior::Deny),
+                preapproved: ApprovalRulesOverrides {
+                    tools: HashSet::from([VIEW_TOOL_NAME.to_string()]),
+                    per_tool: HashMap::new(),
+                },
             },
         };
-
-        let mut session_config = SessionConfig::read_only(model);
-        session_config.tool_config = tool_config;
-        session_config.parent_session_id = Some(parent_session_id);
 
         event_store.create_session(session_id).await.unwrap();
         event_store

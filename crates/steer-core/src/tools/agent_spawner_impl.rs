@@ -173,6 +173,7 @@ mod tests {
     use crate::test_utils::test_llm_config_provider;
     use crate::tools::services::AgentSpawner;
     use crate::tools::services::SubAgentConfig;
+    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use crate::workspace::WorkspaceConfig;
     use std::collections::HashSet;
     use std::sync::Arc;
@@ -378,9 +379,14 @@ mod tests {
             "expected AssistantMessageAdded event"
         );
 
-        let expected: HashSet<String> = allowed_tools.into_iter().collect();
-        assert_eq!(seen_visibility, Some(expected.clone()));
-        assert_eq!(seen_preapproved, Some(expected));
+        let expected_visibility: HashSet<String> = allowed_tools.into_iter().collect();
+        let expected_preapproved: HashSet<String> = READ_ONLY_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .chain(expected_visibility.iter().cloned())
+            .collect();
+        assert_eq!(seen_visibility, Some(expected_visibility));
+        assert_eq!(seen_preapproved, Some(expected_preapproved));
 
         let captured_system = system_capture
             .lock()
