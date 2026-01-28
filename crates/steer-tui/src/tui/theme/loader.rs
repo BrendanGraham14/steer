@@ -268,6 +268,22 @@ text = { fg = "fg" }
     }
 
     #[test]
+    fn test_bundled_themes_load_via_loader() {
+        let loader = ThemeLoader::new();
+        let mut errors = Vec::new();
+
+        for (theme_name, _) in BUNDLED_THEMES {
+            if let Err(e) = loader.load_theme(theme_name) {
+                errors.push(format!("Theme '{theme_name}' failed to load: {e}"));
+            }
+        }
+
+        if !errors.is_empty() {
+            panic!("Bundled theme loading errors:\n\n{}", errors.join("\n\n"));
+        }
+    }
+
+    #[test]
     fn test_list_themes() {
         let temp_dir = TempDir::new().unwrap();
         let theme1_path = temp_dir.path().join("theme1.toml");

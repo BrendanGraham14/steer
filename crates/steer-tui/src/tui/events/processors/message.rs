@@ -374,6 +374,8 @@ mod tests {
         current_tool_approval: Option<PendingToolApproval>,
         current_model: ModelId,
         messages_updated: bool,
+        queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
+        queued_count: usize,
         _workspace_root: tempfile::TempDir,
     }
 
@@ -393,6 +395,8 @@ mod tests {
         let current_tool_approval = None;
         let current_model = builtin::claude_sonnet_4_5();
         let messages_updated = false;
+        let queued_head = None;
+        let queued_count = 0;
 
         TestContext {
             chat_store,
@@ -405,6 +409,8 @@ mod tests {
             current_tool_approval,
             current_model,
             messages_updated,
+            queued_head,
+            queued_count,
             _workspace_root: workspace_root,
         }
     }
@@ -481,6 +487,8 @@ mod tests {
             current_model: &mut ctx.current_model,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut in_flight_operations,
+            queued_head: &mut ctx.queued_head,
+            queued_count: &mut ctx.queued_count,
         };
 
         // Process the Assistant message

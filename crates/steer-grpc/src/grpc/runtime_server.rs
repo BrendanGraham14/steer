@@ -601,6 +601,32 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                 chunk: Some(get_session_response::Chunk::Footer(SessionStateFooter {
                     approved_tools: state.approved_tools.into_iter().collect(),
                     metadata: std::collections::HashMap::new(),
+                    queued_head: state
+                        .queued_work
+                        .front()
+                        .and_then(|item| match item {
+                            steer_core::app::domain::state::QueuedWorkItem::UserMessage(message) => {
+                                Some(proto::QueuedWorkItem {
+                                    kind: proto::queued_work_item::Kind::UserMessage as i32,
+                                    content: message.text.as_str().to_string(),
+                                    model: Some(model_to_proto(message.model.clone())),
+                                    queued_at: message.queued_at,
+                                    op_id: message.op_id.to_string(),
+                                    message_id: message.message_id.to_string(),
+                                })
+                            }
+                            steer_core::app::domain::state::QueuedWorkItem::DirectBash(command) => {
+                                Some(proto::QueuedWorkItem {
+                                    kind: proto::queued_work_item::Kind::DirectBash as i32,
+                                    content: command.command.clone(),
+                                    model: None,
+                                    queued_at: command.queued_at,
+                                    op_id: command.op_id.to_string(),
+                                    message_id: command.message_id.to_string(),
+                                })
+                            }
+                        }),
+                    queued_count: state.queued_work.len() as u32,
                 })),
             };
         };
@@ -741,6 +767,21 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .map_err(|e| Status::internal(format!("Failed to edit message: {e}")))?;
 
         Ok(Response::new(EditMessageResponse {}))
+    }
+
+    async fn dequeue_queued_item(
+        &self,
+        request: Request<DequeueQueuedItemRequest>,
+    ) -> Result<Response<DequeueQueuedItemResponse>, Status> {
+        let req = request.into_inner();
+        let session_id = Self::parse_session_id(&req.session_id)?;
+
+        self.runtime
+            .submit_dequeue_queued_item(session_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to dequeue queued item: {e}")))?;
+
+        Ok(Response::new(DequeueQueuedItemResponse {}))
     }
 
     async fn approve_tool(

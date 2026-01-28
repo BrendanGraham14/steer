@@ -2051,6 +2051,15 @@ pub(crate) fn session_event_to_proto(
                 state: Some(mcp_server_state_to_proto(&state)),
             }),
         ),
+        SessionEvent::QueueUpdated { queue } => {
+            let head = queue.first().and_then(queued_work_item_to_proto);
+            Some(proto::session_event::Event::QueueUpdated(
+                proto::QueueUpdatedEvent {
+                    head,
+                    count: queue.len() as u32,
+                },
+            ))
+        }
     };
 
     Ok(proto::SessionEvent {
@@ -2407,6 +2416,56 @@ fn parse_request_id(s: &str) -> Result<crate::client_api::RequestId, ConversionE
         })
 }
 
+fn queued_work_item_to_proto(
+    item: &steer_core::app::domain::event::QueuedWorkItemSnapshot,
+) -> Option<proto::QueuedWorkItem> {
+    let kind = match item.kind.as_ref()? {
+        steer_core::app::domain::event::QueuedWorkKind::UserMessage => {
+            proto::queued_work_item::Kind::UserMessage
+        }
+        steer_core::app::domain::event::QueuedWorkKind::DirectBash => {
+            proto::queued_work_item::Kind::DirectBash
+        }
+    };
+
+    Some(proto::QueuedWorkItem {
+        kind: kind as i32,
+        content: item.content.clone(),
+        model: item.model.clone().map(model_to_proto),
+        queued_at: item.queued_at,
+        op_id: item.op_id.to_string(),
+        message_id: item.message_id.to_string(),
+    })
+}
+
+fn proto_to_queued_work_item(
+    item: proto::QueuedWorkItem,
+) -> Result<crate::client_api::QueuedWorkItem, ConversionError> {
+    let kind = match proto::queued_work_item::Kind::try_from(item.kind) {
+        Ok(proto::queued_work_item::Kind::UserMessage) => {
+            crate::client_api::QueuedWorkKind::UserMessage
+        }
+        Ok(proto::queued_work_item::Kind::DirectBash) => {
+            crate::client_api::QueuedWorkKind::DirectBash
+        }
+        _ => crate::client_api::QueuedWorkKind::Unknown,
+    };
+
+    let model = item.model.map(|spec| proto_to_model(&spec)).transpose()?;
+
+    let op_id = parse_op_id(&item.op_id)?;
+    let message_id = crate::client_api::MessageId::from_string(item.message_id);
+
+    Ok(crate::client_api::QueuedWorkItem {
+        kind,
+        content: item.content,
+        model,
+        queued_at: item.queued_at,
+        op_id,
+        message_id,
+    })
+}
+
 pub(crate) fn proto_to_client_event(
     server_event: proto::SessionEvent,
 ) -> Result<Option<crate::client_api::ClientEvent>, ConversionError> {
@@ -2594,6 +2653,13 @@ pub(crate) fn proto_to_client_event(
             ClientEvent::McpServerStateChanged {
                 server_name: e.server_name,
                 state: mcp_state,
+            }
+        }
+        proto::session_event::Event::QueueUpdated(e) => {
+            let head = e.head.map(proto_to_queued_work_item).transpose()?;
+            ClientEvent::QueueUpdated {
+                head,
+                count: e.count as usize,
             }
         }
     };

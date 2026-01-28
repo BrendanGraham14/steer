@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::tui::NoticeLevel;
 use crate::tui::Tui;
 use crate::tui::{InputMode, VimOperator};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -431,6 +432,26 @@ impl Tui {
                     self.input_panel_state
                         .textarea
                         .move_cursor(CursorMove::Back);
+                }
+            }
+
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => {
+                if let Some(head) = &self.queued_head {
+                    if let Err(e) = self.client.dequeue_queued_item().await {
+                        self.push_notice(
+                            NoticeLevel::Error,
+                            format!("Cannot remove queued item: {e}"),
+                        );
+                        return Ok(false);
+                    }
+
+                    let content = match head.kind {
+                        steer_grpc::client_api::QueuedWorkKind::DirectBash => {
+                            format!("!{}", head.content)
+                        }
+                        _ => head.content.clone(),
+                    };
+                    self.input_panel_state.replace_content(&content, None);
                 }
             }
 

@@ -105,6 +105,14 @@ pub enum Action {
         timestamp: u64,
     },
 
+    DequeueQueuedItem {
+        session_id: SessionId,
+    },
+
+    DrainQueuedWork {
+        session_id: SessionId,
+    },
+
     RequestCompaction {
         session_id: SessionId,
         op_id: OpId,
@@ -188,6 +196,8 @@ impl Action {
             | Action::ModelResponseError { session_id, .. }
             | Action::Cancel { session_id, .. }
             | Action::DirectBashCommand { session_id, .. }
+            | Action::DequeueQueuedItem { session_id, .. }
+            | Action::DrainQueuedWork { session_id, .. }
             | Action::RequestCompaction { session_id, .. }
             | Action::Hydrate { session_id, .. }
             | Action::WorkspaceFilesListed { session_id, .. }

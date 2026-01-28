@@ -119,6 +119,11 @@ placeholder_text = { fg = "storm_dark3", italic = true }
 # Model info
 model_info = { fg = "storm_purple" }
 
+# Queue preview
+queued_message_border = { fg = "storm_dark5" }
+queued_message_text = { fg = "storm_fg" }
+queued_message_label = { fg = "storm_purple", bold = true }
+
 # Notices
 notice_info = { fg = "storm_blue" }
 notice_warn = { fg = "storm_yellow" }

@@ -201,6 +201,11 @@ pub enum Component {
     // Model info
     ModelInfo,
 
+    // Queue preview
+    QueuedMessageBorder,
+    QueuedMessageText,
+    QueuedMessageLabel,
+
     // Notices
     NoticeInfo,
     NoticeWarn,

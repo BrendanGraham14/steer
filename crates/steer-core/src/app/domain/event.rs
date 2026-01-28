@@ -1,6 +1,8 @@
 use crate::app::conversation::Message;
 use crate::app::domain::action::{ApprovalDecision, ApprovalMemory, McpServerState};
-use crate::app::domain::types::{CompactionRecord, OpId, RequestId, SessionId, ToolCallId};
+use crate::app::domain::types::{
+    CompactionRecord, MessageId, OpId, RequestId, SessionId, ToolCallId,
+};
 use crate::config::model::ModelId;
 use crate::session::state::SessionConfig;
 use serde::{Deserialize, Serialize};
@@ -103,6 +105,10 @@ pub enum SessionEvent {
 
     WorkspaceChanged,
 
+    QueueUpdated {
+        queue: Vec<QueuedWorkItemSnapshot>,
+    },
+
     Error {
         message: String,
     },
@@ -124,6 +130,22 @@ pub enum CompactResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancellationInfo {
     pub pending_tool_calls: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueuedWorkItemSnapshot {
+    pub kind: Option<QueuedWorkKind>,
+    pub content: String,
+    pub queued_at: u64,
+    pub model: Option<ModelId>,
+    pub op_id: OpId,
+    pub message_id: MessageId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum QueuedWorkKind {
+    UserMessage,
+    DirectBash,
 }
 
 impl SessionEvent {

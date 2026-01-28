@@ -1,6 +1,8 @@
 use crate::app::conversation::MessageGraph;
 use crate::app::domain::action::McpServerState;
-use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
+use crate::app::domain::types::{
+    MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
+};
 use crate::app::SystemContext;
 use crate::prompts::system_prompt_for_model;
 use crate::config::model::ModelId;
@@ -27,6 +29,7 @@ pub struct AppState {
     pub static_bash_patterns: Vec<String>,
     pub pending_approval: Option<PendingApproval>,
     pub approval_queue: VecDeque<QueuedApproval>,
+    pub queued_work: VecDeque<QueuedWorkItem>,
 
     pub current_operation: Option<OperationState>,
 
@@ -53,6 +56,29 @@ pub struct PendingApproval {
 #[derive(Debug, Clone)]
 pub struct QueuedApproval {
     pub tool_call: ToolCall,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueuedUserMessage {
+    pub text: NonEmptyString,
+    pub op_id: OpId,
+    pub message_id: MessageId,
+    pub model: ModelId,
+    pub queued_at: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueuedBashCommand {
+    pub command: String,
+    pub op_id: OpId,
+    pub message_id: MessageId,
+    pub queued_at: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum QueuedWorkItem {
+    UserMessage(QueuedUserMessage),
+    DirectBash(QueuedBashCommand),
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +135,7 @@ impl AppState {
             static_bash_patterns: Vec::new(),
             pending_approval: None,
             approval_queue: VecDeque::new(),
+            queued_work: VecDeque::new(),
             current_operation: None,
             active_streams: HashMap::new(),
             workspace_files: Vec::new(),
@@ -175,6 +202,37 @@ impl AppState {
 
     pub fn has_pending_approval(&self) -> bool {
         self.pending_approval.is_some()
+    }
+
+    pub fn has_active_operation(&self) -> bool {
+        self.current_operation.is_some()
+    }
+
+    pub fn queue_user_message(&mut self, item: QueuedUserMessage) {
+        if let Some(QueuedWorkItem::UserMessage(tail)) = self.queued_work.back_mut() {
+            let combined = format!("{}\n\n{}", tail.text.as_str(), item.text.as_str());
+            if let Some(text) = NonEmptyString::new(combined) {
+                tail.text = text;
+                tail.op_id = item.op_id;
+                tail.message_id = item.message_id;
+                tail.model = item.model;
+                tail.queued_at = item.queued_at;
+                return;
+            }
+        }
+        self.queued_work.push_back(QueuedWorkItem::UserMessage(item));
+    }
+
+    pub fn queue_bash_command(&mut self, item: QueuedBashCommand) {
+        self.queued_work.push_back(QueuedWorkItem::DirectBash(item));
+    }
+
+    pub fn pop_next_queued_work(&mut self) -> Option<QueuedWorkItem> {
+        self.queued_work.pop_front()
+    }
+
+    pub fn queued_summary(&self) -> (Option<QueuedWorkItem>, usize) {
+        (self.queued_work.front().cloned(), self.queued_work.len())
     }
 
     pub fn start_operation(&mut self, op_id: OpId, kind: OperationKind) {

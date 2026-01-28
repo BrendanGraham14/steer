@@ -5,11 +5,13 @@
 mod approval_prompt;
 mod fuzzy_state;
 mod mode_title;
+mod queued_preview;
 mod textarea;
 
 pub use approval_prompt::ApprovalWidget;
 pub use fuzzy_state::FuzzyFinderHelper;
 pub use mode_title::ModeTitleWidget;
+pub use queued_preview::QueuedPreviewWidget;
 pub use textarea::TextAreaWidget;
 
 // Main input panel implementation
@@ -271,15 +273,20 @@ impl InputPanelState {
         current_approval: Option<&ToolCall>,
         width: u16,
         max_height: u16,
+        queued_preview: Option<&str>,
     ) -> u16 {
         if let Some(tool_call) = current_approval {
             // If there's a pending approval, use the approval height calculation
-            Self::required_height_for_approval(tool_call, width, max_height)
+            return Self::required_height_for_approval(tool_call, width, max_height);
+        }
+
+        let line_count = self.textarea.lines().len().max(1);
+        let base_height = (line_count + 3).min(max_height as usize) as u16;
+        if queued_preview.is_some() {
+            let queued_height = QueuedPreviewWidget::required_height(width, queued_preview);
+            base_height.saturating_add(queued_height).min(max_height)
         } else {
-            // Otherwise use the regular calculation based on textarea lines
-            let line_count = self.textarea.lines().len().max(1);
-            // line count + 2 for borders + 1 for padding
-            (line_count + 3).min(max_height as usize) as u16
+            base_height
         }
     }
 
@@ -306,6 +313,8 @@ pub struct InputPanel<'a> {
     pub spinner_state: usize,
     pub is_editing: bool,
     pub editing_preview: Option<&'a str>,
+    pub queued_count: usize,
+    pub queued_preview: Option<&'a str>,
     pub theme: &'a Theme,
 }
 
@@ -318,6 +327,8 @@ impl<'a> InputPanel<'a> {
         is_editing: bool,
         editing_preview: Option<&'a str>,
         theme: &'a Theme,
+        queued_count: usize,
+        queued_preview: Option<&'a str>,
     ) -> Self {
         Self {
             input_mode,
@@ -326,6 +337,8 @@ impl<'a> InputPanel<'a> {
             spinner_state,
             is_editing,
             editing_preview,
+            queued_count,
+            queued_preview,
             theme,
         }
     }
@@ -348,16 +361,42 @@ impl StatefulWidget for InputPanel<'_> {
             self.editing_preview,
             self.theme,
             state.has_content(),
+            self.queued_count,
         )
         .render();
 
+        let has_queue = self.queued_preview.is_some() || self.queued_count > 0;
+        let mut layout = vec![area];
+        if has_queue {
+            let queue_height =
+                QueuedPreviewWidget::required_height(area.width, self.queued_preview)
+                    .min(area.height);
+            let chunks = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Length(queue_height),
+                    ratatui::layout::Constraint::Min(1),
+                ])
+                .split(area);
+            layout = vec![chunks[0], chunks[1]];
+        }
+
+        if has_queue {
+            QueuedPreviewWidget::new(
+                self.queued_preview,
+                self.theme,
+            )
+            .render(layout[0], buf);
+        }
+
+        let input_area = if has_queue { layout[1] } else { area };
         let block = Block::default().borders(Borders::ALL).title(title);
 
         TextAreaWidget::new(&mut state.textarea, self.theme)
             .with_block(block)
             .with_mode(self.input_mode)
             .with_editing(self.is_editing)
-            .render(area, buf);
+            .render(input_area, buf);
     }
 }
 

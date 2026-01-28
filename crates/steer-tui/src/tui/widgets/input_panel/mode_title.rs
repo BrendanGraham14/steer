@@ -17,6 +17,7 @@ pub struct ModeTitleWidget<'a> {
     editing_preview: Option<&'a str>,
     theme: &'a Theme,
     has_content: bool,
+    queued_count: usize,
 }
 
 impl<'a> ModeTitleWidget<'a> {
@@ -29,6 +30,7 @@ impl<'a> ModeTitleWidget<'a> {
         editing_preview: Option<&'a str>,
         theme: &'a Theme,
         has_content: bool,
+        queued_count: usize,
     ) -> Self {
         Self {
             mode,
@@ -38,6 +40,7 @@ impl<'a> ModeTitleWidget<'a> {
             editing_preview,
             theme,
             has_content,
+            queued_count,
         }
     }
 
@@ -166,6 +169,10 @@ impl<'a> ModeTitleWidget<'a> {
 
         if self.is_editing {
             keybinds.insert(0, ("Esc", "cancel edit"));
+        }
+
+        if self.queued_count > 0 {
+            keybinds.insert(0, ("Alt+Up", "edit queued"));
         }
 
         keybinds

@@ -1,8 +1,15 @@
 use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
-use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory, McpServerState};
+use crate::app::domain::action::{
+    Action, ApprovalDecision, ApprovalMemory, McpServerState,
+};
+use crate::app::domain::types::NonEmptyString;
 use crate::app::domain::effect::{Effect, McpServerConfig};
-use crate::app::domain::event::{CancellationInfo, SessionEvent};
-use crate::app::domain::state::{AppState, OperationKind, PendingApproval, QueuedApproval};
+use crate::app::domain::event::{
+    CancellationInfo, QueuedWorkItemSnapshot, QueuedWorkKind, SessionEvent,
+};
+use crate::app::domain::state::{
+    AppState, OperationKind, PendingApproval, QueuedApproval, QueuedWorkItem,
+};
 use crate::agents::default_agent_spec_id;
 use crate::primary_agents::{default_primary_agent_id, primary_agent_spec, resolve_effective_config};
 use crate::session::state::{BackendConfig, ToolDecision};
@@ -102,6 +109,10 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             command,
             timestamp,
         } => handle_direct_bash(state, session_id, op_id, message_id, command, timestamp),
+
+        Action::DequeueQueuedItem { session_id } => handle_dequeue_queued_item(state, session_id),
+
+        Action::DrainQueuedWork { session_id } => maybe_start_queued_work(state, session_id),
 
         Action::RequestCompaction {
             session_id,
@@ -223,6 +234,23 @@ fn handle_user_input(
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
 
+    if state.has_active_operation() {
+        state.queue_user_message(crate::app::domain::state::QueuedUserMessage {
+            text,
+            op_id,
+            message_id,
+            model,
+            queued_at: timestamp,
+        });
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::QueueUpdated {
+                queue: snapshot_queue(state),
+            },
+        });
+        return effects;
+    }
+
     let parent_id = state.message_graph.active_message_id.clone();
 
     let message = Message {
@@ -297,6 +325,15 @@ fn handle_user_edited_message(
         timestamp,
     } = params;
     let mut effects = Vec::new();
+
+    if state.has_active_operation() {
+        return vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: "Cannot edit message while an operation is active.".to_string(),
+            },
+        }];
+    }
 
     let parent_id = state
         .message_graph
@@ -979,6 +1016,8 @@ fn handle_tool_result(
             event: SessionEvent::OperationCompleted { op_id },
         });
 
+        effects.extend(maybe_start_queued_work(state, session_id));
+
         return effects;
     }
 
@@ -1119,6 +1158,7 @@ fn handle_model_response_complete(
             session_id,
             event: SessionEvent::OperationCompleted { op_id },
         });
+        effects.extend(maybe_start_queued_work(state, session_id));
     } else {
         for tool_call in tool_calls {
             let request_id = crate::app::domain::types::RequestId::new();
@@ -1157,6 +1197,8 @@ fn handle_model_response_error(
         event: SessionEvent::OperationCompleted { op_id },
     });
 
+    effects.extend(maybe_start_queued_work(state, session_id));
+
     effects
 }
 
@@ -1169,6 +1211,22 @@ fn handle_direct_bash(
     timestamp: u64,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
+
+    if state.has_active_operation() {
+        state.queue_bash_command(crate::app::domain::state::QueuedBashCommand {
+            command,
+            op_id,
+            message_id,
+            queued_at: timestamp,
+        });
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::QueueUpdated {
+                queue: snapshot_queue(state),
+            },
+        });
+        return effects;
+    }
 
     let parent_id = state.message_graph.active_message_id.clone();
     let message = Message {
@@ -1226,6 +1284,98 @@ fn handle_direct_bash(
     effects
 }
 
+fn handle_dequeue_queued_item(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+) -> Vec<Effect> {
+    if state.pop_next_queued_work().is_some() {
+        vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::QueueUpdated {
+                queue: snapshot_queue(state),
+            },
+        }]
+    } else {
+        vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: "No queued item to remove.".to_string(),
+            },
+        }]
+    }
+}
+
+fn maybe_start_queued_work(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+) -> Vec<Effect> {
+    if state.has_active_operation() {
+        return vec![];
+    }
+
+    let Some(next) = state.pop_next_queued_work() else {
+        return vec![];
+    };
+
+    let mut effects = vec![Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::QueueUpdated {
+            queue: snapshot_queue(state),
+        },
+    }];
+
+    match next {
+        QueuedWorkItem::UserMessage(item) => {
+            effects.extend(handle_user_input(
+                state,
+                session_id,
+                item.text,
+                item.op_id,
+                item.message_id,
+                item.model,
+                item.queued_at,
+            ));
+        }
+        QueuedWorkItem::DirectBash(item) => {
+            effects.extend(handle_direct_bash(
+                state,
+                session_id,
+                item.op_id,
+                item.message_id,
+                item.command,
+                item.queued_at,
+            ));
+        }
+    }
+
+    effects
+}
+
+fn snapshot_queue(state: &AppState) -> Vec<QueuedWorkItemSnapshot> {
+    state
+        .queued_work
+        .iter()
+        .map(|item| match item {
+            QueuedWorkItem::UserMessage(message) => QueuedWorkItemSnapshot {
+                kind: Some(QueuedWorkKind::UserMessage),
+                content: message.text.as_str().to_string(),
+                queued_at: message.queued_at,
+                model: Some(message.model.clone()),
+                op_id: message.op_id,
+                message_id: message.message_id.clone(),
+            },
+            QueuedWorkItem::DirectBash(command) => QueuedWorkItemSnapshot {
+                kind: Some(QueuedWorkKind::DirectBash),
+                content: command.command.clone(),
+                queued_at: command.queued_at,
+                model: None,
+                op_id: command.op_id,
+                message_id: command.message_id.clone(),
+            },
+        })
+        .collect()
+}
+
 fn handle_request_compaction(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
@@ -1234,6 +1384,15 @@ fn handle_request_compaction(
 ) -> Vec<Effect> {
     const MIN_MESSAGES_FOR_COMPACT: usize = 3;
     let message_count = state.message_graph.get_thread_messages().len();
+
+    if state.has_active_operation() {
+        return vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: "Cannot compact while an operation is active.".to_string(),
+            },
+        }];
+    }
 
     if message_count < MIN_MESSAGES_FOR_COMPACT {
         return vec![Effect::EmitEvent {
@@ -1355,6 +1514,8 @@ fn handle_cancel(
     });
 
     state.complete_operation(op.op_id);
+
+    effects.extend(maybe_start_queued_work(state, session_id));
 
     effects
 }
@@ -1569,6 +1730,56 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
                 .mcp_servers
                 .insert(server_name.clone(), mcp_state.clone());
         }
+        SessionEvent::QueueUpdated { queue } => {
+            let normalize_text = |content: &str| {
+                NonEmptyString::new(content.to_string())
+                    .or_else(|| NonEmptyString::new("(empty)".to_string()))
+            };
+
+            state.queued_work = queue
+                .iter()
+                .filter_map(|item| match item.kind {
+                    Some(QueuedWorkKind::UserMessage) => {
+                        let text = normalize_text(item.content.as_str())?;
+                        Some(QueuedWorkItem::UserMessage(
+                            crate::app::domain::state::QueuedUserMessage {
+                                text,
+                                op_id: item.op_id,
+                                message_id: item.message_id.clone(),
+                                model: item
+                                    .model
+                                    .clone()
+                                    .unwrap_or_else(crate::config::model::builtin::claude_sonnet_4_5),
+                                queued_at: item.queued_at,
+                            },
+                        ))
+                    }
+                    Some(QueuedWorkKind::DirectBash) => Some(QueuedWorkItem::DirectBash(
+                        crate::app::domain::state::QueuedBashCommand {
+                            command: item.content.clone(),
+                            op_id: item.op_id,
+                            message_id: item.message_id.clone(),
+                            queued_at: item.queued_at,
+                        },
+                    )),
+                    None => {
+                        let text = normalize_text(item.content.as_str())?;
+                        Some(QueuedWorkItem::UserMessage(
+                            crate::app::domain::state::QueuedUserMessage {
+                                text,
+                                op_id: item.op_id,
+                                message_id: item.message_id.clone(),
+                                model: item
+                                    .model
+                                    .clone()
+                                    .unwrap_or_else(crate::config::model::builtin::claude_sonnet_4_5),
+                                queued_at: item.queued_at,
+                            },
+                        ))
+                    }
+                })
+                .collect();
+        }
         _ => {}
     }
 
@@ -1642,7 +1853,7 @@ fn handle_compaction_complete(
 
     state.complete_operation(op_id);
 
-    vec![
+    let mut effects = vec![
         Effect::EmitEvent {
             session_id,
             event: SessionEvent::AssistantMessageAdded {
@@ -1664,7 +1875,11 @@ fn handle_compaction_complete(
             session_id,
             event: SessionEvent::OperationCompleted { op_id },
         },
-    ]
+    ];
+
+    effects.extend(maybe_start_queued_work(state, session_id));
+
+    effects
 }
 
 fn handle_compaction_failed(
@@ -1675,7 +1890,7 @@ fn handle_compaction_failed(
 ) -> Vec<Effect> {
     state.complete_operation(op_id);
 
-    vec![
+    let mut effects = vec![
         Effect::EmitEvent {
             session_id,
             event: SessionEvent::Error { message: error },
@@ -1684,7 +1899,11 @@ fn handle_compaction_failed(
             session_id,
             event: SessionEvent::OperationCompleted { op_id },
         },
-    ]
+    ];
+
+    effects.extend(maybe_start_queued_work(state, session_id));
+
+    effects
 }
 
 fn emit_mcp_connect_effects(

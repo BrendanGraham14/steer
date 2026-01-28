@@ -23,6 +23,7 @@ service AgentService {
   rpc CancelOperation(CancelOperationRequest) returns (CancelOperationResponse);
   rpc CompactSession(CompactSessionRequest) returns (CompactSessionResponse);
   rpc ExecuteBashCommand(ExecuteBashCommandRequest) returns (ExecuteBashCommandResponse);
+  rpc DequeueQueuedItem(DequeueQueuedItemRequest) returns (DequeueQueuedItemResponse);
 
   // Utility RPCs
   rpc GetConversation(GetConversationRequest) returns (stream GetConversationResponse);
@@ -83,6 +84,7 @@ message SessionEvent {
     CompactResultEvent compact_result = 21;
     McpServerStateChangedEvent mcp_server_state_changed = 22;
     SessionConfigUpdatedEvent session_config_updated = 23;
+    QueueUpdatedEvent queue_updated = 24;
   }
 
   reserved 13;
@@ -327,6 +329,31 @@ message ListSessionsResponse {
   optional string next_page_token = 2;
 }
 
+message QueuedWorkItem {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_USER_MESSAGE = 1;
+    KIND_DIRECT_BASH = 2;
+  }
+  Kind kind = 1;
+  string content = 2;
+  optional ModelSpec model = 3;
+  uint64 queued_at = 4;
+  string op_id = 5;
+  string message_id = 6;
+}
+
+message QueueUpdatedEvent {
+  optional QueuedWorkItem head = 1;
+  uint32 count = 2;
+}
+
+message DequeueQueuedItemRequest {
+  string session_id = 1;
+}
+
+message DequeueQueuedItemResponse {}
+
 message GetSessionRequest {
   string session_id = 1;
 }
@@ -353,6 +380,8 @@ message SessionStateFooter {
   repeated string approved_tools = 1;
   reserved 2;  // was last_event_sequence, now in SessionStateHeader
   map<string, string> metadata = 3;
+  optional QueuedWorkItem queued_head = 4;
+  uint32 queued_count = 5;
 }
 
 message DeleteSessionRequest {

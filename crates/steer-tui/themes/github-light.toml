@@ -104,6 +104,11 @@ placeholder_text = { fg = "fg_subtle", italic = true }
 # Model info
 model_info = { fg = "done_fg" }
 
+# Queue preview
+queued_message_border = { fg = "border_default" }
+queued_message_text = { fg = "fg_default" }
+queued_message_label = { fg = "accent_fg", bold = true }
+
 # Notices
 notice_info = { fg = "accent_fg" }
 notice_warn = { fg = "attention_fg" }

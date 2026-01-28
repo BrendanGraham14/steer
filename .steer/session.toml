@@ -8,16 +8,6 @@ visibility = "all"
 default_behavior = "prompt"
 tools = []
 
-[[tool_config.backends]]
-type = "mcp"
-server_name = "linear"
-tool_filter = "all"
-
-[tool_config.backends.transport]
-type = "stdio"
-command = "npx"
-args = ["-y", "mcp-remote", "https://mcp.linear.app/sse"]
-
 [tool_config.approvals.bash]
 patterns = [
   "*git status*",

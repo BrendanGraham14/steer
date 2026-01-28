@@ -416,6 +416,29 @@ impl AgentClient {
         Ok(())
     }
 
+    pub async fn dequeue_queued_item(&self) -> GrpcResult<()> {
+        let session_id = self
+            .session_id
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| GrpcError::InvalidSessionState {
+                reason: "No active session".to_string(),
+            })?;
+
+        let request = Request::new(proto::DequeueQueuedItemRequest { session_id });
+
+        self.client
+            .lock()
+            .await
+            .dequeue_queued_item(request)
+            .await
+            .map_err(Box::new)?;
+
+        Ok(())
+    }
+
     pub async fn subscribe_client_events(&self) -> mpsc::Receiver<ClientEvent> {
         self.client_event_rx
             .lock()

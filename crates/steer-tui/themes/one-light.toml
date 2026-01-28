@@ -94,6 +94,11 @@ placeholder_text = { fg = "mono_3", italic = true }
 # Model info
 model_info = { fg = "hue_3" }
 
+# Queue preview
+queued_message_border = { fg = "mono_3" }
+queued_message_text = { fg = "mono_1" }
+queued_message_label = { fg = "hue_3", bold = true }
+
 # Notices
 notice_info = { fg = "hue_2" }
 notice_warn = { fg = "hue_6" }

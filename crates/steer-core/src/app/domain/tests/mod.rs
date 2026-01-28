@@ -7,4 +7,5 @@
 
 mod golden;
 mod property;
+mod queue;
 mod replay;

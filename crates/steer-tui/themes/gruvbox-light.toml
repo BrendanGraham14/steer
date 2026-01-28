@@ -107,6 +107,11 @@ placeholder_text = { fg = "gray", italic = true }
 # Model info
 model_info = { fg = "purple" }
 
+# Queue preview
+queued_message_border = { fg = "fg1" }
+queued_message_text = { fg = "fg0" }
+queued_message_label = { fg = "yellow", bold = true }
+
 # Notices
 notice_info = { fg = "blue" }
 notice_warn = { fg = "yellow" }

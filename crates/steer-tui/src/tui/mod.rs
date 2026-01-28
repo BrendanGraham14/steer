@@ -189,6 +189,10 @@ pub struct Tui {
     setup_state: Option<SetupState>,
     /// Track in-flight operations (operation_id -> chat_store_index)
     in_flight_operations: HashSet<OpId>,
+    /// Queued head item (if any)
+    queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
+    /// Count of queued items
+    queued_count: usize,
     /// Command registry for slash commands
     command_registry: CommandRegistry,
     /// User preferences
@@ -318,6 +322,8 @@ impl Tui {
             theme: theme.unwrap_or_default(),
             setup_state: None,
             in_flight_operations: HashSet::new(),
+            queued_head: None,
+            queued_count: 0,
             command_registry: CommandRegistry::new(),
             preferences,
             double_tap_tracker: crate::tui::state::DoubleTapTracker::new(),
@@ -922,10 +928,15 @@ impl Tui {
 
             let terminal_size = f.area();
 
+            let queue_preview = self
+                .queued_head
+                .as_ref()
+                .map(|item| item.content.as_str());
             let input_area_height = self.input_panel_state.required_height(
                 current_tool_call,
                 terminal_size.width,
                 terminal_size.height,
+                queue_preview,
             );
 
             let layout = UiLayout::compute(terminal_size, input_area_height, &self.theme);
@@ -951,6 +962,8 @@ impl Tui {
                 is_editing,
                 editing_preview.as_deref(),
                 &self.theme,
+                self.queued_count,
+                queue_preview,
             );
             f.render_stateful_widget(input_panel, layout.input_area, &mut self.input_panel_state);
 
@@ -972,6 +985,7 @@ impl Tui {
                     current_tool_call,
                     terminal_size.width,
                     10,
+                    queue_preview,
                 );
                 let mode = self.input_panel_state.fuzzy_finder.mode();
                 Some((results, selected, input_height, mode))
@@ -1131,6 +1145,7 @@ impl Tui {
         EventPipeline::new()
             .add_processor(Box::new(ProcessingStateProcessor::new()))
             .add_processor(Box::new(MessageEventProcessor::new()))
+            .add_processor(Box::new(crate::tui::events::processors::queue::QueueEventProcessor::new()))
             .add_processor(Box::new(ToolEventProcessor::new()))
             .add_processor(Box::new(SystemEventProcessor::new()))
     }
@@ -1164,6 +1179,8 @@ impl Tui {
             current_model: &mut self.current_model,
             messages_updated: &mut messages_updated,
             in_flight_operations: &mut self.in_flight_operations,
+            queued_head: &mut self.queued_head,
+            queued_count: &mut self.queued_count,
         };
 
         if let Err(e) = self.event_pipeline.process_event(event, &mut ctx).await {
@@ -1205,7 +1222,9 @@ impl Tui {
             {
                 self.push_notice(NoticeLevel::Error, format!("Cannot edit message: {e}"));
             }
-        } else if let Err(e) = self
+            return Ok(());
+        }
+        if let Err(e) = self
             .client
             .send_message(content, self.current_model.clone())
             .await

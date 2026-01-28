@@ -30,6 +30,8 @@ pub struct ProcessingContext<'a> {
     pub current_model: &'a mut ModelId,
     pub messages_updated: &'a mut bool,
     pub in_flight_operations: &'a mut std::collections::HashSet<OpId>,
+    pub queued_head: &'a mut Option<steer_grpc::client_api::QueuedWorkItem>,
+    pub queued_count: &'a mut usize,
 }
 
 #[async_trait]

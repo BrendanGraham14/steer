@@ -142,6 +142,7 @@ mod tests {
                     SessionEvent::McpServerStateChanged { .. } => {
                         "McpServerStateChanged".to_string()
                     }
+                    SessionEvent::QueueUpdated { .. } => "QueueUpdated".to_string(),
                 },
             },
             Effect::CallModel { .. } => EffectSnapshot::CallModel,

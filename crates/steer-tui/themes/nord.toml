@@ -109,6 +109,11 @@ placeholder_text = { fg = "nord3", italic = true }
 # Model info
 model_info = { fg = "nord15" }
 
+# Queue preview
+queued_message_border = { fg = "nord3" }
+queued_message_text = { fg = "nord4" }
+queued_message_label = { fg = "nord15", bold = true }
+
 # Notices
 notice_info = { fg = "nord9" }
 notice_warn = { fg = "nord13" }

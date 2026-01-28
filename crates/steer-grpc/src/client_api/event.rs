@@ -85,4 +85,9 @@ pub enum ClientEvent {
         config: SessionConfig,
         primary_agent_id: String,
     },
+
+    QueueUpdated {
+        head: Option<QueuedWorkItem>,
+        count: usize,
+    },
 }

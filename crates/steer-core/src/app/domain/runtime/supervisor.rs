@@ -278,6 +278,7 @@ impl RuntimeSupervisor {
             state.cached_system_context = system_context;
         }
 
+        let should_drain_queue = !state.has_active_operation() && !state.queued_work.is_empty();
         let handle = spawn_session_actor(
             session_id,
             state,
@@ -285,6 +286,12 @@ impl RuntimeSupervisor {
             self.api_client.clone(),
             self.tool_executor.clone(),
         );
+
+        if should_drain_queue {
+            handle
+                .dispatch(Action::DrainQueuedWork { session_id })
+                .await?;
+        }
 
         self.sessions.insert(session_id, handle);
 
@@ -680,6 +687,21 @@ impl RuntimeHandle {
 
         self.dispatch_action(session_id, action).await?;
         Ok(op_id)
+    }
+
+    pub async fn submit_dequeue_queued_item(
+        &self,
+        session_id: SessionId,
+    ) -> Result<(), RuntimeError> {
+        let state = self.get_session_state(session_id).await?;
+        if state.queued_work.is_empty() {
+            return Err(RuntimeError::InvalidInput {
+                message: "No queued item to remove".to_string(),
+            });
+        }
+
+        let action = Action::DequeueQueuedItem { session_id };
+        self.dispatch_action(session_id, action).await
     }
 
     pub async fn compact_session(

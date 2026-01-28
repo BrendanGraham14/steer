@@ -5,5 +5,6 @@
 
 pub mod message;
 pub mod processing_state;
+pub mod queue;
 pub mod system;
 pub mod tool;

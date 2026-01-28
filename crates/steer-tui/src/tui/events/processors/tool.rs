@@ -217,6 +217,8 @@ mod tests {
         current_model: ModelId,
         messages_updated: bool,
         in_flight_operations: HashSet<OpId>,
+        queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
+        queued_count: usize,
         _workspace_root: tempfile::TempDir,
     }
     async fn create_test_context() -> TestContext {
@@ -236,6 +238,8 @@ mod tests {
         let current_model = builtin::claude_sonnet_4_5();
         let messages_updated = false;
         let in_flight_operations = HashSet::new();
+        let queued_head = None;
+        let queued_count = 0;
         TestContext {
             chat_store,
             chat_list_state,
@@ -248,6 +252,8 @@ mod tests {
             current_model,
             messages_updated,
             in_flight_operations,
+            queued_head,
+            queued_count,
             _workspace_root: workspace_root,
         }
     }
@@ -291,6 +297,8 @@ mod tests {
                 current_model: &mut ctx.current_model,
                 messages_updated: &mut ctx.messages_updated,
                 in_flight_operations: &mut ctx.in_flight_operations,
+                queued_head: &mut ctx.queued_head,
+                queued_count: &mut ctx.queued_count,
             };
             let _ = msg_proc
                 .process(
@@ -316,6 +324,8 @@ mod tests {
                 current_model: &mut ctx.current_model,
                 messages_updated: &mut ctx.messages_updated,
                 in_flight_operations: &mut ctx.in_flight_operations,
+                queued_head: &mut ctx.queued_head,
+                queued_count: &mut ctx.queued_count,
             };
             let _ = tool_proc
                 .process(

@@ -7,6 +7,26 @@ pub use steer_core::app::conversation::{
 };
 
 pub use steer_core::config::model::ModelId;
+pub use steer_core::app::domain::types::{
+    CompactionRecord, MessageId, OpId, RequestId, ToolCallId,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueuedWorkKind {
+    UserMessage,
+    DirectBash,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedWorkItem {
+    pub kind: QueuedWorkKind,
+    pub content: String,
+    pub model: Option<ModelId>,
+    pub queued_at: u64,
+    pub op_id: OpId,
+    pub message_id: MessageId,
+}
 
 pub use steer_core::app::domain::delta::ToolCallDelta;
 pub use steer_core::app::domain::event::CompactResult;
@@ -22,10 +42,6 @@ pub use steer_tools::result::{
     GrepResult, ReplaceResult, SearchMatch, SearchResult, TodoListResult, ToolResult,
 };
 pub use steer_tools::{ToolCall, ToolError};
-
-pub use steer_core::app::domain::types::{
-    CompactionRecord, MessageId, OpId, RequestId, ToolCallId,
-};
 
 pub use steer_core::session::state::{
     SessionConfig, SessionPolicyOverrides, SessionToolConfig, WorkspaceConfig,
