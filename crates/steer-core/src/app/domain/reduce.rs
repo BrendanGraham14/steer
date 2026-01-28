@@ -369,6 +369,7 @@ fn handle_tool_approval_requested(
             error,
             error_message,
             "invalid",
+            true,
         );
     }
 
@@ -401,6 +402,7 @@ fn handle_tool_approval_requested(
                 error,
                 format!("Tool '{}' denied by policy", tool_name),
                 "denied",
+                true,
             ));
         }
         ToolDecision::Ask => {
@@ -489,6 +491,56 @@ fn validate_against_json_schema(
     Ok(())
 }
 
+fn emit_tool_failure_message(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    tool_call_id: &str,
+    tool_name: &str,
+    tool_error: ToolError,
+    event_error: String,
+    message_id_prefix: &str,
+) -> Vec<Effect> {
+    let mut effects = Vec::new();
+
+    let tool_result = ToolResult::Error(tool_error);
+    let parent_id = state.message_graph.active_message_id.clone();
+    let tool_message = Message {
+        data: MessageData::Tool {
+            tool_use_id: tool_call_id.to_string(),
+            result: tool_result,
+        },
+        timestamp: 0,
+        id: format!("{message_id_prefix}_{tool_call_id}"),
+        parent_message_id: parent_id,
+    };
+    state.message_graph.add_message(tool_message.clone());
+
+    if let Some(model) = state
+        .current_operation
+        .as_ref()
+        .and_then(|op| state.operation_models.get(&op.op_id).cloned())
+    {
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::ToolCallFailed {
+                id: crate::app::domain::types::ToolCallId::from_string(tool_call_id),
+                name: tool_name.to_string(),
+                error: event_error,
+                model,
+            },
+        });
+    }
+
+    effects.push(Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::ToolMessageAdded {
+            message: tool_message,
+        },
+    });
+
+    effects
+}
+
 fn fail_tool_call_without_execution(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
@@ -496,8 +548,21 @@ fn fail_tool_call_without_execution(
     tool_error: ToolError,
     event_error: String,
     message_id_prefix: &str,
+    call_model_if_ready: bool,
 ) -> Vec<Effect> {
-    let mut effects = Vec::new();
+    let mut effects = emit_tool_failure_message(
+        state,
+        session_id,
+        &tool_call.id,
+        &tool_call.name,
+        tool_error,
+        event_error,
+        message_id_prefix,
+    );
+
+    if !call_model_if_ready {
+        return effects;
+    }
 
     let op_id = state
         .current_operation
@@ -509,36 +574,6 @@ fn fail_tool_call_without_execution(
         .get(&op_id)
         .cloned()
         .expect("Model should exist for operation");
-
-    let tool_result = ToolResult::Error(tool_error);
-    let parent_id = state.message_graph.active_message_id.clone();
-    let tool_message = Message {
-        data: MessageData::Tool {
-            tool_use_id: tool_call.id.clone(),
-            result: tool_result.clone(),
-        },
-        timestamp: 0,
-        id: format!("{message_id_prefix}_{}", tool_call.id),
-        parent_message_id: parent_id,
-    };
-    state.message_graph.add_message(tool_message.clone());
-
-    effects.push(Effect::EmitEvent {
-        session_id,
-        event: SessionEvent::ToolCallFailed {
-            id: tool_call.id.clone().into(),
-            name: tool_call.name.clone(),
-            error: event_error,
-            model: model.clone(),
-        },
-    });
-
-    effects.push(Effect::EmitEvent {
-        session_id,
-        event: SessionEvent::ToolMessageAdded {
-            message: tool_message,
-        },
-    });
 
     let all_tools_complete = state
         .current_operation
@@ -634,6 +669,18 @@ fn handle_tool_approval_decided(
             op_id,
             tool_call: pending.tool_call,
         });
+    } else {
+        let tool_name = pending.tool_call.name.clone();
+        let error = ToolError::DeniedByUser(tool_name.clone());
+        effects.extend(fail_tool_call_without_execution(
+            state,
+            session_id,
+            pending.tool_call,
+            error,
+            format!("Tool '{}' denied by user", tool_name),
+            "denied",
+            false,
+        ));
     }
 
     effects.extend(process_next_queued_approval(state, session_id));
@@ -669,47 +716,17 @@ fn process_next_queued_approval(
                 continue;
             }
             ToolDecision::Deny => {
-                let op_id = state
-                    .current_operation
-                    .as_ref()
-                    .map(|o| o.op_id)
-                    .expect("Operation should exist");
-                let model = state
-                    .operation_models
-                    .get(&op_id)
-                    .cloned()
-                    .expect("Model should exist for operation");
-
-                let tool_result =
-                    ToolResult::Error(ToolError::DeniedByPolicy(queued.tool_call.name.clone()));
-                let parent_id = state.message_graph.active_message_id.clone();
-                let tool_message = Message {
-                    data: MessageData::Tool {
-                        tool_use_id: queued.tool_call.id.clone(),
-                        result: tool_result.clone(),
-                    },
-                    timestamp: 0,
-                    id: format!("denied_{}", queued.tool_call.id),
-                    parent_message_id: parent_id,
-                };
-                state.message_graph.add_message(tool_message.clone());
-
-                effects.push(Effect::EmitEvent {
+                let tool_name = queued.tool_call.name.clone();
+                let error = ToolError::DeniedByPolicy(tool_name.clone());
+                effects.extend(fail_tool_call_without_execution(
+                    state,
                     session_id,
-                    event: SessionEvent::ToolCallFailed {
-                        id: queued.tool_call.id.clone().into(),
-                        name: queued.tool_call.name.clone(),
-                        error: format!("Tool '{}' denied by policy", queued.tool_call.name),
-                        model: model.clone(),
-                    },
-                });
-
-                effects.push(Effect::EmitEvent {
-                    session_id,
-                    event: SessionEvent::ToolMessageAdded {
-                        message: tool_message,
-                    },
-                });
+                    queued.tool_call,
+                    error,
+                    format!("Tool '{}' denied by policy", tool_name),
+                    "denied",
+                    false,
+                ));
                 continue;
             }
             ToolDecision::Ask => {
@@ -1269,23 +1286,57 @@ fn handle_cancel(
         });
     }
 
-    if let Some(pending) = state.pending_approval.take() {
-        let tool_result = ToolResult::Error(ToolError::Cancelled(pending.tool_call.name.clone()));
-        let parent_id = state.message_graph.active_message_id.clone();
+    let pending_approval = state.pending_approval.take();
+    let queued_approvals = std::mem::take(&mut state.approval_queue);
 
-        let message = Message {
-            data: MessageData::Tool {
-                tool_use_id: pending.tool_call.id.clone(),
-                result: tool_result,
-            },
-            timestamp: 0,
-            id: format!("cancelled_{}", pending.tool_call.id),
-            parent_message_id: parent_id,
-        };
-        state.message_graph.add_message(message);
+    if matches!(op.kind, OperationKind::AgentLoop) {
+        if let Some(pending) = pending_approval {
+            let tool_name = pending.tool_call.name.clone();
+            effects.extend(emit_tool_failure_message(
+                state,
+                session_id,
+                &pending.tool_call.id,
+                &tool_name,
+                ToolError::Cancelled(tool_name.clone()),
+                format!("Tool '{}' cancelled", tool_name),
+                "cancelled",
+            ));
+        }
+
+        for queued in queued_approvals {
+            let tool_name = queued.tool_call.name.clone();
+            effects.extend(emit_tool_failure_message(
+                state,
+                session_id,
+                &queued.tool_call.id,
+                &tool_name,
+                ToolError::Cancelled(tool_name.clone()),
+                format!("Tool '{}' cancelled", tool_name),
+                "cancelled",
+            ));
+        }
+
+        for tool_call_id in &op.pending_tool_calls {
+            let tool_name = state
+                .message_graph
+                .find_tool_name_by_id(tool_call_id.as_str())
+                .unwrap_or_else(|| tool_call_id.as_str().to_string());
+            let event_error = if tool_name == tool_call_id.as_str() {
+                format!("Tool call '{tool_call_id}' cancelled")
+            } else {
+                format!("Tool '{}' cancelled", tool_name)
+            };
+            effects.extend(emit_tool_failure_message(
+                state,
+                session_id,
+                tool_call_id.as_str(),
+                &tool_name,
+                ToolError::Cancelled(tool_name.clone()),
+                event_error,
+                "cancelled",
+            ));
+        }
     }
-
-    state.approval_queue.clear();
     state.active_streams.remove(&op.op_id);
 
     effects.push(Effect::EmitEvent {
@@ -2094,6 +2145,143 @@ mod tests {
                     assert!(matches!(error, ToolError::DeniedByPolicy(name) if name == "test_tool"))
                 }
                 _ => panic!("expected denied tool error"),
+            },
+            _ => panic!("expected tool message"),
+        }
+    }
+
+    #[test]
+    fn test_user_denied_tool_request_emits_failure_message() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let tool_call = steer_tools::ToolCall {
+            id: "tc_1".to_string(),
+            name: "test_tool".to_string(),
+            parameters: serde_json::json!({}),
+        };
+        let request_id = RequestId::new();
+        state.pending_approval = Some(PendingApproval {
+            request_id,
+            tool_call: tool_call.clone(),
+        });
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolApprovalDecided {
+                session_id,
+                request_id,
+                decision: ApprovalDecision::Denied,
+                remember: None,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolCallFailed { .. },
+                ..
+            }
+        )));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolMessageAdded { .. },
+                ..
+            }
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::ExecuteTool { .. }))
+        );
+        assert!(state.pending_approval.is_none());
+        assert!(state.approval_queue.is_empty());
+        assert_eq!(state.message_graph.messages.len(), 1);
+
+        match &state.message_graph.messages[0].data {
+            MessageData::Tool { result, .. } => match result {
+                ToolResult::Error(error) => {
+                    assert!(matches!(error, ToolError::DeniedByUser(name) if name == "test_tool"))
+                }
+                _ => panic!("expected denied tool error"),
+            },
+            _ => panic!("expected tool message"),
+        }
+    }
+
+    #[test]
+    fn test_cancel_injects_tool_results_for_pending_calls() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        let tool_call = ToolCall {
+            id: "tc_1".to_string(),
+            name: "test_tool".to_string(),
+            parameters: serde_json::json!({}),
+        };
+
+        state.message_graph.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: tool_call.clone(),
+                    thought_signature: None,
+                }],
+            },
+            timestamp: 0,
+            id: "msg_1".to_string(),
+            parent_message_id: None,
+        });
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: [ToolCallId::from_string("tc_1")].into_iter().collect(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let effects = reduce(
+            &mut state,
+            Action::Cancel {
+                session_id,
+                op_id: None,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolMessageAdded { .. },
+                ..
+            }
+        )));
+
+        let tool_message = state
+            .message_graph
+            .messages
+            .iter()
+            .find(|message| matches!(message.data, MessageData::Tool { .. }))
+            .expect("tool result should be injected on cancel");
+
+        match &tool_message.data {
+            MessageData::Tool { result, .. } => match result {
+                ToolResult::Error(error) => {
+                    assert!(matches!(error, ToolError::Cancelled(name) if name == "test_tool"))
+                }
+                _ => panic!("expected cancelled tool error"),
             },
             _ => panic!("expected tool message"),
         }

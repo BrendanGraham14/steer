@@ -213,7 +213,7 @@ impl AgentStepper {
                 error,
             ),
 
-            (_, AgentInput::Cancel) => (AgentState::Cancelled, vec![AgentOutput::Cancelled]),
+            (state, AgentInput::Cancel) => self.handle_cancel(state),
 
             (state, _) => (state, vec![]),
         }
@@ -325,17 +325,25 @@ impl AgentStepper {
 
     fn handle_tool_denied(
         &self,
-        messages: Vec<Message>,
+        mut messages: Vec<Message>,
         mut pending_approvals: Vec<ToolCall>,
         approved: Vec<ToolCall>,
         mut denied: Vec<ToolCall>,
         tool_call_id: ToolCallId,
     ) -> (AgentState, Vec<AgentOutput>) {
+        let mut outputs = vec![];
+
         if let Some(pos) = pending_approvals
             .iter()
             .position(|tc| tc.id == tool_call_id.0)
         {
             let tool_call = pending_approvals.remove(pos);
+            self.emit_tool_error_message(
+                &mut messages,
+                &mut outputs,
+                &tool_call,
+                ToolError::DeniedByUser(tool_call.name.clone()),
+            );
             denied.push(tool_call);
         }
 
@@ -345,9 +353,12 @@ impl AgentStepper {
                     AgentState::Failed {
                         error: "All tools denied".to_string(),
                     },
-                    vec![AgentOutput::Error {
-                        error: "All tools denied".to_string(),
-                    }],
+                    {
+                        outputs.push(AgentOutput::Error {
+                            error: "All tools denied".to_string(),
+                        });
+                        outputs
+                    },
                 )
             } else {
                 let mut pending_results = HashMap::new();
@@ -361,7 +372,7 @@ impl AgentStepper {
                         pending_results,
                         completed_results: vec![],
                     },
-                    vec![],
+                    outputs,
                 )
             }
         } else {
@@ -372,9 +383,36 @@ impl AgentStepper {
                     approved,
                     denied,
                 },
-                vec![],
+                outputs,
             )
         }
+    }
+
+    fn emit_tool_error_message(
+        &self,
+        messages: &mut Vec<Message>,
+        outputs: &mut Vec<AgentOutput>,
+        tool_call: &ToolCall,
+        error: ToolError,
+    ) {
+        let parent_id = messages.last().map(|m| m.id().to_string());
+        let message_id = MessageId::new();
+        let timestamp = Message::current_timestamp();
+
+        let tool_message = Message {
+            data: MessageData::Tool {
+                tool_use_id: tool_call.id.clone(),
+                result: ToolResult::Error(error),
+            },
+            timestamp,
+            id: message_id.0.clone(),
+            parent_message_id: parent_id,
+        };
+
+        messages.push(tool_message.clone());
+        outputs.push(AgentOutput::EmitMessage {
+            message: tool_message,
+        });
     }
 
     fn handle_tool_completed(
@@ -439,6 +477,46 @@ impl AgentStepper {
     ) -> (AgentState, Vec<AgentOutput>) {
         let result = ToolResult::Error(error);
         self.handle_tool_completed(context, result)
+    }
+
+    fn handle_cancel(&self, state: AgentState) -> (AgentState, Vec<AgentOutput>) {
+        let mut outputs = Vec::new();
+
+        match state {
+            AgentState::AwaitingToolApprovals {
+                mut messages,
+                pending_approvals,
+                approved,
+                denied: _,
+            } => {
+                for tool_call in pending_approvals.into_iter().chain(approved.into_iter()) {
+                    self.emit_tool_error_message(
+                        &mut messages,
+                        &mut outputs,
+                        &tool_call,
+                        ToolError::Cancelled(tool_call.name.clone()),
+                    );
+                }
+            }
+            AgentState::AwaitingToolResults {
+                mut messages,
+                pending_results,
+                completed_results: _,
+            } => {
+                for (_, tool_call) in pending_results {
+                    self.emit_tool_error_message(
+                        &mut messages,
+                        &mut outputs,
+                        &tool_call,
+                        ToolError::Cancelled(tool_call.name.clone()),
+                    );
+                }
+            }
+            _ => {}
+        }
+
+        outputs.push(AgentOutput::Cancelled);
+        (AgentState::Cancelled, outputs)
     }
 
     pub fn needs_model_call(&self, state: &AgentState) -> bool {
@@ -525,6 +603,88 @@ mod tests {
                 .iter()
                 .any(|o| matches!(o, AgentOutput::RequestApproval { .. }))
         );
+    }
+
+    #[test]
+    fn test_tool_denied_emits_tool_message() {
+        let stepper = AgentStepper::new(test_config());
+        let tool_call = ToolCall {
+            id: "tc_1".to_string(),
+            name: "test_tool".to_string(),
+            parameters: serde_json::json!({}),
+        };
+
+        let state = AgentState::AwaitingToolApprovals {
+            messages: vec![],
+            pending_approvals: vec![tool_call.clone()],
+            approved: vec![],
+            denied: vec![],
+        };
+
+        let (_new_state, outputs) = stepper.step(
+            state,
+            AgentInput::ToolDenied {
+                tool_call_id: ToolCallId::from_string("tc_1"),
+            },
+        );
+
+        let tool_message = outputs
+            .iter()
+            .find_map(|output| match output {
+                AgentOutput::EmitMessage { message } => Some(message),
+                _ => None,
+            })
+            .expect("tool denial should emit a tool result message");
+
+        match &tool_message.data {
+            MessageData::Tool { result, .. } => match result {
+                ToolResult::Error(error) => {
+                    assert!(matches!(error, ToolError::DeniedByUser(name) if name == "test_tool"))
+                }
+                _ => panic!("expected denied tool error"),
+            },
+            _ => panic!("expected tool message"),
+        }
+    }
+
+    #[test]
+    fn test_cancel_emits_tool_results_for_pending_approvals() {
+        let stepper = AgentStepper::new(test_config());
+        let tool_call = ToolCall {
+            id: "tc_1".to_string(),
+            name: "test_tool".to_string(),
+            parameters: serde_json::json!({}),
+        };
+
+        let state = AgentState::AwaitingToolApprovals {
+            messages: vec![],
+            pending_approvals: vec![tool_call.clone()],
+            approved: vec![],
+            denied: vec![],
+        };
+
+        let (new_state, outputs) = stepper.step(state, AgentInput::Cancel);
+
+        assert!(matches!(new_state, AgentState::Cancelled));
+        assert!(outputs.iter().any(|o| matches!(o, AgentOutput::Cancelled)));
+
+        let tool_message = outputs
+            .iter()
+            .find_map(|output| match output {
+                AgentOutput::EmitMessage { message } => Some(message),
+                _ => None,
+            })
+            .expect("cancel should emit tool result messages");
+
+        match &tool_message.data {
+            MessageData::Tool { result, .. } => match result {
+                ToolResult::Error(error) => {
+                    assert!(matches!(error, ToolError::Cancelled(name) if name == "test_tool"))
+                }
+                _ => panic!("expected cancelled tool error"),
+            },
+            _ => panic!("expected tool message"),
+        }
     }
 
     #[test]

@@ -138,15 +138,13 @@ impl AgentInterpreter {
         let mut pending_outputs: VecDeque<AgentOutput> = VecDeque::from(initial_outputs);
 
         loop {
-            if cancel_token.is_cancelled() {
-                self.emit_event(SessionEvent::OperationCancelled {
-                    op_id: self.op_id,
-                    info: CancellationInfo {
-                        pending_tool_calls: 0,
-                    },
-                })
-                .await?;
-                return Err(AgentInterpreterError::Cancelled);
+            if cancel_token.is_cancelled()
+                && !matches!(state, AgentState::Cancelled)
+                && !stepper.is_terminal(&state)
+            {
+                let (new_state, outputs) = stepper.step(state, AgentInput::Cancel);
+                state = new_state;
+                pending_outputs = VecDeque::from(outputs);
             }
 
             let output = match pending_outputs.pop_front() {
@@ -432,4 +430,138 @@ pub enum AgentInterpreterError {
 
     #[error("Cancelled")]
     Cancelled,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::error::ApiError;
+    use crate::api::provider::{CompletionResponse, Provider};
+    use crate::app::conversation::AssistantContent;
+    use crate::app::SystemContext;
+    use crate::app::domain::session::event_store::InMemoryEventStore;
+    use crate::app::validation::ValidatorRegistry;
+    use crate::auth::ProviderRegistry;
+    use crate::config::model::ModelId;
+    use crate::config::provider::ProviderId;
+    use crate::model_registry::ModelRegistry;
+    use crate::tools::BackendRegistry;
+    use async_trait::async_trait;
+    use steer_tools::ToolSchema;
+
+    #[derive(Clone)]
+    struct StubProvider {
+        cancel_on_complete: bool,
+    }
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            if self.cancel_on_complete {
+                token.cancel();
+            }
+
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: "ok".to_string(),
+                }],
+            })
+        }
+    }
+
+    async fn create_test_deps() -> (Arc<dyn EventStore>, Arc<ApiClient>, Arc<ToolExecutor>) {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
+        let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider(),
+            provider_registry,
+            model_registry,
+        ));
+
+        let tool_executor = Arc::new(ToolExecutor::with_components(
+            Arc::new(BackendRegistry::new()),
+            Arc::new(ValidatorRegistry::new()),
+        ));
+
+        (event_store, api_client, tool_executor)
+    }
+
+    #[tokio::test]
+    async fn test_cancel_after_completion_does_not_override_outputs() {
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+        let provider_id = ProviderId("stub".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
+        api_client.insert_test_provider(
+            provider_id,
+            Arc::new(StubProvider {
+                cancel_on_complete: true,
+            }),
+        );
+
+        let interpreter = AgentInterpreter::new(
+            event_store.clone(),
+            api_client,
+            tool_executor,
+            AgentInterpreterConfig::default(),
+        )
+        .await
+        .expect("interpreter");
+
+        let cancel_token = CancellationToken::new();
+        let result = interpreter
+            .run(
+                AgentConfig {
+                    model: model_id,
+                    system_context: None,
+                    tools: vec![],
+                },
+                vec![],
+                None,
+                cancel_token.clone(),
+            )
+            .await;
+
+        assert!(result.is_ok(), "expected run to complete, got {result:?}");
+        assert!(cancel_token.is_cancelled(), "cancel token should be set");
+
+        let events = event_store
+            .load_events(interpreter.session_id())
+            .await
+            .expect("load events");
+
+        assert!(
+            events.iter().any(|(_, event)| matches!(
+                event,
+                SessionEvent::AssistantMessageAdded { .. }
+            )),
+            "assistant message should be emitted"
+        );
+        assert!(
+            events.iter().any(|(_, event)| matches!(
+                event,
+                SessionEvent::OperationCompleted { .. }
+            )),
+            "operation should complete"
+        );
+        assert!(
+            !events.iter().any(|(_, event)| matches!(
+                event,
+                SessionEvent::OperationCancelled { .. }
+            )),
+            "operation should not be cancelled"
+        );
+    }
 }
