@@ -180,10 +180,60 @@ pub enum ResponseOutputItem {
     #[serde(rename = "function_call")]
     FunctionCall {
         id: String,
-        call_id: String, // Now required
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        call_id: Option<String>,
         name: String,
         arguments: String,
         status: String,
+    },
+    #[serde(rename = "custom_tool_call")]
+    CustomToolCall {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        call_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+        extra: HashMap<String, ExtraValue>,
+    },
+    #[serde(rename = "mcp_call")]
+    McpCall {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        call_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        arguments: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+        extra: HashMap<String, ExtraValue>,
+    },
+    #[serde(rename = "mcp_approval_request")]
+    McpApprovalRequest {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        arguments: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        server_label: Option<String>,
+        #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+        extra: HashMap<String, ExtraValue>,
     },
     Reasoning {
         id: String,
@@ -196,7 +246,16 @@ pub enum ResponseOutputItem {
         status: Option<String>,
     },
     #[serde(rename = "web_search_call")]
-    WebSearchCall { id: String, status: String },
+    WebSearchCall {
+        id: String,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        results: Option<serde_json::Value>,
+        #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+        extra: HashMap<String, ExtraValue>,
+    },
     #[serde(rename = "file_search_call")]
     FileSearchCall {
         id: String,
@@ -205,6 +264,32 @@ pub enum ResponseOutputItem {
         queries: Option<Vec<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         results: Option<serde_json::Value>,
+        #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+        extra: HashMap<String, ExtraValue>,
+    },
+    #[serde(rename = "code_interpreter_call")]
+    CodeInterpreterCall {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        results: Option<serde_json::Value>,
+        #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+        extra: HashMap<String, ExtraValue>,
+    },
+    #[serde(rename = "image_generation_call")]
+    ImageGenerationCall {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        result: Option<serde_json::Value>,
+        #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+        extra: HashMap<String, ExtraValue>,
     },
     #[serde(other)]
     Other,
@@ -217,6 +302,9 @@ pub enum MessageContentPart {
         text: String,
         #[serde(default)]
         annotations: Vec<Annotation>,
+    },
+    Refusal {
+        refusal: String,
     },
     #[serde(other)]
     Other,
@@ -231,6 +319,15 @@ pub enum ReasoningSummaryPart {
     },
     #[serde(other)]
     Other,
+}
+
+impl ReasoningSummaryPart {
+    pub(crate) fn text(&self) -> Option<&str> {
+        match self {
+            ReasoningSummaryPart::SummaryText { text } => Some(text.as_str()),
+            ReasoningSummaryPart::Other => None,
+        }
+    }
 }
 
 /// Parts that make up reasoning content

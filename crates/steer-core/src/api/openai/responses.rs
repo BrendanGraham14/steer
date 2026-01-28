@@ -263,6 +263,9 @@ impl Client {
                                 MessageContentPart::OutputText { text, .. } => {
                                     result.push(AssistantContent::Text { text });
                                 }
+                                MessageContentPart::Refusal { refusal } => {
+                                    result.push(AssistantContent::Text { text: refusal });
+                                }
                                 MessageContentPart::Other => {}
                             }
                         }
@@ -271,11 +274,11 @@ impl Client {
                         // Extract reasoning text from summary parts
                         let mut reasoning_text = String::new();
                         for part in summary {
-                            if let ReasoningSummaryPart::SummaryText { text } = part {
+                            if let Some(text) = part.text() {
                                 if !reasoning_text.is_empty() {
                                     reasoning_text.push('\n');
                                 }
-                                reasoning_text.push_str(&text);
+                                reasoning_text.push_str(text);
                             }
                         }
                         if !reasoning_text.is_empty() {
@@ -287,27 +290,67 @@ impl Client {
                         }
                     }
                     ResponseOutputItem::FunctionCall {
-                        id: _,
+                        id,
                         call_id,
                         name,
                         arguments,
                         ..
                     } => {
-                        let parameters = match serde_json::from_str(&arguments) {
-                            Ok(params) => params,
-                            Err(e) => {
-                                tracing::warn!(
-                                    target: "openai::responses",
-                                    "Failed to parse function call arguments for '{}': {}. Raw arguments: {}",
-                                    name,
-                                    e,
-                                    arguments
-                                );
-                                // Default to empty object to maintain compatibility
-                                serde_json::Value::Object(serde_json::Map::new())
-                            }
+                        let Some(call_id) = select_call_id(call_id, Some(id)) else {
+                            continue;
                         };
+                        let parameters = parse_tool_parameters(&name, &arguments);
 
+                        result.push(AssistantContent::ToolCall {
+                            tool_call: steer_tools::ToolCall {
+                                id: call_id,
+                                name,
+                                parameters,
+                            },
+                            thought_signature: None,
+                        });
+                    }
+                    ResponseOutputItem::CustomToolCall {
+                        id,
+                        call_id,
+                        name,
+                        tool_name,
+                        input,
+                        ..
+                    } => {
+                        let Some(call_id) = select_call_id(call_id, id) else {
+                            continue;
+                        };
+                        let Some(name) = select_tool_name(name, tool_name) else {
+                            continue;
+                        };
+                        let input = input.unwrap_or_default();
+                        let parameters = parse_tool_parameters(&name, &input);
+                        result.push(AssistantContent::ToolCall {
+                            tool_call: steer_tools::ToolCall {
+                                id: call_id,
+                                name,
+                                parameters,
+                            },
+                            thought_signature: None,
+                        });
+                    }
+                    ResponseOutputItem::McpCall {
+                        id,
+                        call_id,
+                        name,
+                        tool_name,
+                        arguments,
+                        ..
+                    } => {
+                        let Some(call_id) = select_call_id(call_id, id) else {
+                            continue;
+                        };
+                        let Some(name) = select_tool_name(name, tool_name) else {
+                            continue;
+                        };
+                        let arguments = arguments.unwrap_or_default();
+                        let parameters = parse_tool_parameters(&name, &arguments);
                         result.push(AssistantContent::ToolCall {
                             tool_call: steer_tools::ToolCall {
                                 id: call_id,
@@ -319,6 +362,9 @@ impl Client {
                     }
                     ResponseOutputItem::WebSearchCall { .. }
                     | ResponseOutputItem::FileSearchCall { .. }
+                    | ResponseOutputItem::McpApprovalRequest { .. }
+                    | ResponseOutputItem::CodeInterpreterCall { .. }
+                    | ResponseOutputItem::ImageGenerationCall { .. }
                     | ResponseOutputItem::Other => {
                         // These are built-in tools that we don't handle yet
                     }
@@ -771,6 +817,12 @@ impl Client {
                 std::collections::HashMap::new();
             let mut tool_call_positions: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
+            let mut pending_tool_deltas: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            let mut summary_deltas_seen: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            let mut summary_done_emitted: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
 
             loop {
                 if token.is_cancelled() {
@@ -800,75 +852,96 @@ impl Client {
                 };
 
                 match event.event_type.as_deref() {
-                    Some("response.output_text.delta") => {
+                    Some("response.output_text.delta") | Some("response.refusal.delta") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
                             if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                match content.last_mut() {
-                                    Some(AssistantContent::Text { text }) => text.push_str(delta),
-                                    _ => {
-                                        content.push(AssistantContent::Text {
-                                            text: delta.to_string(),
-                                        });
-                                        tool_call_keys.push(None);
-                                    }
-                                }
+                                append_text_delta(&mut content, &mut tool_call_keys, delta);
                                 yield StreamChunk::TextDelta(delta.to_string());
                             }
                         }
                     }
-                    Some("response.reasoning.delta") => {
+                    Some("response.reasoning.delta")
+                    | Some("response.reasoning_text.delta")
+                    | Some("response.reasoning_summary_text.delta") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
                             if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                match content.last_mut() {
-                                    Some(AssistantContent::Thought {
-                                        thought: ThoughtContent::Simple { text },
-                                    }) => text.push_str(delta),
-                                    _ => {
-                                        content.push(AssistantContent::Thought {
-                                            thought: ThoughtContent::Simple {
-                                                text: delta.to_string(),
-                                            },
-                                        });
-                                        tool_call_keys.push(None);
+                                if matches!(event.event_type.as_deref(), Some("response.reasoning_summary_text.delta")) {
+                                    if let Some(key) = summary_key_from_event(&data) {
+                                        summary_deltas_seen.insert(key);
                                     }
                                 }
+                                append_thinking_delta(&mut content, &mut tool_call_keys, delta);
                                 yield StreamChunk::ThinkingDelta(delta.to_string());
                             }
                         }
                     }
-                    Some("response.function_call_arguments.delta") => {
+                    Some("response.reasoning_summary_text.done")
+                    | Some("response.reasoning_summary_part.done") => {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                            let call_id = resolve_call_id(&data, &item_to_call_id);
-                            let Some(call_id) = call_id else {
-                                debug!(
-                                    target: "openai::responses::stream",
-                                    "Ignoring function_call_arguments.delta without call_id: {}",
-                                    event.data
-                                );
-                                continue;
-                            };
-                            if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                let entry = tool_calls.entry(call_id.clone())
-                                    .or_insert_with(|| (String::new(), String::new()));
-                                entry.1.push_str(delta);
-                                if !tool_call_positions.contains_key(&call_id) {
-                                    let pos = content.len();
-                                    content.push(AssistantContent::ToolCall {
-                                        tool_call: steer_tools::ToolCall {
-                                            id: call_id.clone(),
-                                            name: entry.0.clone(),
-                                            parameters: serde_json::Value::String(entry.1.clone()),
-                                        },
-                                        thought_signature: None,
-                                    });
-                                    tool_call_keys.push(Some(call_id.clone()));
-                                    tool_call_positions.insert(call_id.clone(), pos);
+                            if let Some(text) = summary_text_from_event(&data) {
+                                let key = summary_key_from_event(&data);
+                                if should_emit_summary(&key, &summary_deltas_seen, &summary_done_emitted) {
+                                    append_thinking_delta(&mut content, &mut tool_call_keys, &text);
+                                    yield StreamChunk::ThinkingDelta(text.to_string());
+                                    if let Some(key) = key {
+                                        summary_done_emitted.insert(key);
+                                    }
                                 }
-                                yield StreamChunk::ToolUseInputDelta {
-                                    id: call_id,
-                                    delta: delta.to_string(),
-                                };
                             }
+                        }
+                    }
+                    Some("response.in_progress")
+                    | Some("response.reasoning_summary_part.added")
+                    | Some("response.created")
+                    | Some("response.output_item.done")
+                    | Some("response.output_text.done")
+                    | Some("response.content_part.added")
+                    | Some("response.content_part.done")
+                    | Some("response.refusal.done") => {
+                        // No-op: informational events that don't affect streamed content.
+                    }
+                    Some("response.function_call_arguments.delta")
+                    | Some("response.custom_tool_call_input.delta")
+                    | Some("response.mcp_call_arguments.delta") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            match handle_tool_call_delta(
+                                &data,
+                                &item_to_call_id,
+                                &mut tool_calls,
+                                &mut tool_call_positions,
+                                &mut content,
+                                &mut tool_call_keys,
+                                &mut pending_tool_deltas,
+                                &tool_calls_started,
+                                &["delta", "input", "arguments"],
+                            ) {
+                                ToolDeltaOutcome::Emit { id, delta } => {
+                                    yield StreamChunk::ToolUseInputDelta { id, delta };
+                                }
+                                ToolDeltaOutcome::Buffered => {}
+                                ToolDeltaOutcome::Missing => {
+                                    debug!(
+                                        target: "openai::responses::stream",
+                                        "Ignoring tool_call delta without call_id or delta: {}",
+                                        event.data
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Some("response.function_call_arguments.done")
+                    | Some("response.custom_tool_call_input.done")
+                    | Some("response.mcp_call_arguments.done") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            handle_tool_call_done(
+                                &data,
+                                &item_to_call_id,
+                                &mut tool_calls,
+                                &mut tool_call_positions,
+                                &mut content,
+                                &mut tool_call_keys,
+                                &["arguments", "input", "delta"],
+                            );
                         }
                     }
                     Some("response.function_call.created") => {
@@ -882,31 +955,30 @@ impl Client {
                                 );
                                 continue;
                             };
-                            let name = extract_non_empty_str(&data, "name").unwrap_or_default();
-                            let entry = tool_calls
-                                .entry(call_id.clone())
-                                .or_insert_with(|| (String::new(), String::new()));
-                            if entry.0.is_empty() && !name.is_empty() {
-                                entry.0 = name.clone();
+                            let name = extract_first_non_empty_str(&data, &["name", "tool_name"]);
+                            let args = extract_first_non_empty_str(&data, &["arguments", "input"]);
+                            if let Some(chunk) = register_tool_call(
+                                &call_id,
+                                name,
+                                args,
+                                &mut tool_calls,
+                                &mut tool_call_positions,
+                                &mut content,
+                                &mut tool_call_keys,
+                                &mut tool_calls_started,
+                            ) {
+                                yield chunk;
                             }
-                            if !tool_call_positions.contains_key(&call_id) {
-                                let pos = content.len();
-                                content.push(AssistantContent::ToolCall {
-                                    tool_call: steer_tools::ToolCall {
+                            if tool_calls_started.contains(&call_id) {
+                                for delta in drain_pending_tool_deltas(
+                                    &call_id,
+                                    &mut pending_tool_deltas,
+                                ) {
+                                    yield StreamChunk::ToolUseInputDelta {
                                         id: call_id.clone(),
-                                        name: entry.0.clone(),
-                                        parameters: serde_json::Value::String(entry.1.clone()),
-                                    },
-                                    thought_signature: None,
-                                });
-                                tool_call_keys.push(Some(call_id.clone()));
-                                tool_call_positions.insert(call_id.clone(), pos);
-                            }
-                            if !name.is_empty() && tool_calls_started.insert(call_id.clone()) {
-                                yield StreamChunk::ToolUseStart {
-                                    id: call_id,
-                                    name,
-                                };
+                                        delta,
+                                    };
+                                }
                             }
                         }
                     }
@@ -914,7 +986,7 @@ impl Client {
                         if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
                             if let Some(item) = data.get("item") {
                                 let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                if item_type == "function_call" {
+                                if matches!(item_type, "function_call" | "custom_tool_call" | "mcp_call") {
                                     let item_id = extract_non_empty_str(item, "id")
                                         .or_else(|| extract_non_empty_str(item, "item_id"));
                                     let call_id = resolve_call_id(item, &item_to_call_id);
@@ -928,34 +1000,43 @@ impl Client {
                                     };
                                     if let Some(item_id) = item_id {
                                         if !item_id.is_empty() {
-                                            item_to_call_id.insert(item_id, call_id.clone());
+                                            item_to_call_id.insert(item_id.clone(), call_id.clone());
+                                            promote_tool_call_id(
+                                                &item_id,
+                                                &call_id,
+                                                &mut tool_calls,
+                                                &mut tool_call_positions,
+                                                &mut content,
+                                                &mut tool_call_keys,
+                                                &mut pending_tool_deltas,
+                                                &mut tool_calls_started,
+                                            );
                                         }
                                     }
-                                    let name = extract_non_empty_str(item, "name").unwrap_or_default();
-                                    let entry = tool_calls
-                                        .entry(call_id.clone())
-                                        .or_insert_with(|| (String::new(), String::new()));
-                                    if entry.0.is_empty() && !name.is_empty() {
-                                        entry.0 = name.clone();
+                                    let name = extract_first_non_empty_str(item, &["name", "tool_name"]);
+                                    let args = extract_first_non_empty_str(item, &["arguments", "input"]);
+                                    if let Some(chunk) = register_tool_call(
+                                        &call_id,
+                                        name,
+                                        args,
+                                        &mut tool_calls,
+                                        &mut tool_call_positions,
+                                        &mut content,
+                                        &mut tool_call_keys,
+                                        &mut tool_calls_started,
+                                    ) {
+                                        yield chunk;
                                     }
-                                    if !tool_call_positions.contains_key(&call_id) {
-                                        let pos = content.len();
-                                        content.push(AssistantContent::ToolCall {
-                                            tool_call: steer_tools::ToolCall {
+                                    if tool_calls_started.contains(&call_id) {
+                                        for delta in drain_pending_tool_deltas(
+                                            &call_id,
+                                            &mut pending_tool_deltas,
+                                        ) {
+                                            yield StreamChunk::ToolUseInputDelta {
                                                 id: call_id.clone(),
-                                                name: entry.0.clone(),
-                                                parameters: serde_json::Value::String(entry.1.clone()),
-                                            },
-                                            thought_signature: None,
-                                        });
-                                        tool_call_keys.push(Some(call_id.clone()));
-                                        tool_call_positions.insert(call_id.clone(), pos);
-                                    }
-                                    if !name.is_empty() && tool_calls_started.insert(call_id.clone()) {
-                                        yield StreamChunk::ToolUseStart {
-                                            id: call_id,
-                                            name,
-                                        };
+                                                delta,
+                                            };
+                                        }
                                     }
                                 }
                             }
@@ -980,8 +1061,7 @@ impl Client {
                                     );
                                     continue;
                                 }
-                                let parameters = serde_json::from_str(args)
-                                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                                let parameters = parse_tool_parameters(name, args);
                                 final_content.push(AssistantContent::ToolCall {
                                     tool_call: steer_tools::ToolCall {
                                         id: call_id.clone(),
@@ -1011,6 +1091,18 @@ impl Client {
                             break;
                         }
                     }
+                    Some("response.failed") => {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
+                            let (error_type, message) = extract_stream_error(&data)
+                                .unwrap_or_else(|| ("response_failed".to_string(), "Unknown error".to_string()));
+                            yield StreamChunk::Error(StreamError::Provider {
+                                provider: "openai".into(),
+                                error_type,
+                                message,
+                            });
+                            break;
+                        }
+                    }
                     _ => {
                         debug!(
                             target: "openai::responses::stream",
@@ -1029,6 +1121,406 @@ fn extract_non_empty_str(value: &serde_json::Value, key: &str) -> Option<String>
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn extract_first_non_empty_str(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = extract_non_empty_str(value, key) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+enum ToolCallIdResolution {
+    Resolved(String),
+    Pending(String),
+}
+
+enum ToolDeltaOutcome {
+    Emit { id: String, delta: String },
+    Buffered,
+    Missing,
+}
+
+fn resolve_tool_call_id_for_event(
+    value: &serde_json::Value,
+    item_to_call_id: &std::collections::HashMap<String, String>,
+) -> Option<ToolCallIdResolution> {
+    if let Some(call_id) = extract_non_empty_str(value, "call_id") {
+        return Some(ToolCallIdResolution::Resolved(call_id));
+    }
+    if let Some(item_id) = extract_non_empty_str(value, "item_id") {
+        if let Some(mapped) = item_to_call_id.get(&item_id) {
+            return Some(ToolCallIdResolution::Resolved(mapped.clone()));
+        }
+        return Some(ToolCallIdResolution::Pending(item_id));
+    }
+    if let Some(id) = extract_non_empty_str(value, "id") {
+        if let Some(mapped) = item_to_call_id.get(&id) {
+            return Some(ToolCallIdResolution::Resolved(mapped.clone()));
+        }
+        return Some(ToolCallIdResolution::Resolved(id));
+    }
+    None
+}
+
+fn summary_index_from_container(value: &serde_json::Value) -> Option<i64> {
+    let summary_index = value.get("summary_index")?;
+    summary_index
+        .as_i64()
+        .or_else(|| summary_index.as_str().and_then(|value| value.parse::<i64>().ok()))
+}
+
+fn summary_index_from_event(data: &serde_json::Value) -> Option<i64> {
+    summary_index_from_container(data)
+        .or_else(|| data.get("part").and_then(summary_index_from_container))
+}
+
+fn summary_key_from_event(data: &serde_json::Value) -> Option<String> {
+    let item_key = data
+        .get("item_id")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .or_else(|| {
+            data.get("output_index")
+                .and_then(|value| value.as_i64())
+                .map(|value| format!("output_{value}"))
+        })?;
+    let summary_index = summary_index_from_event(data)?;
+    Some(format!("{item_key}:{summary_index}"))
+}
+
+fn summary_text_from_event(data: &serde_json::Value) -> Option<String> {
+    if let Some(text) = data.get("text").and_then(|value| value.as_str()) {
+        return Some(text.to_string());
+    }
+    let part = data.get("part")?;
+    let part = serde_json::from_value::<ReasoningSummaryPart>(part.clone()).ok()?;
+    part.text().map(|text| text.to_string())
+}
+
+fn should_emit_summary(
+    key: &Option<String>,
+    summary_deltas_seen: &std::collections::HashSet<String>,
+    summary_done_emitted: &std::collections::HashSet<String>,
+) -> bool {
+    match key {
+        Some(key) => !summary_deltas_seen.contains(key) && !summary_done_emitted.contains(key),
+        None => true,
+    }
+}
+
+fn append_text_delta(
+    content: &mut Vec<AssistantContent>,
+    tool_call_keys: &mut Vec<Option<String>>,
+    delta: &str,
+) {
+    match content.last_mut() {
+        Some(AssistantContent::Text { text }) => text.push_str(delta),
+        _ => {
+            content.push(AssistantContent::Text {
+                text: delta.to_string(),
+            });
+            tool_call_keys.push(None);
+        }
+    }
+}
+
+fn append_thinking_delta(
+    content: &mut Vec<AssistantContent>,
+    tool_call_keys: &mut Vec<Option<String>>,
+    delta: &str,
+) {
+    match content.last_mut() {
+        Some(AssistantContent::Thought {
+            thought: ThoughtContent::Simple { text },
+        }) => text.push_str(delta),
+        _ => {
+            content.push(AssistantContent::Thought {
+                thought: ThoughtContent::Simple {
+                    text: delta.to_string(),
+                },
+            });
+            tool_call_keys.push(None);
+        }
+    }
+}
+
+fn ensure_tool_call_placeholder(
+    call_id: &str,
+    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
+    tool_call_positions: &mut std::collections::HashMap<String, usize>,
+    content: &mut Vec<AssistantContent>,
+    tool_call_keys: &mut Vec<Option<String>>,
+) {
+    if tool_call_positions.contains_key(call_id) {
+        return;
+    }
+    let entry = tool_calls
+        .entry(call_id.to_string())
+        .or_insert_with(|| (String::new(), String::new()));
+    let pos = content.len();
+    content.push(AssistantContent::ToolCall {
+        tool_call: steer_tools::ToolCall {
+            id: call_id.to_string(),
+            name: entry.0.clone(),
+            parameters: serde_json::Value::String(entry.1.clone()),
+        },
+        thought_signature: None,
+    });
+    tool_call_keys.push(Some(call_id.to_string()));
+    tool_call_positions.insert(call_id.to_string(), pos);
+}
+
+fn handle_tool_call_delta(
+    data: &serde_json::Value,
+    item_to_call_id: &std::collections::HashMap<String, String>,
+    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
+    tool_call_positions: &mut std::collections::HashMap<String, usize>,
+    content: &mut Vec<AssistantContent>,
+    tool_call_keys: &mut Vec<Option<String>>,
+    pending_tool_deltas: &mut std::collections::HashMap<String, Vec<String>>,
+    tool_calls_started: &std::collections::HashSet<String>,
+    delta_keys: &[&str],
+) -> ToolDeltaOutcome {
+    let Some(delta) = extract_first_non_empty_str(data, delta_keys) else {
+        return ToolDeltaOutcome::Missing;
+    };
+    let Some(resolution) = resolve_tool_call_id_for_event(data, item_to_call_id) else {
+        return ToolDeltaOutcome::Missing;
+    };
+    match resolution {
+        ToolCallIdResolution::Resolved(call_id) => {
+            let entry = tool_calls
+                .entry(call_id.clone())
+                .or_insert_with(|| (String::new(), String::new()));
+            entry.1.push_str(&delta);
+            ensure_tool_call_placeholder(
+                &call_id,
+                tool_calls,
+                tool_call_positions,
+                content,
+                tool_call_keys,
+            );
+            if tool_calls_started.contains(&call_id) {
+                ToolDeltaOutcome::Emit { id: call_id, delta }
+            } else {
+                pending_tool_deltas
+                    .entry(call_id)
+                    .or_default()
+                    .push(delta);
+                ToolDeltaOutcome::Buffered
+            }
+        }
+        ToolCallIdResolution::Pending(item_id) => {
+            let entry = tool_calls
+                .entry(item_id.clone())
+                .or_insert_with(|| (String::new(), String::new()));
+            entry.1.push_str(&delta);
+            ensure_tool_call_placeholder(
+                &item_id,
+                tool_calls,
+                tool_call_positions,
+                content,
+                tool_call_keys,
+            );
+            pending_tool_deltas
+                .entry(item_id)
+                .or_default()
+                .push(delta);
+            ToolDeltaOutcome::Buffered
+        }
+    }
+}
+
+fn handle_tool_call_done(
+    data: &serde_json::Value,
+    item_to_call_id: &std::collections::HashMap<String, String>,
+    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
+    tool_call_positions: &mut std::collections::HashMap<String, usize>,
+    content: &mut Vec<AssistantContent>,
+    tool_call_keys: &mut Vec<Option<String>>,
+    arg_keys: &[&str],
+) {
+    let Some(resolution) = resolve_tool_call_id_for_event(data, item_to_call_id) else {
+        return;
+    };
+    let Some(arguments) = extract_first_non_empty_str(data, arg_keys) else {
+        return;
+    };
+    let key = match resolution {
+        ToolCallIdResolution::Resolved(call_id) => call_id,
+        ToolCallIdResolution::Pending(item_id) => item_id,
+    };
+    let entry = tool_calls
+        .entry(key.clone())
+        .or_insert_with(|| (String::new(), String::new()));
+    entry.1 = arguments;
+    ensure_tool_call_placeholder(
+        &key,
+        tool_calls,
+        tool_call_positions,
+        content,
+        tool_call_keys,
+    );
+}
+
+fn register_tool_call(
+    call_id: &str,
+    name: Option<String>,
+    args: Option<String>,
+    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
+    tool_call_positions: &mut std::collections::HashMap<String, usize>,
+    content: &mut Vec<AssistantContent>,
+    tool_call_keys: &mut Vec<Option<String>>,
+    tool_calls_started: &mut std::collections::HashSet<String>,
+) -> Option<StreamChunk> {
+    if call_id.is_empty() {
+        return None;
+    }
+    let mut name_to_emit = None;
+    {
+        let entry = tool_calls
+            .entry(call_id.to_string())
+            .or_insert_with(|| (String::new(), String::new()));
+        if let Some(name) = name.filter(|value| !value.is_empty())
+            && entry.0.is_empty()
+        {
+            entry.0 = name;
+        }
+        if let Some(args) = args.filter(|value| !value.is_empty())
+            && entry.1.is_empty()
+        {
+            entry.1 = args;
+        }
+        if !entry.0.is_empty() {
+            name_to_emit = Some(entry.0.clone());
+        }
+    }
+    ensure_tool_call_placeholder(
+        call_id,
+        tool_calls,
+        tool_call_positions,
+        content,
+        tool_call_keys,
+    );
+    if let Some(name) = name_to_emit {
+        if tool_calls_started.insert(call_id.to_string()) {
+            return Some(StreamChunk::ToolUseStart {
+                id: call_id.to_string(),
+                name,
+            });
+        }
+    }
+    None
+}
+
+fn drop_tool_call_placeholder_at(
+    call_id: &str,
+    index: usize,
+    tool_call_positions: &mut std::collections::HashMap<String, usize>,
+    content: &mut Vec<AssistantContent>,
+    tool_call_keys: &mut Vec<Option<String>>,
+) {
+    tool_call_positions.remove(call_id);
+    content.remove(index);
+    tool_call_keys.remove(index);
+    for pos in tool_call_positions.values_mut() {
+        if *pos > index {
+            *pos -= 1;
+        }
+    }
+}
+
+fn promote_tool_call_id(
+    provisional_id: &str,
+    call_id: &str,
+    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
+    tool_call_positions: &mut std::collections::HashMap<String, usize>,
+    content: &mut Vec<AssistantContent>,
+    tool_call_keys: &mut Vec<Option<String>>,
+    pending_tool_deltas: &mut std::collections::HashMap<String, Vec<String>>,
+    tool_calls_started: &mut std::collections::HashSet<String>,
+) {
+    if provisional_id == call_id {
+        return;
+    }
+
+    if let Some((pending_name, pending_args)) = tool_calls.remove(provisional_id) {
+        let entry = tool_calls
+            .entry(call_id.to_string())
+            .or_insert_with(|| (String::new(), String::new()));
+        if entry.0.is_empty() {
+            entry.0 = pending_name;
+        }
+        if entry.1.is_empty() || pending_args.len() > entry.1.len() {
+            entry.1 = pending_args;
+        }
+    }
+
+    if let Some(deltas) = pending_tool_deltas.remove(provisional_id) {
+        pending_tool_deltas
+            .entry(call_id.to_string())
+            .or_default()
+            .extend(deltas);
+    }
+
+    if tool_calls_started.remove(provisional_id) {
+        tool_calls_started.insert(call_id.to_string());
+    }
+
+    for key in tool_call_keys.iter_mut() {
+        if key.as_deref() == Some(provisional_id) {
+            *key = Some(call_id.to_string());
+        }
+    }
+
+    let provisional_pos = tool_call_positions.get(provisional_id).copied();
+    let call_pos = tool_call_positions.get(call_id).copied();
+
+    match (provisional_pos, call_pos) {
+        (Some(p_pos), None) => {
+            tool_call_positions.remove(provisional_id);
+            tool_call_positions.insert(call_id.to_string(), p_pos);
+        }
+        (Some(p_pos), Some(c_pos)) => {
+            if p_pos < c_pos {
+                drop_tool_call_placeholder_at(
+                    call_id,
+                    c_pos,
+                    tool_call_positions,
+                    content,
+                    tool_call_keys,
+                );
+                tool_call_positions.remove(provisional_id);
+                tool_call_positions.insert(call_id.to_string(), p_pos);
+            } else if c_pos < p_pos {
+                drop_tool_call_placeholder_at(
+                    provisional_id,
+                    p_pos,
+                    tool_call_positions,
+                    content,
+                    tool_call_keys,
+                );
+                tool_call_positions.insert(call_id.to_string(), c_pos);
+            } else {
+                tool_call_positions.remove(provisional_id);
+                tool_call_positions.insert(call_id.to_string(), p_pos);
+            }
+        }
+        (None, Some(c_pos)) => {
+            tool_call_positions.insert(call_id.to_string(), c_pos);
+        }
+        (None, None) => {}
+    }
+}
+
+fn drain_pending_tool_deltas(
+    call_id: &str,
+    pending_tool_deltas: &mut std::collections::HashMap<String, Vec<String>>,
+) -> Vec<String> {
+    pending_tool_deltas.remove(call_id).unwrap_or_default()
 }
 
 fn log_request_payload(request: &ResponsesRequest, is_stream: bool) {
@@ -1074,6 +1566,56 @@ fn resolve_call_id(
     }
 
     Some(candidate)
+}
+
+fn select_call_id(call_id: Option<String>, id: Option<String>) -> Option<String> {
+    match call_id {
+        Some(value) if !value.is_empty() => Some(value),
+        _ => id.filter(|value| !value.is_empty()),
+    }
+}
+
+fn select_tool_name(name: Option<String>, tool_name: Option<String>) -> Option<String> {
+    match name {
+        Some(value) if !value.is_empty() => Some(value),
+        _ => tool_name.filter(|value| !value.is_empty()),
+    }
+}
+
+fn parse_tool_parameters(tool_name: &str, raw_args: &str) -> serde_json::Value {
+    if raw_args.trim().is_empty() {
+        return serde_json::Value::Object(serde_json::Map::new());
+    }
+    match serde_json::from_str(raw_args) {
+        Ok(params) => params,
+        Err(e) => {
+            tracing::warn!(
+                target: "openai::responses",
+                "Failed to parse tool arguments for '{}': {}. Raw arguments: {}",
+                tool_name,
+                e,
+                raw_args
+            );
+            serde_json::Value::Object(serde_json::Map::new())
+        }
+    }
+}
+
+fn extract_stream_error(data: &serde_json::Value) -> Option<(String, String)> {
+    let error = data.get("error");
+    let error_type = error
+        .and_then(|value| value.get("type"))
+        .and_then(|value| value.as_str())
+        .or_else(|| data.get("type").and_then(|value| value.as_str()))
+        .unwrap_or("stream_error")
+        .to_string();
+    let message = error
+        .and_then(|value| value.get("message"))
+        .and_then(|value| value.as_str())
+        .or_else(|| data.get("message").and_then(|value| value.as_str()))
+        .unwrap_or("Unknown error")
+        .to_string();
+    Some((error_type, message))
 }
 
 fn auth_header_context(model_id: &ModelId, request_kind: RequestKind) -> AuthHeaderContext {
@@ -1458,7 +2000,7 @@ mod tests {
         // Test parsing function call output
         let output = vec![ResponseOutputItem::FunctionCall {
             id: "fc_123".to_string(),
-            call_id: "call_456".to_string(),
+            call_id: Some("call_456".to_string()),
             name: "get_weather".to_string(),
             arguments: r#"{"location":"Boston"}"#.to_string(),
             status: "completed".to_string(),
@@ -1470,6 +2012,54 @@ mod tests {
                 id: "call_456".to_string(),
                 name: "get_weather".to_string(),
                 parameters: serde_json::json!({"location": "Boston"}),
+            },
+            thought_signature: None,
+        }];
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_responses_api_output_refusal_parsing() {
+        let client = Client::new("test_key".to_string());
+
+        let output = vec![ResponseOutputItem::Message {
+            id: "msg_123".to_string(),
+            status: "completed".to_string(),
+            role: "assistant".to_string(),
+            content: vec![MessageContentPart::Refusal {
+                refusal: "I can't help with that.".to_string(),
+            }],
+        }];
+
+        let actual = client.convert_output(Some(output));
+        let expected = vec![AssistantContent::Text {
+            text: "I can't help with that.".to_string(),
+        }];
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_responses_api_output_custom_tool_call_parsing() {
+        let client = Client::new("test_key".to_string());
+
+        let output = vec![ResponseOutputItem::CustomToolCall {
+            id: Some("ctc_123".to_string()),
+            call_id: Some("call_456".to_string()),
+            name: Some("do_thing".to_string()),
+            tool_name: None,
+            input: Some(r#"{"value":42}"#.to_string()),
+            status: Some("completed".to_string()),
+            extra: Default::default(),
+        }];
+
+        let actual = client.convert_output(Some(output));
+        let expected = vec![AssistantContent::ToolCall {
+            tool_call: steer_tools::ToolCall {
+                id: "call_456".to_string(),
+                name: "do_thing".to_string(),
+                parameters: serde_json::json!({"value": 42}),
             },
             thought_signature: None,
         }];
@@ -1680,6 +2270,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_convert_responses_stream_with_custom_tool_call() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.output_item.added".to_string()),
+                data: r#"{"item":{"type":"custom_tool_call","id":"item_1","call_id":"call_123","name":"do_thing","input":""}}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.custom_tool_call_input.delta".to_string()),
+                data: r#"{"call_id":"call_123","delta":"{\"value\":"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.custom_tool_call_input.delta".to_string()),
+                data: r#"{"call_id":"call_123","delta":"42}"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let tool_start = stream.next().await.unwrap();
+        assert!(
+            matches!(tool_start, StreamChunk::ToolUseStart { ref id, ref name } if id == "call_123" && name == "do_thing")
+        );
+
+        let arg_delta_1 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_1, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "{\"value\":")
+        );
+
+        let arg_delta_2 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_2, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "42}")
+        );
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 1);
+            if let AssistantContent::ToolCall { tool_call, .. } = &response.content[0] {
+                assert_eq!(tool_call.id, "call_123");
+                assert_eq!(tool_call.name, "do_thing");
+            } else {
+                panic!("Expected ToolCall");
+            }
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
     async fn test_convert_responses_stream_with_output_item_call_id() {
         use crate::api::sse::SseEvent;
         use futures::stream;
@@ -1742,6 +2394,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_convert_responses_stream_buffers_deltas_until_output_item_added() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.function_call_arguments.delta".to_string()),
+                data: r#"{"item_id":"item_1","delta":"{\"city\":"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.output_item.added".to_string()),
+                data: r#"{"item":{"type":"function_call","id":"item_1","call_id":"call_123","name":"get_weather"}}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.function_call_arguments.delta".to_string()),
+                data: r#"{"item_id":"item_1","delta":"\"NYC\"}"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let tool_start = stream.next().await.unwrap();
+        assert!(
+            matches!(tool_start, StreamChunk::ToolUseStart { ref id, ref name } if id == "call_123" && name == "get_weather")
+        );
+
+        let arg_delta_1 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_1, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "{\"city\":")
+        );
+
+        let arg_delta_2 = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta_2, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "\"NYC\"}")
+        );
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 1);
+            if let AssistantContent::ToolCall { tool_call, .. } = &response.content[0] {
+                assert_eq!(tool_call.id, "call_123");
+                assert_eq!(tool_call.name, "get_weather");
+            } else {
+                panic!("Expected ToolCall");
+            }
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_buffers_deltas_until_tool_start() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.function_call_arguments.delta".to_string()),
+                data: r#"{"call_id":"call_123","delta":"{\"city\":"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.function_call.created".to_string()),
+                data: r#"{"call_id":"call_123","name":"get_weather"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let tool_start = stream.next().await.unwrap();
+        assert!(
+            matches!(tool_start, StreamChunk::ToolUseStart { ref id, ref name } if id == "call_123" && name == "get_weather")
+        );
+
+        let arg_delta = stream.next().await.unwrap();
+        assert!(
+            matches!(arg_delta, StreamChunk::ToolUseInputDelta { ref id, ref delta } if id == "call_123" && delta == "{\"city\":")
+        );
+
+        let complete = stream.next().await.unwrap();
+        assert!(matches!(complete, StreamChunk::MessageComplete(_)));
+    }
+
+    #[tokio::test]
     async fn test_convert_responses_stream_cancellation() {
         use crate::api::sse::SseEvent;
         use futures::stream;
@@ -1764,5 +2520,50 @@ mod tests {
             cancelled,
             StreamChunk::Error(StreamError::Cancelled)
         ));
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_with_refusal_delta() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.refusal.delta".to_string()),
+                data: r#"{"delta":"No"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.refusal.delta".to_string()),
+                data: r#"{"delta":" thanks"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let first_delta = stream.next().await.unwrap();
+        assert!(matches!(first_delta, StreamChunk::TextDelta(ref t) if t == "No"));
+
+        let second_delta = stream.next().await.unwrap();
+        assert!(matches!(second_delta, StreamChunk::TextDelta(ref t) if t == " thanks"));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.content.len(), 1);
+            assert!(
+                matches!(&response.content[0], AssistantContent::Text { text } if text == "No thanks")
+            );
+        } else {
+            panic!("Expected MessageComplete");
+        }
     }
 }
