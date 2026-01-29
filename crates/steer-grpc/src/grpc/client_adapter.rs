@@ -482,18 +482,14 @@ impl AgentClient {
             .await
             .get_session(request)
             .await
-            .map_err(|e| GrpcError::CallFailed(Box::new(e)))?
+            .map_err(GrpcError::from)?
             .into_inner();
 
         let mut header = None;
         let mut messages = Vec::new();
         let mut footer = None;
 
-        while let Some(response) = stream
-            .message()
-            .await
-            .map_err(|e| GrpcError::CallFailed(Box::new(e)))?
-        {
+        while let Some(response) = stream.message().await.map_err(GrpcError::from)? {
             match response.chunk {
                 Some(proto::get_session_response::Chunk::Header(h)) => header = Some(h),
                 Some(proto::get_session_response::Chunk::Message(m)) => messages.push(m),
@@ -530,7 +526,7 @@ impl AgentClient {
                 Ok(true)
             }
             Err(status) if status.code() == tonic::Code::NotFound => Ok(false),
-            Err(e) => Err(GrpcError::CallFailed(Box::new(e))),
+            Err(e) => Err(GrpcError::from(e)),
         }
     }
 
@@ -557,11 +553,7 @@ impl AgentClient {
         let mut messages = Vec::new();
         let mut approved_tools = Vec::new();
 
-        while let Some(response) = stream
-            .message()
-            .await
-            .map_err(|e| GrpcError::CallFailed(Box::new(e)))?
-        {
+        while let Some(response) = stream.message().await.map_err(GrpcError::from)? {
             match response.chunk {
                 Some(proto::get_conversation_response::Chunk::Message(proto_msg)) => {
                     match proto_to_message(proto_msg) {

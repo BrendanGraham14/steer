@@ -747,6 +747,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     metadata: std::collections::HashMap::new(),
                 }),
             })),
+            Err(RuntimeError::InvalidInput { message }) => Err(Status::invalid_argument(message)),
             Err(e) => {
                 error!("Failed to send message: {}", e);
                 Err(Status::internal(format!("Failed to send message: {e}")))
@@ -777,7 +778,10 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         self.runtime
             .submit_edited_message(session_id, req.message_id, req.new_content, model)
             .await
-            .map_err(|e| Status::internal(format!("Failed to edit message: {e}")))?;
+            .map_err(|e| match e {
+                RuntimeError::InvalidInput { message } => Status::failed_precondition(message),
+                other => Status::internal(format!("Failed to edit message: {other}")),
+            })?;
 
         Ok(Response::new(EditMessageResponse {}))
     }
@@ -792,7 +796,10 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         self.runtime
             .submit_dequeue_queued_item(session_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to dequeue queued item: {e}")))?;
+            .map_err(|e| match e {
+                RuntimeError::InvalidInput { message } => Status::failed_precondition(message),
+                other => Status::internal(format!("Failed to dequeue queued item: {other}")),
+            })?;
 
         Ok(Response::new(DequeueQueuedItemResponse {}))
     }
@@ -852,7 +859,16 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         self.runtime
             .switch_primary_agent(session_id, req.primary_agent_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to switch primary agent: {e}")))?;
+            .map_err(|e| match e {
+                RuntimeError::InvalidInput { message } => {
+                    if message.contains("operation is active") {
+                        Status::failed_precondition(message)
+                    } else {
+                        Status::invalid_argument(message)
+                    }
+                }
+                other => Status::internal(format!("Failed to switch primary agent: {other}")),
+            })?;
 
         Ok(Response::new(SwitchPrimaryAgentResponse {}))
     }
@@ -888,7 +904,10 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         self.runtime
             .compact_session(session_id, model)
             .await
-            .map_err(|e| Status::internal(format!("Failed to compact session: {e}")))?;
+            .map_err(|e| match e {
+                RuntimeError::InvalidInput { message } => Status::failed_precondition(message),
+                other => Status::internal(format!("Failed to compact session: {other}")),
+            })?;
 
         Ok(Response::new(CompactSessionResponse {}))
     }

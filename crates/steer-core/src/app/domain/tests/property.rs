@@ -162,10 +162,10 @@ mod tests {
             };
 
             let mut state1 = AppState::new(session_id);
-            let effects1 = reduce(&mut state1, action.clone());
+            let effects1 = reduce(&mut state1, action.clone()).expect("reduce failed");
 
             let mut state2 = AppState::new(session_id);
-            let effects2 = reduce(&mut state2, action);
+            let effects2 = reduce(&mut state2, action).expect("reduce failed");
 
             prop_assert_eq!(
                 state1.message_graph.messages.len(),
@@ -205,7 +205,7 @@ mod tests {
             let session_id = SessionId::from(uuid::Uuid::from_u128(12345));
             let mut state = AppState::new(session_id);
 
-            let effects = reduce(&mut state, action);
+            let effects = reduce(&mut state, action).expect("reduce failed");
 
             prop_assert!(state.current_operation.is_some(), "Should have an operation");
             prop_assert!(
@@ -232,7 +232,8 @@ mod tests {
             let _ = reduce(&mut state, Action::Cancel {
                 session_id,
                 op_id: None,
-            });
+            })
+            .expect("reduce failed");
 
             prop_assert!(state.current_operation.is_none(), "Operation should be cleared");
             prop_assert!(state.cancelled_ops.contains(&op_id), "Op should be recorded as cancelled");
@@ -254,7 +255,8 @@ mod tests {
                 let _ = reduce(&mut state, Action::Cancel {
                     session_id,
                     op_id: None,
-                });
+                })
+                .expect("reduce failed");
             }
 
             prop_assert!(
@@ -280,7 +282,8 @@ mod tests {
             let _ = reduce(&mut state, Action::Cancel {
                 session_id,
                 op_id: None,
-            });
+            })
+            .expect("reduce failed");
 
             state.current_operation = Some(OperationState {
                 op_id,
@@ -296,7 +299,8 @@ mod tests {
                     tool_name: "test".to_string(),
                     payload: "done".to_string(),
                 })),
-            });
+            })
+            .expect("reduce failed");
 
             prop_assert!(effects.is_empty(), "Late result should produce no effects");
         }
@@ -325,7 +329,8 @@ mod tests {
                 session_id,
                 request_id: RequestId::new(),
                 tool_call,
-            });
+            })
+            .expect("reduce failed");
 
             prop_assert!(state.pending_approval.is_none(), "Should not have pending approval");
             prop_assert!(
@@ -357,7 +362,8 @@ mod tests {
                 message_id,
                 content,
                 timestamp,
-            });
+            })
+            .expect("reduce failed");
 
             prop_assert!(state.current_operation.is_none(), "Operation should complete");
             prop_assert!(
@@ -387,7 +393,8 @@ mod tests {
                     session_id,
                     request_id: RequestId::new(),
                     tool_call: tool_call.clone(),
-                });
+                })
+                .expect("reduce failed");
             }
 
             prop_assert!(state.pending_approval.is_some(), "Should have pending approval");

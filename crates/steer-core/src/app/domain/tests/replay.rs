@@ -39,6 +39,10 @@ mod tests {
         ToolCallId::from_string(s)
     }
 
+    fn reduce_ok(state: &mut AppState, action: Action) -> Vec<Effect> {
+        reduce(state, action).expect("reduce failed")
+    }
+
     fn collect_events(effects: &[Effect]) -> Vec<SessionEvent> {
         effects
             .iter()
@@ -59,7 +63,7 @@ mod tests {
         let message_id = deterministic_message_id("msg_1");
 
         let mut live_state = AppState::new(session_id);
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::UserInput {
                 session_id,
@@ -98,7 +102,7 @@ mod tests {
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::UserInput {
                 session_id,
@@ -116,7 +120,7 @@ mod tests {
             name: "bash".to_string(),
             parameters: serde_json::json!({"command": "ls"}),
         };
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::ModelResponseComplete {
                 session_id,
@@ -137,7 +141,7 @@ mod tests {
         all_events.extend(collect_events(&effects));
 
         let request_id = live_state.pending_approval.as_ref().unwrap().request_id;
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::ToolApprovalDecided {
                 session_id,
@@ -177,7 +181,7 @@ mod tests {
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::UserInput {
                 session_id,
@@ -190,7 +194,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::Cancel {
                 session_id,
@@ -236,7 +240,7 @@ mod tests {
                 parameters: serde_json::json!({}),
             };
 
-            let effects = reduce(
+            let effects = reduce_ok(
                 &mut live_state,
                 Action::ToolApprovalRequested {
                     session_id,
@@ -248,7 +252,7 @@ mod tests {
         }
 
         let pending_request_id = live_state.pending_approval.as_ref().unwrap().request_id;
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::ToolApprovalDecided {
                 session_id,
@@ -283,7 +287,7 @@ mod tests {
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::UserInput {
                 session_id,
@@ -296,7 +300,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::ModelResponseComplete {
                 session_id,
@@ -311,7 +315,7 @@ mod tests {
         all_events.extend(collect_events(&effects));
 
         let mut hydrated_state = AppState::new(session_id);
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut hydrated_state,
             Action::Hydrate {
                 session_id,
@@ -346,7 +350,7 @@ mod tests {
 
         let op_id = deterministic_op_id(1);
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::UserInput {
                 session_id,
@@ -359,7 +363,7 @@ mod tests {
         );
         all_events.extend(collect_events(&effects));
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::ModelResponseComplete {
                 session_id,
@@ -374,7 +378,7 @@ mod tests {
         all_events.extend(collect_events(&effects));
 
         let op_id_2 = deterministic_op_id(2);
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::UserInput {
                 session_id,
@@ -432,7 +436,7 @@ mod tests {
             parameters: serde_json::json!({"command": "ls -la"}),
         };
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::ToolApprovalRequested {
                 session_id,
@@ -442,7 +446,7 @@ mod tests {
         );
         let mut all_events = collect_events(&effects);
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::ToolApprovalDecided {
                 session_id,
@@ -472,7 +476,7 @@ mod tests {
         let initial_message_count = state.message_graph.messages.len();
         let initial_event_seq = state.event_sequence;
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::Hydrate {
                 session_id,
@@ -499,7 +503,7 @@ mod tests {
         let mut all_events = Vec::new();
 
         let op_id = deterministic_op_id(1);
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::UserInput {
                 session_id,
@@ -518,7 +522,7 @@ mod tests {
             apply_event_to_state(&mut partial_state, event);
         }
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut live_state,
             Action::ModelResponseComplete {
                 session_id,

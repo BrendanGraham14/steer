@@ -18,8 +18,35 @@ use serde_json::Value;
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
 use steer_tools::tools::BASH_TOOL_NAME;
+use thiserror::Error;
 
-pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidActionKind {
+    OperationInFlight,
+    MissingSessionConfig,
+    UnknownPrimaryAgent,
+    QueueEmpty,
+}
+
+#[derive(Debug, Error)]
+pub enum ReduceError {
+    #[error("{message}")]
+    InvalidAction {
+        message: String,
+        kind: InvalidActionKind,
+    },
+    #[error("Invariant violated: {message}")]
+    Invariant { message: String },
+}
+
+fn invalid_action(kind: InvalidActionKind, message: impl Into<String>) -> ReduceError {
+    ReduceError::InvalidAction {
+        message: message.into(),
+        kind,
+    }
+}
+
+pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, ReduceError> {
     match action {
         Action::UserInput {
             session_id,
@@ -28,7 +55,9 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             message_id,
             model,
             timestamp,
-        } => handle_user_input(state, session_id, text, op_id, message_id, model, timestamp),
+        } => Ok(handle_user_input(
+            state, session_id, text, op_id, message_id, model, timestamp,
+        )),
 
         Action::UserEditedMessage {
             session_id,
@@ -55,34 +84,44 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             session_id,
             request_id,
             tool_call,
-        } => handle_tool_approval_requested(state, session_id, request_id, tool_call),
+        } => Ok(handle_tool_approval_requested(
+            state, session_id, request_id, tool_call,
+        )),
 
         Action::ToolApprovalDecided {
             session_id,
             request_id,
             decision,
             remember,
-        } => handle_tool_approval_decided(state, session_id, request_id, decision, remember),
+        } => Ok(handle_tool_approval_decided(
+            state, session_id, request_id, decision, remember,
+        )),
 
         Action::ToolExecutionStarted {
             session_id,
             tool_call_id,
             tool_name,
             tool_parameters,
-        } => handle_tool_execution_started(
+        } => Ok(handle_tool_execution_started(
             state,
             session_id,
             tool_call_id,
             tool_name,
             tool_parameters,
-        ),
+        )),
 
         Action::ToolResult {
             session_id,
             tool_call_id,
             tool_name,
             result,
-        } => handle_tool_result(state, session_id, tool_call_id, tool_name, result),
+        } => Ok(handle_tool_result(
+            state,
+            session_id,
+            tool_call_id,
+            tool_name,
+            result,
+        )),
 
         Action::ModelResponseComplete {
             session_id,
@@ -90,17 +129,19 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             message_id,
             content,
             timestamp,
-        } => {
-            handle_model_response_complete(state, session_id, op_id, message_id, content, timestamp)
-        }
+        } => Ok(handle_model_response_complete(
+            state, session_id, op_id, message_id, content, timestamp,
+        )),
 
         Action::ModelResponseError {
             session_id,
             op_id,
             error,
-        } => handle_model_response_error(state, session_id, op_id, &error),
+        } => Ok(handle_model_response_error(
+            state, session_id, op_id, &error,
+        )),
 
-        Action::Cancel { session_id, op_id } => handle_cancel(state, session_id, op_id),
+        Action::Cancel { session_id, op_id } => Ok(handle_cancel(state, session_id, op_id)),
 
         Action::DirectBashCommand {
             session_id,
@@ -108,11 +149,13 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             message_id,
             command,
             timestamp,
-        } => handle_direct_bash(state, session_id, op_id, message_id, command, timestamp),
+        } => Ok(handle_direct_bash(
+            state, session_id, op_id, message_id, command, timestamp,
+        )),
 
         Action::DequeueQueuedItem { session_id } => handle_dequeue_queued_item(state, session_id),
 
-        Action::DrainQueuedWork { session_id } => maybe_start_queued_work(state, session_id),
+        Action::DrainQueuedWork { session_id } => Ok(maybe_start_queued_work(state, session_id)),
 
         Action::RequestCompaction {
             session_id,
@@ -124,21 +167,21 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             session_id,
             events,
             starting_sequence,
-        } => handle_hydrate(state, session_id, events, starting_sequence),
+        } => Ok(handle_hydrate(state, session_id, events, starting_sequence)),
 
         Action::WorkspaceFilesListed { files, .. } => {
             state.workspace_files = files;
-            vec![]
+            Ok(vec![])
         }
 
         Action::ToolSchemasAvailable { tools, .. } => {
             state.tools = tools;
-            vec![]
+            Ok(vec![])
         }
 
         Action::ToolSchemasUpdated { schemas, .. } => {
             state.tools = schemas;
-            vec![]
+            Ok(vec![])
         }
 
         Action::SwitchPrimaryAgent {
@@ -178,13 +221,13 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             state
                 .mcp_servers
                 .insert(server_name.clone(), new_state.clone());
-            vec![Effect::EmitEvent {
+            Ok(vec![Effect::EmitEvent {
                 session_id,
                 event: SessionEvent::McpServerStateChanged {
                     server_name,
                     state: new_state,
                 },
-            }]
+            }])
         }
 
         Action::CompactionComplete {
@@ -197,7 +240,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
             previous_active_message_id,
             model,
             timestamp,
-        } => handle_compaction_complete(
+        } => Ok(handle_compaction_complete(
             state,
             session_id,
             CompactionCompleteParams {
@@ -210,15 +253,15 @@ pub fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
                 model_name: model,
                 timestamp,
             },
-        ),
+        )),
 
         Action::CompactionFailed {
             session_id,
             op_id,
             error,
-        } => handle_compaction_failed(state, session_id, op_id, error),
+        } => Ok(handle_compaction_failed(state, session_id, op_id, error)),
 
-        Action::Shutdown => vec![],
+        Action::Shutdown => Ok(vec![]),
     }
 }
 
@@ -314,7 +357,7 @@ fn handle_user_edited_message(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
     params: UserEditedMessageParams,
-) -> Vec<Effect> {
+) -> Result<Vec<Effect>, ReduceError> {
     let UserEditedMessageParams {
         original_message_id,
         new_content,
@@ -326,12 +369,10 @@ fn handle_user_edited_message(
     let mut effects = Vec::new();
 
     if state.has_active_operation() {
-        return vec![Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::Error {
-                message: "Cannot edit message while an operation is active.".to_string(),
-            },
-        }];
+        return Err(invalid_action(
+            InvalidActionKind::OperationInFlight,
+            "Cannot edit message while an operation is active.",
+        ));
     }
 
     let parent_id = state
@@ -385,7 +426,7 @@ fn handle_user_edited_message(
         tools: state.tools.clone(),
     });
 
-    effects
+    Ok(effects)
 }
 
 fn handle_tool_approval_requested(
@@ -1279,21 +1320,19 @@ fn handle_direct_bash(
 fn handle_dequeue_queued_item(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
-) -> Vec<Effect> {
+) -> Result<Vec<Effect>, ReduceError> {
     if state.pop_next_queued_work().is_some() {
-        vec![Effect::EmitEvent {
+        Ok(vec![Effect::EmitEvent {
             session_id,
             event: SessionEvent::QueueUpdated {
                 queue: snapshot_queue(state),
             },
-        }]
+        }])
     } else {
-        vec![Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::Error {
-                message: "No queued item to remove.".to_string(),
-            },
-        }]
+        Err(invalid_action(
+            InvalidActionKind::QueueEmpty,
+            "No queued item to remove.",
+        ))
     }
 }
 
@@ -1373,32 +1412,30 @@ fn handle_request_compaction(
     session_id: crate::app::domain::types::SessionId,
     op_id: crate::app::domain::types::OpId,
     model: crate::config::model::ModelId,
-) -> Vec<Effect> {
+) -> Result<Vec<Effect>, ReduceError> {
     const MIN_MESSAGES_FOR_COMPACT: usize = 3;
     let message_count = state.message_graph.get_thread_messages().len();
 
     if state.has_active_operation() {
-        return vec![Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::Error {
-                message: "Cannot compact while an operation is active.".to_string(),
-            },
-        }];
+        return Err(invalid_action(
+            InvalidActionKind::OperationInFlight,
+            "Cannot compact while an operation is active.",
+        ));
     }
 
     if message_count < MIN_MESSAGES_FOR_COMPACT {
-        return vec![Effect::EmitEvent {
+        return Ok(vec![Effect::EmitEvent {
             session_id,
             event: SessionEvent::CompactResult {
                 result: crate::app::domain::event::CompactResult::InsufficientMessages,
             },
-        }];
+        }]);
     }
 
     state.start_operation(op_id, OperationKind::Compact);
     state.operation_models.insert(op_id, model.clone());
 
-    vec![
+    Ok(vec![
         Effect::EmitEvent {
             session_id,
             event: SessionEvent::OperationStarted {
@@ -1411,7 +1448,7 @@ fn handle_request_compaction(
             op_id,
             model,
         },
-    ]
+    ])
 }
 
 fn handle_cancel(
@@ -1531,14 +1568,12 @@ fn handle_switch_primary_agent(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
     agent_id: String,
-) -> Vec<Effect> {
+) -> Result<Vec<Effect>, ReduceError> {
     if state.current_operation.is_some() {
-        return vec![Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::Error {
-                message: "Cannot switch primary agent while an operation is active.".to_string(),
-            },
-        }];
+        return Err(invalid_action(
+            InvalidActionKind::OperationInFlight,
+            "Cannot switch primary agent while an operation is active.",
+        ));
     }
 
     let Some(base_config) = state
@@ -1546,21 +1581,17 @@ fn handle_switch_primary_agent(
         .as_ref()
         .or(state.session_config.as_ref())
     else {
-        return vec![Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::Error {
-                message: "Cannot switch primary agent without session config.".to_string(),
-            },
-        }];
+        return Err(invalid_action(
+            InvalidActionKind::MissingSessionConfig,
+            "Cannot switch primary agent without session config.",
+        ));
     };
 
     let Some(_spec) = primary_agent_spec(&agent_id) else {
-        return vec![Effect::EmitEvent {
-            session_id,
-            event: SessionEvent::Error {
-                message: format!("Unknown primary agent '{agent_id}'."),
-            },
-        }];
+        return Err(invalid_action(
+            InvalidActionKind::UnknownPrimaryAgent,
+            format!("Unknown primary agent '{agent_id}'."),
+        ));
     };
 
     let mut updated_config = base_config.clone();
@@ -1581,7 +1612,7 @@ fn handle_switch_primary_agent(
     effects.extend(backend_effects);
     effects.push(Effect::ReloadToolSchemas { session_id });
 
-    effects
+    Ok(effects)
 }
 
 fn apply_session_config_state(
@@ -1982,6 +2013,10 @@ mod tests {
         resolve_effective_config(&config)
     }
 
+    fn reduce(state: &mut AppState, action: Action) -> Vec<Effect> {
+        super::reduce(state, action).expect("reduce failed")
+    }
+
     #[test]
     fn test_user_input_starts_operation() {
         let mut state = test_state();
@@ -2176,7 +2211,7 @@ mod tests {
             pending_tool_calls: HashSet::new(),
         });
 
-        let effects = reduce(
+        let result = super::reduce(
             &mut state,
             Action::SwitchPrimaryAgent {
                 session_id,
@@ -2184,13 +2219,13 @@ mod tests {
             },
         );
 
-        assert!(effects.iter().any(|e| matches!(
-            e,
-            Effect::EmitEvent {
-                event: SessionEvent::Error { .. },
+        assert!(matches!(
+            result,
+            Err(ReduceError::InvalidAction {
+                kind: InvalidActionKind::OperationInFlight,
                 ..
-            }
-        )));
+            })
+        ));
         assert!(state.primary_agent_id.as_deref() == Some("normal"));
     }
 

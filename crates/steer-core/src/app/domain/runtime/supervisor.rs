@@ -32,7 +32,7 @@ pub enum RuntimeError {
     SessionAlreadyExists { session_id: String },
 
     #[error("Session error: {0}")]
-    Session(#[from] SessionError),
+    Session(SessionError),
 
     #[error("Event store error: {0}")]
     EventStore(#[from] crate::app::domain::session::EventStoreError),
@@ -45,6 +45,15 @@ pub enum RuntimeError {
 
     #[error("Supervisor shutting down")]
     ShuttingDown,
+}
+
+impl From<SessionError> for RuntimeError {
+    fn from(error: SessionError) -> Self {
+        match error {
+            SessionError::InvalidInput { message, .. } => RuntimeError::InvalidInput { message },
+            other => RuntimeError::Session(other),
+        }
+    }
 }
 
 pub(crate) enum SupervisorCmd {

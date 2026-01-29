@@ -1,4 +1,47 @@
+use std::fmt;
 use thiserror::Error;
+
+#[derive(Debug)]
+pub struct GrpcStatus(Box<tonic::Status>);
+
+impl GrpcStatus {
+    pub fn code(&self) -> tonic::Code {
+        self.0.code()
+    }
+
+    pub fn message(&self) -> &str {
+        self.0.message()
+    }
+}
+
+impl fmt::Display for GrpcStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "status: {:?}, message: \"{}\"",
+            self.code(),
+            self.message()
+        )
+    }
+}
+
+impl From<Box<tonic::Status>> for GrpcStatus {
+    fn from(status: Box<tonic::Status>) -> Self {
+        Self(status)
+    }
+}
+
+impl From<tonic::Status> for GrpcStatus {
+    fn from(status: tonic::Status) -> Self {
+        Self(Box::new(status))
+    }
+}
+
+impl From<GrpcStatus> for tonic::Status {
+    fn from(status: GrpcStatus) -> Self {
+        *status.0
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum GrpcError {
@@ -6,7 +49,7 @@ pub enum GrpcError {
     ConnectionFailed(#[from] tonic::transport::Error),
 
     #[error("gRPC call failed: {0}")]
-    CallFailed(#[from] Box<tonic::Status>),
+    CallFailed(GrpcStatus),
 
     #[error("Failed to convert message at index {index}: {reason}")]
     MessageConversionFailed { index: usize, reason: String },
@@ -66,7 +109,7 @@ impl From<GrpcError> for tonic::Status {
             GrpcError::ConnectionFailed(e) => {
                 tonic::Status::unavailable(format!("Connection failed: {e}"))
             }
-            GrpcError::CallFailed(status) => *status,
+            GrpcError::CallFailed(status) => status.into(),
             GrpcError::MessageConversionFailed { index, reason } => {
                 tonic::Status::invalid_argument(format!(
                     "Failed to convert message at index {index}: {reason}"
@@ -87,5 +130,17 @@ impl From<GrpcError> for tonic::Status {
                 tonic::Status::internal(format!("Channel error: {msg}"))
             }
         }
+    }
+}
+
+impl From<Box<tonic::Status>> for GrpcError {
+    fn from(status: Box<tonic::Status>) -> Self {
+        GrpcError::CallFailed(GrpcStatus::from(status))
+    }
+}
+
+impl From<tonic::Status> for GrpcError {
+    fn from(status: tonic::Status) -> Self {
+        GrpcError::CallFailed(GrpcStatus::from(status))
     }
 }

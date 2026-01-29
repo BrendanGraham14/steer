@@ -10,7 +10,7 @@ use crate::app::domain::action::{Action, McpServerState, SchemaSource};
 use crate::app::domain::delta::StreamDelta;
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::SessionEvent;
-use crate::app::domain::reduce::reduce;
+use crate::app::domain::reduce::{InvalidActionKind, ReduceError, reduce};
 use crate::app::domain::session::{EventStore, EventStoreError};
 use crate::app::domain::state::AppState;
 use crate::app::domain::types::{MessageId, OpId, SessionId};
@@ -46,6 +46,15 @@ pub(crate) enum SessionCmd {
 pub enum SessionError {
     #[error("Event store error: {0}")]
     EventStore(#[from] EventStoreError),
+
+    #[error("Invalid input: {message}")]
+    InvalidInput {
+        message: String,
+        kind: InvalidActionKind,
+    },
+
+    #[error("Reduce error: {message}")]
+    ReduceError { message: String },
 
     #[error("Session shutting down")]
     ShuttingDown,
@@ -295,7 +304,12 @@ impl SessionActor {
     }
 
     async fn handle_action(&mut self, action: Action) -> Result<(), SessionError> {
-        let effects = reduce(&mut self.state, action);
+        let effects = reduce(&mut self.state, action).map_err(|err| match err {
+            ReduceError::InvalidAction { message, kind } => {
+                SessionError::InvalidInput { message, kind }
+            }
+            ReduceError::Invariant { message } => SessionError::ReduceError { message },
+        })?;
 
         for effect in effects {
             self.handle_effect(effect).await?;

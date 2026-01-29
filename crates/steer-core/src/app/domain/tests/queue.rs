@@ -4,7 +4,7 @@ mod tests {
     use crate::app::domain::action::Action;
     use crate::app::domain::effect::Effect;
     use crate::app::domain::event::SessionEvent;
-    use crate::app::domain::reduce::reduce;
+    use crate::app::domain::reduce::{InvalidActionKind, ReduceError, reduce};
     use crate::app::domain::state::{AppState, OperationKind, OperationState, QueuedWorkItem};
     use crate::app::domain::types::{MessageId, NonEmptyString, OpId, SessionId};
     use crate::config::model::builtin;
@@ -20,6 +20,10 @@ mod tests {
         state
     }
 
+    fn reduce_ok(state: &mut AppState, action: Action) -> Vec<Effect> {
+        reduce(state, action).expect("reduce failed")
+    }
+
     #[test]
     fn queues_user_input_when_busy() {
         let session_id = SessionId::new();
@@ -31,7 +35,7 @@ mod tests {
         let model = builtin::claude_sonnet_4_5();
         let text = NonEmptyString::new("Hello".to_string()).expect("non-empty");
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
@@ -74,7 +78,7 @@ mod tests {
         let model = builtin::claude_sonnet_4_5();
 
         let first = NonEmptyString::new("First".to_string()).expect("non-empty");
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
@@ -87,7 +91,7 @@ mod tests {
         );
 
         let second = NonEmptyString::new("Second".to_string()).expect("non-empty");
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
@@ -114,7 +118,7 @@ mod tests {
         let active_op = OpId::new();
         let mut state = active_state(session_id, active_op);
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::DirectBashCommand {
                 session_id,
@@ -125,7 +129,7 @@ mod tests {
             },
         );
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::DirectBashCommand {
                 session_id,
@@ -157,7 +161,7 @@ mod tests {
         let queued_message_id = MessageId::from_string("queued_user");
         let text = NonEmptyString::new("Queued".to_string()).expect("non-empty");
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
@@ -169,7 +173,7 @@ mod tests {
             },
         );
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut state,
             Action::ModelResponseComplete {
                 session_id,
@@ -204,7 +208,7 @@ mod tests {
         let active_op = OpId::new();
         let mut state = active_state(session_id, active_op);
 
-        let edit_effects = reduce(
+        let edit_result = reduce(
             &mut state,
             Action::UserEditedMessage {
                 session_id,
@@ -217,17 +221,17 @@ mod tests {
             },
         );
         assert!(
-            edit_effects.iter().any(|effect| matches!(
-                effect,
-                Effect::EmitEvent {
-                    event: SessionEvent::Error { .. },
+            matches!(
+                edit_result,
+                Err(ReduceError::InvalidAction {
+                    kind: InvalidActionKind::OperationInFlight,
                     ..
-                }
-            )),
+                })
+            ),
             "Expected edit to be rejected while busy"
         );
 
-        let compact_effects = reduce(
+        let compact_result = reduce(
             &mut state,
             Action::RequestCompaction {
                 session_id,
@@ -236,13 +240,13 @@ mod tests {
             },
         );
         assert!(
-            compact_effects.iter().any(|effect| matches!(
-                effect,
-                Effect::EmitEvent {
-                    event: SessionEvent::Error { .. },
+            matches!(
+                compact_result,
+                Err(ReduceError::InvalidAction {
+                    kind: InvalidActionKind::OperationInFlight,
                     ..
-                }
-            )),
+                })
+            ),
             "Expected compaction to be rejected while busy"
         );
     }
@@ -255,7 +259,7 @@ mod tests {
 
         let model = builtin::claude_sonnet_4_5();
         let text = NonEmptyString::new("Queued".to_string()).expect("non-empty");
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
@@ -267,7 +271,7 @@ mod tests {
             },
         );
 
-        let effects = reduce(&mut state, Action::DequeueQueuedItem { session_id });
+        let effects = reduce_ok(&mut state, Action::DequeueQueuedItem { session_id });
 
         assert!(state.queued_work.is_empty());
         assert!(state.current_operation.is_some());

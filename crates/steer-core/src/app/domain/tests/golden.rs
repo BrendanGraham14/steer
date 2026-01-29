@@ -41,6 +41,10 @@ mod tests {
         ToolCallId::from_string(s)
     }
 
+    fn reduce_ok(state: &mut AppState, action: Action) -> Vec<Effect> {
+        reduce(state, action).expect("reduce failed")
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     struct GoldenTestCase {
         name: String,
@@ -278,7 +282,7 @@ mod tests {
         let mut all_effects = Vec::new();
         for action_snapshot in &test_case.actions {
             let action = to_action(action_snapshot, session_id);
-            let effects = reduce(&mut state, action);
+            let effects = reduce_ok(&mut state, action);
             all_effects.extend(effects);
         }
 
@@ -394,7 +398,7 @@ mod tests {
             parameters: serde_json::json!({"command": "ls"}),
         };
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut state,
             Action::ToolApprovalRequested {
                 session_id,
@@ -410,7 +414,7 @@ mod tests {
                 .any(|e| matches!(e, Effect::RequestUserApproval { .. }))
         );
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut state,
             Action::ToolApprovalDecided {
                 session_id,
@@ -435,7 +439,7 @@ mod tests {
         let mut state = AppState::new(session_id);
 
         let op_id = deterministic_op_id(1);
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
@@ -455,7 +459,7 @@ mod tests {
             name: "bash".to_string(),
             parameters: serde_json::json!({"command": "ls"}),
         };
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::ModelResponseComplete {
                 session_id,
@@ -480,7 +484,7 @@ mod tests {
         state.approved_tools.insert("bash".to_string());
 
         let request_id = state.pending_approval.as_ref().unwrap().request_id;
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::ToolApprovalDecided {
                 session_id,
@@ -492,7 +496,7 @@ mod tests {
 
         assert!(state.pending_approval.is_none());
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::ToolExecutionStarted {
                 session_id,
@@ -502,7 +506,7 @@ mod tests {
             },
         );
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::ToolResult {
                 session_id,
@@ -517,7 +521,7 @@ mod tests {
 
         assert_eq!(state.message_graph.messages.len(), 3);
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::ModelResponseComplete {
                 session_id,
@@ -540,7 +544,7 @@ mod tests {
         let mut state = AppState::new(session_id);
         let op_id = deterministic_op_id(1);
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
@@ -554,7 +558,7 @@ mod tests {
 
         assert!(state.current_operation.is_some());
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut state,
             Action::Cancel {
                 session_id,
@@ -584,7 +588,7 @@ mod tests {
             pending_tool_calls: [tool_call_id.clone()].into_iter().collect(),
         });
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::Cancel {
                 session_id,
@@ -600,7 +604,7 @@ mod tests {
             pending_tool_calls: HashSet::new(),
         });
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut state,
             Action::ToolResult {
                 session_id,
@@ -635,7 +639,7 @@ mod tests {
             parameters: serde_json::json!({"command": "ls"}),
         };
 
-        let effects = reduce(
+        let effects = reduce_ok(
             &mut state,
             Action::ToolApprovalRequested {
                 session_id,
@@ -680,7 +684,7 @@ mod tests {
             parameters: serde_json::json!({}),
         };
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::ToolApprovalRequested {
                 session_id,
@@ -692,7 +696,7 @@ mod tests {
         assert!(state.pending_approval.is_some());
         assert_eq!(state.approval_queue.len(), 0);
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::ToolApprovalRequested {
                 session_id,
@@ -704,7 +708,7 @@ mod tests {
         assert!(state.pending_approval.is_some());
         assert_eq!(state.approval_queue.len(), 1);
 
-        let _ = reduce(
+        let _ = reduce_ok(
             &mut state,
             Action::ToolApprovalDecided {
                 session_id,

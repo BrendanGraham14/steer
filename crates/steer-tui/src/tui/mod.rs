@@ -437,6 +437,13 @@ impl Tui {
         });
     }
 
+    fn format_grpc_error(&self, error: &steer_grpc::GrpcError) -> String {
+        match error {
+            steer_grpc::GrpcError::CallFailed(status) => status.message().to_string(),
+            _ => error.to_string(),
+        }
+    }
+
     fn format_workspace_status(&self, status: &WorkspaceStatus) -> String {
         let mut output = String::new();
         output.push_str(&format!("Workspace: {}\n", status.workspace_id.as_uuid()));
@@ -1215,14 +1222,14 @@ impl Tui {
             if content.starts_with('!') && content.len() > 1 {
                 let command = content[1..].trim().to_string();
                 if let Err(e) = self.client.execute_bash_command(command).await {
-                    self.push_notice(NoticeLevel::Error, format!("Cannot run command: {e}"));
+                    self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
                 }
             } else if let Err(e) = self
                 .client
                 .edit_message(message_id_to_edit, content, self.current_model.clone())
                 .await
             {
-                self.push_notice(NoticeLevel::Error, format!("Cannot edit message: {e}"));
+                self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
             }
             return Ok(());
         }
@@ -1231,7 +1238,7 @@ impl Tui {
             .send_message(content, self.current_model.clone())
             .await
         {
-            self.push_notice(NoticeLevel::Error, format!("Cannot send message: {e}"));
+            self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
         }
         Ok(())
     }
@@ -1503,10 +1510,7 @@ impl Tui {
                                 );
                             }
                             Err(e) => {
-                                self.push_notice(
-                                    NoticeLevel::Error,
-                                    format!("Failed to get workspace status: {e}"),
-                                );
+                                self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
                             }
                         }
                     }
@@ -1529,16 +1533,13 @@ impl Tui {
                         .compact_session(self.current_model.clone())
                         .await
                     {
-                        self.push_notice(NoticeLevel::Error, format!("Compact failed: {e}"));
+                        self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
                     }
                 }
                 crate::tui::core_commands::CoreCommandType::Agent { target } => {
                     if let Some(agent_id) = target {
                         if let Err(e) = self.client.switch_primary_agent(agent_id.clone()).await {
-                            self.push_notice(
-                                NoticeLevel::Error,
-                                format!("Failed to switch mode: {e}"),
-                            );
+                            self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
                         } else {
                             self.push_notice(
                                 NoticeLevel::Info,
@@ -1564,10 +1565,7 @@ impl Tui {
                                 );
                             }
                             Err(e) => {
-                                self.push_notice(
-                                    NoticeLevel::Error,
-                                    format!("Failed to resolve model: {e}"),
-                                );
+                                self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
                             }
                         }
                     } else {
