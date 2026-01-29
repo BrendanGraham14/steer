@@ -148,7 +148,7 @@ impl FuzzyFinder {
         use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            (KeyCode::Esc, _) | (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => {
                 // Cancel and close
                 Some(FuzzyFinderResult::Close)
             }

@@ -5,8 +5,10 @@ use tui_textarea::CursorMove;
 
 impl Tui {
     pub async fn handle_bash_mode(&mut self, key: KeyEvent) -> Result<bool> {
-        // Check for Ctrl+C
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        // Check for Ctrl+C/Ctrl+D
+        if matches!(key.code, KeyCode::Char('c' | 'd'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
             if self.is_processing {
                 // Cancel processing
                 self.client.cancel_operation().await?;

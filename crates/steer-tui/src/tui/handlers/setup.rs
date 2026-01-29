@@ -94,7 +94,7 @@ impl SetupHandler {
                 Ok(None)
             }
             (KeyCode::Char('s' | 'S') | KeyCode::Esc, KeyModifiers::NONE)
-            | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            | (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => {
                 state.skip_setup = true;
                 Ok(Some(InputMode::Simple))
             }
@@ -147,7 +147,8 @@ impl SetupHandler {
                 state.skip_setup = true;
                 Ok(Some(InputMode::Simple))
             }
-            (KeyCode::Esc, KeyModifiers::NONE) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            (KeyCode::Esc, KeyModifiers::NONE)
+            | (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => {
                 // If we're at provider selection and this is from /auth command,
                 // exit setup mode instead of going to welcome
                 if matches!(state.current_step, SetupStep::ProviderSelection) {

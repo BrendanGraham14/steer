@@ -5,7 +5,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 impl Tui {
     pub async fn handle_edit_selection_mode(&mut self, key: KeyEvent) -> Result<bool> {
         match (key.code, key.modifiers) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            (KeyCode::Esc, _) | (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => {
                 self.input_mode = self.default_input_mode();
                 self.edit_selection_state.clear();
             }

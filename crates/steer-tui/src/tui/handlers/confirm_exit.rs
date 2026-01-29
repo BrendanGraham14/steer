@@ -9,8 +9,8 @@ impl Tui {
                 // User confirmed exit
                 return Ok(true);
             }
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Ctrl+C again also confirms exit
+            KeyCode::Char('c' | 'd') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Ctrl+C/Ctrl+D again also confirms exit
                 return Ok(true);
             }
             _ => {

@@ -49,7 +49,7 @@ impl Tui {
                     if self.is_processing {
                         self.client.cancel_operation().await?;
                     }
-                    // Don't trigger confirm exit - that's only for Ctrl+C
+                    // Don't trigger confirm exit - that's only for Ctrl+C/Ctrl+D
                 }
             }
 
@@ -151,7 +151,7 @@ impl Tui {
                     .update_results(picker_items);
             }
 
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('c' | 'd') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.is_processing {
                     self.client.cancel_operation().await?;
                 } else {
