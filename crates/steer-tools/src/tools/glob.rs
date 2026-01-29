@@ -24,7 +24,7 @@ impl ToolSpec for GlobToolSpec {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
-#[serde(tag = "code", rename_all = "snake_case")]
+#[serde(tag = "code", content = "details", rename_all = "snake_case")]
 pub enum GlobError {
     #[error("{0}")]
     Workspace(WorkspaceOpError),

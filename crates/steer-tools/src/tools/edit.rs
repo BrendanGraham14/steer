@@ -24,7 +24,7 @@ impl ToolSpec for EditToolSpec {
 }
 
 #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]
-#[serde(tag = "code", rename_all = "snake_case")]
+#[serde(tag = "code", content = "details", rename_all = "snake_case")]
 pub enum EditError {
     #[error("{0}")]
     Workspace(WorkspaceOpError),
@@ -69,7 +69,7 @@ pub mod multi_edit {
     }
 
     #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]
-    #[serde(tag = "code", rename_all = "snake_case")]
+    #[serde(tag = "code", content = "details", rename_all = "snake_case")]
     pub enum MultiEditError {
         #[error("{0}")]
         Workspace(WorkspaceOpError),

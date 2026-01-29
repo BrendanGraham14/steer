@@ -24,7 +24,7 @@ impl ToolSpec for ViewToolSpec {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
-#[serde(tag = "code", rename_all = "snake_case")]
+#[serde(tag = "code", content = "details", rename_all = "snake_case")]
 pub enum ViewError {
     #[error("{0}")]
     Workspace(WorkspaceOpError),

@@ -645,10 +645,15 @@ impl SessionCatalog for SqliteEventStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::conversation::{Message, MessageData};
     use crate::app::domain::event::SessionEvent;
+    use crate::app::domain::types::ToolCallId;
     use crate::config::model::builtin;
     use crate::session::state::{SessionConfig, ToolVisibility};
+    use steer_tools::error::{ToolError, ToolExecutionError, WorkspaceOpError};
+    use steer_tools::result::ToolResult;
     use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
+    use steer_tools::tools::view::ViewError;
     use std::collections::{HashMap, HashSet};
 
     fn sample_todos() -> Vec<TodoItem> {
@@ -689,6 +694,71 @@ mod tests {
         match &events[0].1 {
             SessionEvent::Error { message } => assert_eq!(message, "test error"),
             _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_tool_message_with_workspace_error_roundtrip() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let tool_error = ToolError::Execution(ToolExecutionError::View(ViewError::Workspace(
+            WorkspaceOpError::NotFound,
+        )));
+        let message = Message {
+            timestamp: 0,
+            id: "tool-msg-1".to_string(),
+            parent_message_id: None,
+            data: MessageData::Tool {
+                tool_use_id: "tool-call-1".to_string(),
+                result: ToolResult::Error(tool_error),
+            },
+        };
+        let event = SessionEvent::ToolMessageAdded { message };
+
+        store.append(session_id, &event).await.unwrap();
+        let events = store.load_events(session_id).await.unwrap();
+
+        let loaded_event = events.first().expect("event").1.clone();
+        match loaded_event {
+            SessionEvent::ToolMessageAdded { message } => match message.data {
+                MessageData::Tool { result, .. } => {
+                    assert!(matches!(result, ToolResult::Error(_)));
+                }
+                other => panic!("Expected Tool message, got {other:?}"),
+            },
+            other => panic!("Expected ToolMessageAdded event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_tool_call_completed_with_workspace_error_roundtrip() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let tool_error = ToolError::Execution(ToolExecutionError::View(ViewError::Workspace(
+            WorkspaceOpError::NotFound,
+        )));
+        let event = SessionEvent::ToolCallCompleted {
+            id: ToolCallId::new(),
+            name: "read_file".to_string(),
+            result: ToolResult::Error(tool_error),
+            model: builtin::claude_sonnet_4_5(),
+        };
+
+        store.append(session_id, &event).await.unwrap();
+        let events = store.load_events(session_id).await.unwrap();
+
+        let loaded_event = events.first().expect("event").1.clone();
+        match loaded_event {
+            SessionEvent::ToolCallCompleted { result, .. } => {
+                assert!(matches!(result, ToolResult::Error(_)));
+            }
+            other => panic!("Expected ToolCallCompleted event, got {other:?}"),
         }
     }
 

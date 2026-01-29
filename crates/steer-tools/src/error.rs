@@ -131,3 +131,50 @@ pub enum WorkspaceOpError {
     #[error("{message}")]
     Other { message: String },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
+    use serde_json::Value;
+
+    fn assert_workspace_error_roundtrip<T>(error: T)
+    where
+        T: Serialize + DeserializeOwned + std::fmt::Debug,
+    {
+        let serialized = serde_json::to_string(&error).expect("serialize error");
+        let value: Value = serde_json::from_str(&serialized).expect("deserialize json");
+        let obj = match &value {
+            Value::Object(map) => map,
+            other => panic!("expected object, got {other:?}"),
+        };
+        assert_eq!(obj.len(), 2);
+        assert!(obj.contains_key("code"));
+        assert!(obj.contains_key("details"));
+        assert_eq!(
+            value.get("code"),
+            Some(&Value::String("workspace".to_string()))
+        );
+        let details = value.get("details").expect("workspace details missing");
+        assert_eq!(
+            details.get("code"),
+            Some(&Value::String("not_found".to_string()))
+        );
+        let _: T = serde_json::from_str(&serialized).expect("roundtrip error");
+    }
+
+    #[test]
+    fn workspace_error_wrappers_roundtrip() {
+        let workspace_error = WorkspaceOpError::NotFound;
+        assert_workspace_error_roundtrip(AstGrepError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(EditError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(MultiEditError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(GlobError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(GrepError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(LsError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(ReplaceError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(ViewError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(DispatchAgentError::Workspace(workspace_error));
+    }
+}
