@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use std::pin::Pin;
 use tokio_util::bytes::Bytes;
 
-use crate::api::error::ApiError;
+use crate::api::error::SseParseError;
 
 #[derive(Debug, Clone)]
 pub struct SseEvent {
@@ -13,36 +13,30 @@ pub struct SseEvent {
     pub id: Option<String>,
 }
 
-pub type SseStream = Pin<Box<dyn Stream<Item = Result<SseEvent, ApiError>> + Send>>;
+pub type SseStream = Pin<Box<dyn Stream<Item = Result<SseEvent, SseParseError>> + Send>>;
 
 pub fn parse_sse_stream<S, E>(byte_stream: S) -> SseStream
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: std::error::Error + Send + 'static,
 {
-    let event_stream = byte_stream
-        .map(|result| result.map_err(|e| std::io::Error::other(e.to_string())))
-        .eventsource()
-        .map(|result| {
-            result
-                .map(|event| SseEvent {
-                    event_type: if event.event.is_empty() {
-                        None
-                    } else {
-                        Some(event.event)
-                    },
-                    data: event.data,
-                    id: if event.id.is_empty() {
-                        None
-                    } else {
-                        Some(event.id)
-                    },
-                })
-                .map_err(|e| ApiError::StreamError {
-                    provider: "sse".to_string(),
-                    details: e.to_string(),
-                })
-        });
+    let event_stream = byte_stream.eventsource().map(|result| {
+        result
+            .map(|event| SseEvent {
+                event_type: if event.event.is_empty() {
+                    None
+                } else {
+                    Some(event.event)
+                },
+                data: event.data,
+                id: if event.id.is_empty() {
+                    None
+                } else {
+                    Some(event.id)
+                },
+            })
+            .map_err(SseParseError::from)
+    });
 
     Box::pin(event_stream)
 }

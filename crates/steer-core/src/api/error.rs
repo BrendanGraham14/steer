@@ -1,4 +1,34 @@
+use eventsource_stream::EventStreamError;
 use thiserror::Error;
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum SseParseError {
+    #[error("UTF-8 error: {details}")]
+    Utf8 { details: String },
+    #[error("Parse error: {details}")]
+    Parser { details: String },
+    #[error("Transport error: {details}")]
+    Transport { details: String },
+}
+
+impl<E> From<EventStreamError<E>> for SseParseError
+where
+    E: std::error::Error,
+{
+    fn from(err: EventStreamError<E>) -> Self {
+        match err {
+            EventStreamError::Utf8(err) => Self::Utf8 {
+                details: err.to_string(),
+            },
+            EventStreamError::Parser(err) => Self::Parser {
+                details: err.to_string(),
+            },
+            EventStreamError::Transport(err) => Self::Transport {
+                details: err.to_string(),
+            },
+        }
+    }
+}
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum StreamError {
@@ -6,7 +36,7 @@ pub enum StreamError {
     Cancelled,
 
     #[error("SSE parse error: {0}")]
-    SseParse(String),
+    SseParse(SseParseError),
 
     #[error("{provider} error ({error_type}): {message}")]
     Provider {

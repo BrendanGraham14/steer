@@ -15,7 +15,7 @@ use crate::config::provider::ProviderId;
 use crate::config::{LlmConfigProvider, ResolvedAuth};
 use crate::error::Result;
 use crate::model_registry::ModelRegistry;
-pub use error::{ApiError, StreamError};
+pub use error::{ApiError, SseParseError, StreamError};
 pub use factory::{create_provider, create_provider_with_directive};
 pub use provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
 use std::collections::HashMap;

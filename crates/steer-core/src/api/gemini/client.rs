@@ -6,7 +6,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::api::error::{ApiError, StreamError};
+use crate::api::error::{ApiError, SseParseError, StreamError};
 use crate::api::provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
 use crate::api::sse::parse_sse_stream;
 use crate::app::SystemContext;
@@ -1323,7 +1323,7 @@ impl Provider for GeminiClient {
 
 impl GeminiClient {
     fn convert_gemini_stream(
-        mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, ApiError>>
+        mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, SseParseError>>
         + Unpin
         + Send
         + 'static,
@@ -1355,7 +1355,7 @@ impl GeminiClient {
                 let event = match event_result {
                     Ok(e) => e,
                     Err(e) => {
-                        yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                        yield StreamChunk::Error(StreamError::SseParse(e));
                         break;
                     }
                 };

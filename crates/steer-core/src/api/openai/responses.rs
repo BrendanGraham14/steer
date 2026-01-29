@@ -4,7 +4,7 @@ use serde_json;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use crate::api::error::{ApiError, StreamError};
+use crate::api::error::{ApiError, SseParseError, StreamError};
 use crate::api::openai::responses_types::{
     ExtraValue, InputContentPart, InputItem, InputType, MessageContentPart, ReasoningConfig,
     ReasoningSummary, ReasoningSummaryPart, ResponseOutputItem, ResponsesApiResponse,
@@ -800,7 +800,7 @@ impl Client {
     }
 
     pub(crate) fn convert_responses_stream(
-        mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, ApiError>>
+        mut sse_stream: impl futures::Stream<Item = Result<crate::api::sse::SseEvent, SseParseError>>
         + Unpin
         + Send
         + 'static,
@@ -846,7 +846,7 @@ impl Client {
                         let event = match event_result {
                             Ok(e) => e,
                             Err(e) => {
-                                yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                                yield StreamChunk::Error(StreamError::SseParse(e));
                                 break;
                             }
                         };

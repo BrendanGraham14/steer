@@ -1820,7 +1820,7 @@ fn convert_claude_stream(
             let event = match event_result {
                 Ok(e) => e,
                 Err(e) => {
-                    yield StreamChunk::Error(StreamError::SseParse(e.to_string()));
+                    yield StreamChunk::Error(StreamError::SseParse(e));
                     break;
                 }
             };
