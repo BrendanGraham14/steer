@@ -17,6 +17,7 @@ use crate::error::Result;
 use crate::model_registry::ModelRegistry;
 pub use error::{ApiError, SseParseError, StreamError};
 pub use factory::{create_provider, create_provider_with_directive};
+use futures::StreamExt;
 pub use provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,6 +29,8 @@ use tracing::warn;
 
 use crate::app::SystemContext;
 use crate::app::conversation::Message;
+
+const STREAM_TRANSPORT_RETRY_MAX_ATTEMPTS: usize = 2;
 
 #[derive(Clone)]
 pub struct Client {
@@ -296,7 +299,7 @@ impl Client {
             "Streaming with parameters"
         );
 
-        let result = provider
+        let (initial_stream, provider_for_retry) = match provider
             .stream_complete(
                 model_id,
                 messages.clone(),
@@ -305,40 +308,112 @@ impl Client {
                 effective_params,
                 token.clone(),
             )
-            .await;
+            .await
+        {
+            Ok(stream) => (stream, provider),
+            Err(err) => {
+                if Self::should_invalidate_provider(&err) {
+                    self.invalidate_provider(&provider_id);
 
-        if let Err(ref err) = result {
-            if Self::should_invalidate_provider(err) {
-                self.invalidate_provider(&provider_id);
-
-                if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
-                    if let Some(fallback) = self
-                        .fallback_api_key_entry(&provider_id)
-                        .await
-                        .map_err(ApiError::from)?
-                    {
-                        let fallback_result = fallback
-                            .provider
-                            .stream_complete(
-                                model_id,
-                                messages,
-                                system,
-                                tools,
-                                effective_params,
-                                token,
-                            )
-                            .await;
-                        if fallback_result.is_ok() {
+                    if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
+                        if let Some(fallback) = self
+                            .fallback_api_key_entry(&provider_id)
+                            .await
+                            .map_err(ApiError::from)?
+                        {
+                            let fallback_provider = fallback.provider.clone();
+                            let fallback_stream = fallback_provider
+                                .stream_complete(
+                                    model_id,
+                                    messages.clone(),
+                                    system.clone(),
+                                    tools.clone(),
+                                    effective_params,
+                                    token.clone(),
+                                )
+                                .await?;
                             let mut map = self.provider_map.write().unwrap();
                             map.insert(provider_id, fallback);
+                            (fallback_stream, fallback_provider)
+                        } else {
+                            return Err(err);
                         }
-                        return fallback_result;
+                    } else {
+                        return Err(err);
                     }
+                } else {
+                    return Err(err);
                 }
             }
-        }
+        };
 
-        result
+        let model_id = model_id.clone();
+        let stream = async_stream::stream! {
+            let mut attempt = 1usize;
+            let mut current_stream = Some(initial_stream);
+
+            'outer: loop {
+                let mut saw_output = false;
+                let mut stream = if let Some(stream) = current_stream.take() { stream } else {
+                    if token.is_cancelled() {
+                        yield StreamChunk::Error(StreamError::Cancelled);
+                        break;
+                    }
+
+                    let stream_result = provider_for_retry
+                        .stream_complete(
+                            &model_id,
+                            messages.clone(),
+                            system.clone(),
+                            tools.clone(),
+                            effective_params,
+                            token.clone(),
+                        )
+                        .await;
+                    match stream_result {
+                        Ok(stream) => stream,
+                        Err(err) => {
+                            yield StreamChunk::Error(StreamError::Provider {
+                                provider: provider_for_retry.name().to_string(),
+                                error_type: "stream_retry".to_string(),
+                                message: err.to_string(),
+                            });
+                            break;
+                        }
+                    }
+                };
+
+                while let Some(chunk) = stream.next().await {
+                    if matches!(
+                        &chunk,
+                        StreamChunk::Error(StreamError::SseParse(
+                            SseParseError::Transport { .. }
+                        )) if !saw_output && attempt < STREAM_TRANSPORT_RETRY_MAX_ATTEMPTS
+                    ) {
+                        attempt += 1;
+                        warn!(
+                            target: "api::stream_complete",
+                            ?model_id,
+                            attempt,
+                            max_attempts = STREAM_TRANSPORT_RETRY_MAX_ATTEMPTS,
+                            "Retrying stream after transport error before any output"
+                        );
+                        current_stream = None;
+                        continue 'outer;
+                    }
+
+                    if !matches!(chunk, StreamChunk::Error(_)) {
+                        saw_output = true;
+                    }
+
+                    yield chunk;
+                }
+
+                break;
+            }
+        };
+
+        Ok(Box::pin(stream))
     }
 
     pub async fn complete_with_retry(
