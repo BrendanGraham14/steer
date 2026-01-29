@@ -61,6 +61,7 @@ storm_purple = "#9d7cd8"
 status_bar = { fg = "storm_fg", bg = "storm_bg_dark" }
 
 # Input panel
+input_panel_background = { fg = "storm_fg", bg = "storm_bg_dark" }
 input_panel_border = { fg = "storm_fg_gutter" }
 input_panel_border_active = { fg = "storm_blue" }
 input_panel_border_command = { fg = "storm_cyan" }

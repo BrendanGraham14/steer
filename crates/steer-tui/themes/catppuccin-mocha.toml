@@ -57,6 +57,7 @@ crust = "#11111b"
 status_bar = { fg = "subtext1", bg = "surface0" }
 
 # Input panel
+input_panel_background = { fg = "foreground", bg = "mantle" }
 input_panel_border = { fg = "surface2" }
 input_panel_border_active = { fg = "lavender" }
 input_panel_border_command = { fg = "sapphire" }

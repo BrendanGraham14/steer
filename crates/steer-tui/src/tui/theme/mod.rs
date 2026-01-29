@@ -142,6 +142,7 @@ pub enum Component {
 
     // Input panel
     InputPanelBorder,
+    InputPanelBackground,
     InputPanelBorderActive,
     InputPanelBorderCommand,
     InputPanelBorderApproval,
@@ -462,6 +463,10 @@ fn create_default_theme() -> CompiledTheme {
     styles.insert(
         Component::InputPanelBorder,
         Style::default().fg(Color::DarkGray),
+    );
+    styles.insert(
+        Component::InputPanelBackground,
+        Style::default().bg(Color::Rgb(30, 35, 40)),
     );
     styles.insert(
         Component::InputPanelBorderActive,

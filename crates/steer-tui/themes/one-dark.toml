@@ -40,6 +40,7 @@ bg_darker = "#21252b"
 status_bar = { fg = "foreground", bg = "dark_gray" }
 
 # Input panel
+input_panel_background = { fg = "foreground", bg = "bg_darker" }
 input_panel_border = { fg = "gutter_fg_grey" }
 input_panel_border_active = { fg = "blue" }
 input_panel_border_command = { fg = "cyan" }

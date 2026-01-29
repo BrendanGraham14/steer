@@ -51,6 +51,7 @@ nord15 = "#b48ead"
 status_bar = { fg = "nord4", bg = "nord1" }
 
 # Input panel
+input_panel_background = { fg = "nord4", bg = "nord_darker" }
 input_panel_border = { fg = "nord3" }
 input_panel_border_active = { fg = "nord8" }
 input_panel_border_command = { fg = "nord7" }

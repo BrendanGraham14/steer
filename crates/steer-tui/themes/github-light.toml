@@ -46,6 +46,7 @@ syntax_markup_heading = "#005cc5"
 status_bar = { fg = "fg_default", bg = "bg_highlight" }
 
 # Input panel
+input_panel_background = { fg = "fg_default", bg = "bg_highlight" }
 input_panel_border = { fg = "border_default" }
 input_panel_border_active = { fg = "accent_fg" }
 input_panel_border_command = { fg = "syntax_constant" }

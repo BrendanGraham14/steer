@@ -33,6 +33,7 @@ green = "#859900"
 status_bar = { fg = "base00", bg = "base2" }
 
 # Input panel
+input_panel_background = { fg = "base00", bg = "base2" }
 input_panel_border = { fg = "base1" }
 input_panel_border_active = { fg = "blue" }
 input_panel_border_command = { fg = "cyan" }

@@ -36,6 +36,7 @@ hue_6_2 = "#c18401" # orange variant
 status_bar = { fg = "mono_1", bg = "line_highlight" }
 
 # Input panel
+input_panel_background = { fg = "mono_1", bg = "line_highlight" }
 input_panel_border = { fg = "guide" }
 input_panel_border_active = { fg = "accent" }
 input_panel_border_command = { fg = "hue_1" }

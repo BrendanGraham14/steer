@@ -2,6 +2,7 @@
 
 use ratatui::layout::Rect;
 use ratatui::prelude::{Buffer, StatefulWidget, Widget};
+use ratatui::style::Style;
 use ratatui::widgets::{Block, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use tui_textarea::TextArea;
 
@@ -50,14 +51,15 @@ impl<'a> TextAreaWidget<'a> {
 
 impl Widget for TextAreaWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let background_style = self.theme.style(Component::InputPanelBackground);
         // Take ownership of block to avoid borrow issues
         let (inner_area, theme, _mode) = if let Some(block) = self.block {
             let styled_block = if let Some(mode) = self.mode {
-                apply_mode_styling(block, mode, self.theme, self.is_editing)
+                apply_mode_styling(block, mode, self.theme, self.is_editing, background_style)
             } else if self.is_editing {
-                apply_mode_styling(block, InputMode::Simple, self.theme, true)
+                apply_mode_styling(block, InputMode::Simple, self.theme, true, background_style)
             } else {
-                block
+                block.style(background_style)
             };
             let inner = styled_block.inner(area);
             styled_block.render(area, buf);
@@ -73,6 +75,9 @@ impl Widget for TextAreaWidget<'_> {
         let cursor_row = self.textarea.cursor().0;
 
         // Render the text area without its own block
+        self.textarea.set_style(background_style);
+        let placeholder_style = background_style.patch(theme.style(Component::PlaceholderText));
+        self.textarea.set_placeholder_style(placeholder_style);
         self.textarea.set_block(Block::default());
         self.textarea.render(inner_area, buf);
 
@@ -88,10 +93,10 @@ impl Widget for TextAreaWidget<'_> {
                 .thumb_style(theme.style(Component::DimText));
 
             let scrollbar_area = Rect {
-                x: area.x + area.width - 1,
-                y: area.y + 1,
+                x: inner_area.x + inner_area.width.saturating_sub(1),
+                y: inner_area.y,
                 width: 1,
-                height: area.height - 2,
+                height: inner_area.height,
             };
 
             scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);
@@ -105,40 +110,49 @@ fn apply_mode_styling<'a>(
     mode: InputMode,
     theme: &Theme,
     is_editing: bool,
+    background_style: Style,
 ) -> Block<'a> {
+    block = block.style(background_style);
     if mode == InputMode::ConfirmExit {
         let style = theme.style(Component::InputPanelBorderError);
-        return block.style(style).border_style(style);
+        let text_style = background_style.patch(style);
+        return block.style(text_style).border_style(style);
     }
 
     if is_editing {
         let style = theme.style(Component::InputPanelBorderEdit);
-        return block.style(style).border_style(style);
+        let text_style = background_style.patch(style);
+        return block.style(text_style).border_style(style);
     }
 
     match mode {
         InputMode::Simple | InputMode::VimInsert => {
             // Active border and text style
             let active = theme.style(Component::InputPanelBorderActive);
-            block = block.style(active).border_style(active);
+            let text_style = background_style.patch(active);
+            block = block.style(text_style).border_style(active);
         }
         InputMode::VimNormal => {
             // Keep text style the same as VimInsert (active) but dim the border
             let text_style = theme.style(Component::InputPanelBorderActive);
             let border_dim = theme.style(Component::InputPanelBorder);
+            let text_style = background_style.patch(text_style);
             block = block.style(text_style).border_style(border_dim);
         }
         InputMode::BashCommand => {
             let style = theme.style(Component::InputPanelBorderCommand);
-            block = block.style(style).border_style(style);
+            let text_style = background_style.patch(style);
+            block = block.style(text_style).border_style(style);
         }
         InputMode::EditMessageSelection => {
             let style = theme.style(Component::InputPanelBorderCommand);
-            block = block.style(style).border_style(style);
+            let text_style = background_style.patch(style);
+            block = block.style(text_style).border_style(style);
         }
         InputMode::FuzzyFinder => {
             let style = theme.style(Component::InputPanelBorderActive);
-            block = block.style(style).border_style(style);
+            let text_style = background_style.patch(style);
+            block = block.style(text_style).border_style(style);
         }
         _ => {}
     }

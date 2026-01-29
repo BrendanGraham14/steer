@@ -42,6 +42,7 @@ pink = "#ff79c6"
 status_bar = { fg = "foreground", bg = "current_line" }
 
 # Input panel
+input_panel_background = { fg = "foreground", bg = "black" }
 input_panel_border = { fg = "comment" }
 input_panel_border_active = { fg = "purple" }
 input_panel_border_command = { fg = "cyan" }

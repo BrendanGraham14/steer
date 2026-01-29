@@ -49,6 +49,7 @@ bright_orange = "#af3a03"
 status_bar = { fg = "fg1", bg = "bg2" }
 
 # Input panel
+input_panel_background = { fg = "fg1", bg = "bg1" }
 input_panel_border = { fg = "bg4" }
 input_panel_border_active = { fg = "blue" }
 input_panel_border_command = { fg = "aqua" }

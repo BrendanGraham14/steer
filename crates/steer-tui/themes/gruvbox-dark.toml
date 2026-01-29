@@ -50,6 +50,7 @@ bright_aqua = "#8ec07c"
 status_bar = { fg = "fg2", bg = "bg1" }
 
 # Input panel
+input_panel_background = { fg = "fg1", bg = "bg0_h" }
 input_panel_border = { fg = "bg3" }
 input_panel_border_active = { fg = "bright_blue" }
 input_panel_border_command = { fg = "bright_cyan" }

@@ -373,6 +373,7 @@ text = { fg = "fg" }
                 Component::AssistantMessage,
                 Component::UserMessage,
                 Component::InputPanelBorder,
+                Component::InputPanelBackground,
                 Component::ChatListBorder,
                 Component::SelectionHighlight,
             ];

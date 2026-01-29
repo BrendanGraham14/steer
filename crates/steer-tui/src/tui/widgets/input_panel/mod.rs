@@ -17,7 +17,7 @@ pub use textarea::TextAreaWidget;
 // Main input panel implementation
 use ratatui::layout::Rect;
 use ratatui::prelude::{Buffer, StatefulWidget, Widget};
-use ratatui::widgets::{Block, Borders};
+use ratatui::widgets::{Block, Borders, Padding};
 use tui_textarea::{Input, TextArea};
 
 use steer_tools::schema::ToolCall;
@@ -280,7 +280,7 @@ impl InputPanelState {
         }
 
         let line_count = self.textarea.lines().len().max(1);
-        let base_height = (line_count + 3).min(max_height as usize) as u16;
+        let base_height = (line_count + 2).min(max_height as usize) as u16;
         if queued_preview.is_some() {
             let queued_height = QueuedPreviewWidget::required_height(width, queued_preview);
             base_height.saturating_add(queued_height).min(max_height)
@@ -385,7 +385,10 @@ impl StatefulWidget for InputPanel<'_> {
         }
 
         let input_area = if has_queue { layout[1] } else { area };
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::NONE)
+            .padding(Padding::new(1, 1, 0, 1))
+            .title(title);
 
         TextAreaWidget::new(&mut state.textarea, self.theme)
             .with_block(block)

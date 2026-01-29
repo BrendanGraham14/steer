@@ -43,6 +43,7 @@ violet = "#6c71c4"
 status_bar = { fg = "base0", bg = "base02" }
 
 # Input panel
+input_panel_background = { fg = "base0", bg = "base02" }
 input_panel_border = { fg = "base01" }
 input_panel_border_active = { fg = "blue" }
 input_panel_border_command = { fg = "cyan" }
