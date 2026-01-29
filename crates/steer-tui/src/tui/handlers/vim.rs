@@ -438,7 +438,7 @@ impl Tui {
             KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => {
                 if let Some(head) = &self.queued_head {
                     if let Err(e) = self.client.dequeue_queued_item().await {
-                        self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
+                        self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                         return Ok(false);
                     }
 

@@ -413,7 +413,7 @@ mod tests {
         let model_registry = Arc::new(crate::model_registry::ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));
@@ -554,7 +554,7 @@ mod tests {
         let model_registry = Arc::new(crate::model_registry::ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry.clone(),
         ));

@@ -194,16 +194,16 @@ impl ServiceHost {
         let repo_manager: Arc<dyn RepoManager> = workspace_manager.clone();
         let environment_manager = Arc::new(LocalEnvironmentManager::new(environment_root));
 
-        let service = RuntimeAgentService::new(
-            self.runtime_handle.clone(),
-            self.catalog.clone(),
-            self.llm_config_provider.clone(),
-            self.model_registry.clone(),
-            self.provider_registry.clone(),
+        let service = RuntimeAgentService::new(crate::grpc::RuntimeAgentDeps {
+            runtime: self.runtime_handle.clone(),
+            catalog: self.catalog.clone(),
+            llm_config_provider: self.llm_config_provider.clone(),
+            model_registry: self.model_registry.clone(),
+            provider_registry: self.provider_registry.clone(),
             environment_manager,
             workspace_manager,
             repo_manager,
-        );
+        });
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let addr = self.config.bind_addr;

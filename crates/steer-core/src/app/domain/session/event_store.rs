@@ -25,6 +25,9 @@ pub enum EventStoreError {
 
     #[error("Migration error: {message}")]
     Migration { message: String },
+
+    #[error("In-memory store lock poisoned: {message}")]
+    LockPoisoned { message: String },
 }
 
 impl EventStoreError {
@@ -42,6 +45,12 @@ impl EventStoreError {
 
     pub fn connection(message: impl Into<String>) -> Self {
         Self::Connection {
+            message: message.into(),
+        }
+    }
+
+    pub fn lock_poisoned(message: impl Into<String>) -> Self {
+        Self::LockPoisoned {
             message: message.into(),
         }
     }
@@ -125,7 +134,10 @@ impl EventStore for InMemoryEventStore {
         session_id: SessionId,
         event: &SessionEvent,
     ) -> Result<u64, EventStoreError> {
-        let mut events = self.events.write().unwrap();
+        let mut events = self
+            .events
+            .write()
+            .map_err(|_| EventStoreError::lock_poisoned("events"))?;
         let session_events = events.entry(session_id).or_default();
 
         let seq = session_events.last().map_or(0, |(s, _)| s + 1);
@@ -135,7 +147,10 @@ impl EventStore for InMemoryEventStore {
 
         match event {
             SessionEvent::SessionCreated { config, .. } => {
-                let mut catalog = self.catalog.write().unwrap();
+                let mut catalog = self
+                    .catalog
+                    .write()
+                    .map_err(|_| EventStoreError::lock_poisoned("catalog"))?;
                 let now = Utc::now();
                 catalog.insert(
                     session_id,
@@ -149,7 +164,10 @@ impl EventStore for InMemoryEventStore {
                 );
             }
             SessionEvent::SessionConfigUpdated { config, .. } => {
-                let mut catalog = self.catalog.write().unwrap();
+                let mut catalog = self
+                    .catalog
+                    .write()
+                    .map_err(|_| EventStoreError::lock_poisoned("catalog"))?;
                 if let Some(entry) = catalog.get_mut(&session_id) {
                     entry.config = *config.clone();
                     entry.updated_at = Utc::now();
@@ -165,7 +183,10 @@ impl EventStore for InMemoryEventStore {
         &self,
         session_id: SessionId,
     ) -> Result<Vec<(u64, SessionEvent)>, EventStoreError> {
-        let events = self.events.read().unwrap();
+        let events = self
+            .events
+            .read()
+            .map_err(|_| EventStoreError::lock_poisoned("events"))?;
         Ok(events.get(&session_id).cloned().unwrap_or_default())
     }
 
@@ -174,7 +195,10 @@ impl EventStore for InMemoryEventStore {
         session_id: SessionId,
         after_seq: u64,
     ) -> Result<Vec<(u64, SessionEvent)>, EventStoreError> {
-        let events = self.events.read().unwrap();
+        let events = self
+            .events
+            .read()
+            .map_err(|_| EventStoreError::lock_poisoned("events"))?;
         Ok(events
             .get(&session_id)
             .map(|e| e.iter().filter(|(s, _)| *s > after_seq).cloned().collect())
@@ -182,39 +206,60 @@ impl EventStore for InMemoryEventStore {
     }
 
     async fn latest_sequence(&self, session_id: SessionId) -> Result<Option<u64>, EventStoreError> {
-        let events = self.events.read().unwrap();
+        let events = self
+            .events
+            .read()
+            .map_err(|_| EventStoreError::lock_poisoned("events"))?;
         Ok(events
             .get(&session_id)
             .and_then(|e| e.last().map(|(s, _)| *s)))
     }
 
     async fn session_exists(&self, session_id: SessionId) -> Result<bool, EventStoreError> {
-        let events = self.events.read().unwrap();
+        let events = self
+            .events
+            .read()
+            .map_err(|_| EventStoreError::lock_poisoned("events"))?;
         Ok(events.contains_key(&session_id))
     }
 
     async fn create_session(&self, session_id: SessionId) -> Result<(), EventStoreError> {
-        let mut events = self.events.write().unwrap();
+        let mut events = self
+            .events
+            .write()
+            .map_err(|_| EventStoreError::lock_poisoned("events"))?;
         events.entry(session_id).or_default();
         Ok(())
     }
 
     async fn delete_session(&self, session_id: SessionId) -> Result<(), EventStoreError> {
-        let mut events = self.events.write().unwrap();
+        let mut events = self
+            .events
+            .write()
+            .map_err(|_| EventStoreError::lock_poisoned("events"))?;
         events.remove(&session_id);
         drop(events);
 
-        let mut catalog = self.catalog.write().unwrap();
+        let mut catalog = self
+            .catalog
+            .write()
+            .map_err(|_| EventStoreError::lock_poisoned("catalog"))?;
         catalog.remove(&session_id);
         drop(catalog);
 
-        let mut todos = self.todos.write().unwrap();
+        let mut todos = self
+            .todos
+            .write()
+            .map_err(|_| EventStoreError::lock_poisoned("todos"))?;
         todos.remove(&session_id);
         Ok(())
     }
 
     async fn list_session_ids(&self) -> Result<Vec<SessionId>, EventStoreError> {
-        let events = self.events.read().unwrap();
+        let events = self
+            .events
+            .read()
+            .map_err(|_| EventStoreError::lock_poisoned("events"))?;
         Ok(events.keys().copied().collect())
     }
 
@@ -222,7 +267,10 @@ impl EventStore for InMemoryEventStore {
         &self,
         session_id: SessionId,
     ) -> Result<Option<Vec<TodoItem>>, EventStoreError> {
-        let todos = self.todos.read().unwrap();
+        let todos = self
+            .todos
+            .read()
+            .map_err(|_| EventStoreError::lock_poisoned("todos"))?;
         Ok(todos.get(&session_id).cloned())
     }
 
@@ -231,7 +279,10 @@ impl EventStore for InMemoryEventStore {
         session_id: SessionId,
         todos: &[TodoItem],
     ) -> Result<(), EventStoreError> {
-        let mut store = self.todos.write().unwrap();
+        let mut store = self
+            .todos
+            .write()
+            .map_err(|_| EventStoreError::lock_poisoned("todos"))?;
         store.insert(session_id, todos.to_vec());
         Ok(())
     }
@@ -243,7 +294,10 @@ impl SessionCatalog for InMemoryEventStore {
         &self,
         session_id: SessionId,
     ) -> Result<Option<SessionConfig>, SessionCatalogError> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = self
+            .catalog
+            .read()
+            .map_err(|_| SessionCatalogError::lock_poisoned("catalog"))?;
         Ok(catalog.get(&session_id).map(|e| e.config.clone()))
     }
 
@@ -251,7 +305,10 @@ impl SessionCatalog for InMemoryEventStore {
         &self,
         session_id: SessionId,
     ) -> Result<Option<SessionSummary>, SessionCatalogError> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = self
+            .catalog
+            .read()
+            .map_err(|_| SessionCatalogError::lock_poisoned("catalog"))?;
         Ok(catalog.get(&session_id).map(|e| SessionSummary {
             id: session_id,
             created_at: e.created_at,
@@ -265,7 +322,10 @@ impl SessionCatalog for InMemoryEventStore {
         &self,
         filter: SessionFilter,
     ) -> Result<Vec<SessionSummary>, SessionCatalogError> {
-        let catalog = self.catalog.read().unwrap();
+        let catalog = self
+            .catalog
+            .read()
+            .map_err(|_| SessionCatalogError::lock_poisoned("catalog"))?;
         let mut summaries: Vec<SessionSummary> = catalog
             .iter()
             .map(|(id, e)| SessionSummary {
@@ -296,7 +356,10 @@ impl SessionCatalog for InMemoryEventStore {
         increment_message_count: bool,
         new_model: Option<&str>,
     ) -> Result<(), SessionCatalogError> {
-        let mut catalog = self.catalog.write().unwrap();
+        let mut catalog = self
+            .catalog
+            .write()
+            .map_err(|_| SessionCatalogError::lock_poisoned("catalog"))?;
 
         if let Some(entry) = catalog.get_mut(&session_id) {
             if let Some(cfg) = config {

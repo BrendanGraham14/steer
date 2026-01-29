@@ -15,10 +15,6 @@ mod tests {
     use steer_tools::result::{ExternalResult, ToolResult};
     use steer_tools::{ToolCall, ToolError};
 
-    fn test_state() -> AppState {
-        AppState::new(SessionId::new())
-    }
-
     fn deterministic_session_id() -> SessionId {
         SessionId::from(uuid::Uuid::from_u128(
             0x12345678_1234_1234_1234_123456789abc,

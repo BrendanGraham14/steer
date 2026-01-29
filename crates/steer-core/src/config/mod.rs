@@ -203,7 +203,7 @@ impl LlmConfigProvider {
             ResolvedAuth::Plugin { .. } => Ok(Some(ApiAuth::OAuth)),
             ResolvedAuth::ApiKey { credential, .. } => match credential {
                 Credential::ApiKey { value } => Ok(Some(ApiAuth::Key(value.clone()))),
-                _ => Ok(None),
+                Credential::OAuth2(_) => Ok(None),
             },
             ResolvedAuth::None => Ok(None),
         }

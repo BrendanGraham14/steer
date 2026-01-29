@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use eyre::Result;
+use std::io::Write;
 
 use super::super::Command;
 use super::connect_client;
@@ -16,22 +17,29 @@ impl Command for ListWorkspaceCommand {
         let workspaces = client.list_workspaces(self.environment_id.clone()).await?;
 
         if workspaces.is_empty() {
-            println!("No workspaces found.");
+            let mut stdout = std::io::stdout();
+            writeln!(stdout, "No workspaces found.")?;
             return Ok(());
         }
 
-        println!("{:<36} {:<16} {:<36} Path", "Workspace", "Name", "Repo");
-        println!("{}", "-".repeat(128));
+        let mut stdout = std::io::stdout();
+        writeln!(
+            stdout,
+            "{:<36} {:<16} {:<36} Path",
+            "Workspace", "Name", "Repo"
+        )?;
+        writeln!(stdout, "{}", "-".repeat(128))?;
 
         for workspace in workspaces {
             let name = workspace.name.unwrap_or_else(|| "-".to_string());
-            println!(
+            writeln!(
+                stdout,
                 "{:<36} {:<16} {:<36} {}",
                 workspace.workspace_id.as_uuid(),
                 name,
                 workspace.repo_id.as_uuid(),
                 workspace.path.display()
-            );
+            )?;
         }
 
         Ok(())

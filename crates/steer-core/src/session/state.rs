@@ -737,7 +737,7 @@ impl SessionState {
     pub fn validate(&self) -> std::result::Result<(), String> {
         // Check that all tool calls referenced in messages exist
         for message in &self.messages {
-            let tool_calls = self.extract_tool_calls_from_message(message);
+            let tool_calls = Self::extract_tool_calls_from_message(message);
             if !tool_calls.is_empty() {
                 for tool_call_id in tool_calls {
                     if !self.tool_calls.contains_key(&tool_call_id) {
@@ -753,7 +753,7 @@ impl SessionState {
     }
 
     /// Extract tool call IDs from a message
-    fn extract_tool_calls_from_message(&self, message: &Message) -> Vec<String> {
+    fn extract_tool_calls_from_message(message: &Message) -> Vec<String> {
         let mut tool_call_ids = Vec::new();
 
         match &message.data {
@@ -770,7 +770,7 @@ impl SessionState {
             MessageData::Tool { tool_use_id, .. } => {
                 tool_call_ids.push(tool_use_id.clone());
             }
-            _ => {}
+            MessageData::User { .. } => {}
         }
 
         tool_call_ids
@@ -1074,7 +1074,9 @@ mod tests {
             .expect("bash rule")
         {
             ToolRule::Bash { patterns } => patterns,
-            other => panic!("Unexpected bash rule: {other:?}"),
+            ToolRule::DispatchAgent { .. } => {
+                panic!("Unexpected bash rule: dispatch agent")
+            }
         };
         assert!(bash_patterns.contains(&"git status".to_string()));
         assert!(bash_patterns.contains(&"git log".to_string()));
@@ -1087,7 +1089,7 @@ mod tests {
             .expect("dispatch_agent rule")
         {
             ToolRule::DispatchAgent { agent_patterns } => agent_patterns,
-            other => panic!("Unexpected dispatch_agent rule: {other:?}"),
+            ToolRule::Bash { .. } => panic!("Unexpected dispatch_agent rule: bash"),
         };
         assert!(agent_patterns.contains(&"explore".to_string()));
         assert!(agent_patterns.contains(&"review".to_string()));
@@ -1163,7 +1165,7 @@ mod tests {
                     text: "Hello".to_string(),
                 }],
             },
-            timestamp: 123456789,
+            timestamp: 123_456_789,
             id: "msg1".to_string(),
             parent_message_id: None,
         };

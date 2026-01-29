@@ -122,7 +122,7 @@ impl ChatStore {
 
         // For non-message items without a parent, set parent_chat_item_id to active_message_id
         if !matches!(item.data, ChatItemData::Message(_)) && item.parent_chat_item_id.is_none() {
-            item.parent_chat_item_id = self.active_message_id.clone();
+            item.parent_chat_item_id.clone_from(&self.active_message_id);
         }
 
         // Track transient items for fast lookups
@@ -421,7 +421,7 @@ mod tests {
             },
             timestamp: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             id: id.to_string(),
             parent_message_id: parent_id.map(|s| s.to_string()),

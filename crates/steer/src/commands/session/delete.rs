@@ -3,6 +3,17 @@ use eyre::{Result, eyre};
 use std::io::{self, Write};
 use uuid::Uuid;
 
+fn confirm_prompt(prompt: &str) -> Result<bool> {
+    let mut stdout = io::stdout();
+    stdout.write_all(prompt.as_bytes())?;
+    stdout.flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    Ok(input.trim().to_lowercase().starts_with('y'))
+}
+
 use super::super::Command;
 
 use steer_core::app::domain::session::{EventStore, SqliteEventStore};
@@ -22,20 +33,15 @@ impl Command for DeleteSessionCommand {
             return self.handle_remote(remote_addr).await;
         }
 
-        if !self.force {
-            print!(
+        if !self.force
+            && !confirm_prompt(&format!(
                 "Are you sure you want to delete session {}? (y/N): ",
                 self.session_id
-            );
-            io::stdout().flush()?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-
-            if !input.trim().to_lowercase().starts_with('y') {
-                println!("Deletion cancelled.");
-                return Ok(());
-            }
+            ))?
+        {
+            let mut stdout = io::stdout();
+            writeln!(stdout, "Deletion cancelled.")?;
+            return Ok(());
         }
 
         let db_path = match &self.session_db {
@@ -65,7 +71,8 @@ impl Command for DeleteSessionCommand {
             .await
             .map_err(|e| eyre!("Failed to delete session: {}", e))?;
 
-        println!("Session {} deleted.", self.session_id);
+        let mut stdout = io::stdout();
+        writeln!(stdout, "Session {} deleted.", self.session_id)?;
         Ok(())
     }
 }
@@ -82,20 +89,15 @@ impl DeleteSessionCommand {
             )
         })?;
 
-        if !self.force {
-            print!(
+        if !self.force
+            && !confirm_prompt(&format!(
                 "Are you sure you want to delete remote session {}? (y/N): ",
                 self.session_id
-            );
-            io::stdout().flush()?;
-
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-
-            if !input.trim().to_lowercase().starts_with('y') {
-                println!("Deletion cancelled.");
-                return Ok(());
-            }
+            ))?
+        {
+            let mut stdout = io::stdout();
+            writeln!(stdout, "Deletion cancelled.")?;
+            return Ok(());
         }
 
         let deleted = client
@@ -104,7 +106,8 @@ impl DeleteSessionCommand {
             .map_err(|e| eyre!("Failed to delete remote session: {}", e))?;
 
         if deleted {
-            println!("Remote session {} deleted.", self.session_id);
+            let mut stdout = io::stdout();
+            writeln!(stdout, "Remote session {} deleted.", self.session_id)?;
         } else {
             return Err(eyre!("Remote session not found: {}", self.session_id));
         }

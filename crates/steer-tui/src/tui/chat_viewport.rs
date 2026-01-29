@@ -240,7 +240,7 @@ impl ChatViewport {
 
         // Flatten raw items into 1:1 widget items
         let flattened =
-            self.flatten_items(&filtered_items, &edited_message_ids, editing_message_id);
+            Self::flatten_items(&filtered_items, &edited_message_ids, editing_message_id);
 
         // Build a map of existing widgets by ID for reuse
         let mut existing_widgets: HashMap<String, WidgetItem> = HashMap::new();
@@ -287,7 +287,6 @@ impl ChatViewport {
 
     /// Flatten raw ChatItems into 1:1 widget items
     fn flatten_items(
-        &self,
         raw: &[&ChatItem],
         edited_message_ids: &HashSet<String>,
         editing_message_id: Option<&str>,
@@ -318,7 +317,7 @@ impl ChatViewport {
                             let has_text_content = content.iter().any(|block| match block {
                                 AssistantContent::Text { text } => !text.trim().is_empty(),
                                 AssistantContent::Thought { .. } => true,
-                                _ => false,
+                                AssistantContent::ToolCall { .. } => false,
                             });
 
                             // Emit MessageText if there's text content
@@ -819,46 +818,41 @@ fn build_lineage_set(active_message_id: &str, chat_store: &ChatStore) -> HashSet
 
 /// Check if a ChatItem should be visible based on the lineage set
 fn is_visible(item: &ChatItem, lineage: &HashSet<String>, chat_store: &ChatStore) -> bool {
-    match &item.data {
-        // Messages are visible if they're in the lineage
-        ChatItemData::Message(msg) => {
-            if chat_store.is_before_compaction(msg.id()) {
+    if let ChatItemData::Message(msg) = &item.data {
+        if chat_store.is_before_compaction(msg.id()) {
+            return false;
+        }
+        return lineage.contains(msg.id());
+    }
+
+    // Root-level meta/tool rows (no parent) are always visible
+    if item.parent_chat_item_id.is_none() {
+        return true;
+    }
+
+    let mut current = item.parent_chat_item_id.as_deref();
+    while let Some(parent_id) = current {
+        if lineage.contains(parent_id) {
+            return true;
+        }
+
+        // Check if this parent is a message - if so, we've already checked lineage
+        if let Some(parent_item) = chat_store.get_by_id(&parent_id.to_string()) {
+            if matches!(parent_item.data, ChatItemData::Message(_)) {
+                if chat_store.is_before_compaction(parent_id) {
+                    return false;
+                }
+                // If we reached a message and it's not in lineage, stop here
                 return false;
             }
-            lineage.contains(msg.id())
-        }
-        // Non-message items are visible if they or any of their ancestors attach to the lineage
-        _ => {
-            // Root-level meta/tool rows (no parent) are always visible
-            if item.parent_chat_item_id.is_none() {
-                return true;
-            }
-
-            let mut current = item.parent_chat_item_id.as_deref();
-            while let Some(parent_id) = current {
-                if lineage.contains(parent_id) {
-                    return true;
-                }
-
-                // Check if this parent is a message - if so, we've already checked lineage
-                if let Some(parent_item) = chat_store.get_by_id(&parent_id.to_string()) {
-                    if matches!(parent_item.data, ChatItemData::Message(_)) {
-                        if chat_store.is_before_compaction(parent_id) {
-                            return false;
-                        }
-                        // If we reached a message and it's not in lineage, stop here
-                        return false;
-                    }
-                    // Otherwise continue walking up
-                    current = parent_item.parent_chat_item_id.as_deref();
-                } else {
-                    // Parent doesn't exist, stop
-                    break;
-                }
-            }
-            false
+            // Otherwise continue walking up
+            current = parent_item.parent_chat_item_id.as_deref();
+        } else {
+            // Parent doesn't exist, stop
+            break;
         }
     }
+    false
 }
 
 #[cfg(test)]

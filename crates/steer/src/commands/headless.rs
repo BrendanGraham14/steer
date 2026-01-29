@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use steer_core::app::domain::types::SessionId;
 use steer_core::tools::{DISPATCH_AGENT_TOOL_NAME, FETCH_TOOL_NAME};
@@ -61,7 +61,8 @@ impl Command for HeadlessCommand {
         let json_output = serde_json::to_string_pretty(&result)
             .map_err(|e| eyre!("Failed to serialize result to JSON: {}", e))?;
 
-        println!("{json_output}");
+        let mut stdout = io::stdout();
+        writeln!(stdout, "{json_output}")?;
         Ok(())
     }
 }
@@ -84,7 +85,7 @@ impl HeadlessCommand {
                     .iter()
                     .find_map(|c| match c {
                         UserContent::Text { text } => Some(text.clone()),
-                        _ => None,
+                        UserContent::CommandExecution { .. } => None,
                     })
                     .ok_or_else(|| eyre!("Last message must contain text content")),
                 _ => Err(eyre!("Last message must be from User")),

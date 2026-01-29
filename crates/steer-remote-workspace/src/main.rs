@@ -2,7 +2,7 @@ use clap::Parser;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tonic::transport::Server;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use steer_remote_workspace::proto::remote_workspace_service_server::RemoteWorkspaceServiceServer;
 use steer_remote_workspace::remote_workspace_service::RemoteWorkspaceService;
@@ -32,9 +32,15 @@ struct Args {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let working_dir = args
-        .working_dir
-        .unwrap_or_else(|| std::env::current_dir().unwrap());
+    let working_dir = match args.working_dir {
+        Some(dir) => dir,
+        None => std::env::current_dir().map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("Failed to read current directory for working dir: {error}"),
+            )
+        })?,
+    };
 
     // Initialize logging
     let log_level = if args.debug { "debug" } else { "info" };
@@ -79,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Remote workspace server ready to accept connections");
 
     if let Err(e) = server.await {
-        eprintln!("Server error: {e}");
+        error!(error = %e, "Server error");
         std::process::exit(1);
     }
 

@@ -2646,7 +2646,7 @@ pub(crate) fn proto_to_client_event(
             })?;
             let config = proto_to_session_config(config)?;
             ClientEvent::SessionConfigUpdated {
-                config,
+                config: Box::new(config),
                 primary_agent_id: e.primary_agent_id,
             }
         }

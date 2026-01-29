@@ -232,18 +232,26 @@ struct AssistantMessage {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PromptTokensDetails {
-    cached_tokens: usize,
-    audio_tokens: usize,
-    image_tokens: usize,
-    text_tokens: usize,
+    #[serde(rename = "cached_tokens")]
+    cached: usize,
+    #[serde(rename = "audio_tokens")]
+    audio: usize,
+    #[serde(rename = "image_tokens")]
+    image: usize,
+    #[serde(rename = "text_tokens")]
+    text: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CompletionTokensDetails {
-    reasoning_tokens: usize,
-    audio_tokens: usize,
-    accepted_prediction_tokens: usize,
-    rejected_prediction_tokens: usize,
+    #[serde(rename = "reasoning_tokens")]
+    reasoning: usize,
+    #[serde(rename = "audio_tokens")]
+    audio: usize,
+    #[serde(rename = "accepted_prediction_tokens")]
+    accepted_prediction: usize,
+    #[serde(rename = "rejected_prediction_tokens")]
+    rejected_prediction: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -315,34 +323,37 @@ struct XAIStreamFunction {
 }
 
 impl XAIClient {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: String) -> Result<Self, ApiError> {
         Self::with_base_url(api_key, None)
     }
 
-    pub fn with_base_url(api_key: String, base_url: Option<String>) -> Self {
+    pub fn with_base_url(api_key: String, base_url: Option<String>) -> Result<Self, ApiError> {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {api_key}"))
-                .expect("Invalid API key format"),
+            header::HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|e| {
+                ApiError::AuthenticationFailed {
+                    provider: "xai".to_string(),
+                    details: format!("Invalid API key: {e}"),
+                }
+            })?,
         );
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .timeout(std::time::Duration::from_secs(300)) // 5 minute timeout
             .build()
-            .expect("Failed to build HTTP client");
+            .map_err(ApiError::Network)?;
 
         let base_url = normalize_chat_url(base_url.as_deref(), DEFAULT_API_URL);
 
-        Self {
+        Ok(Self {
             http_client: client,
             base_url,
-        }
+        })
     }
 
     fn convert_messages(
-        &self,
         messages: Vec<AppMessage>,
         system: Option<SystemContext>,
     ) -> Vec<XAIMessage> {
@@ -407,7 +418,6 @@ impl XAIClient {
                             }
                             AssistantContent::Thought { .. } => {
                                 // xAI doesn't support thinking blocks in requests, only in responses
-                                continue;
                             }
                         }
                     }
@@ -460,7 +470,7 @@ impl XAIClient {
         xai_messages
     }
 
-    fn convert_tools(&self, tools: Vec<ToolSchema>) -> Vec<XAITool> {
+    fn convert_tools(tools: Vec<ToolSchema>) -> Vec<XAITool> {
         tools
             .into_iter()
             .map(|tool| XAITool {
@@ -490,8 +500,8 @@ impl Provider for XAIClient {
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        let xai_messages = self.convert_messages(messages, system);
-        let xai_tools = tools.map(|t| self.convert_tools(t));
+        let xai_messages = Self::convert_messages(messages, system);
+        let xai_tools = tools.map(Self::convert_tools);
 
         // Extract thinking support and map optional effort
         let (supports_thinking, reasoning_effort) = call_options
@@ -670,8 +680,8 @@ impl Provider for XAIClient {
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionStream, ApiError> {
-        let xai_messages = self.convert_messages(messages, system);
-        let xai_tools = tools.map(|t| self.convert_tools(t));
+        let xai_messages = Self::convert_messages(messages, system);
+        let xai_tools = tools.map(Self::convert_tools);
 
         let (supports_thinking, reasoning_effort) = call_options
             .as_ref()
@@ -903,13 +913,13 @@ impl XAIClient {
 
                             if let Some(id) = &tc.id {
                                 if !id.is_empty() {
-                                    entry.id = id.clone();
+                                    entry.id.clone_from(id);
                                 }
                             }
                             if let Some(func) = &tc.function {
                                 if let Some(name) = &func.name {
                                     if !name.is_empty() {
-                                        entry.name = name.clone();
+                                        entry.name.clone_from(name);
                                     }
                                 }
                             }

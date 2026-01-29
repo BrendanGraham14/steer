@@ -35,44 +35,50 @@ impl ResponsesAuth {
     fn directive(&self) -> Option<&OpenAiResponsesAuth> {
         match self {
             ResponsesAuth::Directive(directive) => Some(directive),
-            _ => None,
+            ResponsesAuth::ApiKey(_) => None,
         }
     }
 }
 
 #[derive(Clone)]
 pub(super) struct Client {
-    http_client: reqwest::Client,
+    http: reqwest::Client,
     base_url: String,
     auth: ResponsesAuth,
 }
 
 impl Client {
-    pub(super) fn new(api_key: String) -> Self {
+    pub(super) fn new(api_key: String) -> Result<Self, ApiError> {
         Self::with_base_url(api_key, None)
     }
 
-    pub(super) fn with_base_url(api_key: String, base_url: Option<String>) -> Self {
-        let http_client = reqwest::Client::builder()
+    pub(super) fn with_base_url(
+        api_key: String,
+        base_url: Option<String>,
+    ) -> Result<Self, ApiError> {
+        let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(super::HTTP_TIMEOUT_SECS))
             .build()
-            .expect("Failed to build HTTP client");
+            .map_err(ApiError::Network)?;
 
         let base_url =
             crate::api::util::normalize_responses_url(base_url.as_deref(), DEFAULT_API_URL);
 
-        Self {
-            http_client,
+        Ok(Self {
+            http,
             base_url,
             auth: ResponsesAuth::ApiKey(api_key),
-        }
+        })
     }
 
-    pub(super) fn with_directive(directive: OpenAiResponsesAuth, base_url: Option<String>) -> Self {
-        let http_client = reqwest::Client::builder()
+    pub(super) fn with_directive(
+        directive: OpenAiResponsesAuth,
+        base_url: Option<String>,
+    ) -> Result<Self, ApiError> {
+        let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(super::HTTP_TIMEOUT_SECS))
             .build()
-            .expect("Failed to build HTTP client");
+            .map_err(ApiError::Network)?;
 
         let base_url = directive
             .base_url_override
@@ -80,11 +86,11 @@ impl Client {
             .or(base_url.as_deref());
         let base_url = crate::api::util::normalize_responses_url(base_url, DEFAULT_API_URL);
 
-        Self {
-            http_client,
+        Ok(Self {
+            http,
             base_url,
             auth: ResponsesAuth::Directive(directive),
-        }
+        })
     }
 
     /// Build a request with proper message structure and tool support
@@ -102,7 +108,7 @@ impl Client {
             directive.and_then(|d| d.instruction_policy.as_ref()),
         );
 
-        let input = self.convert_messages_to_input(&messages);
+        let input = Self::convert_messages_to_input(&messages);
 
         let responses_tools = tools.map(|tools| {
             tools
@@ -249,10 +255,7 @@ impl Client {
             .map_err(|e| ApiError::AuthError(e.to_string()))
     }
 
-    pub(super) fn convert_output(
-        &self,
-        output: Option<Vec<ResponseOutputItem>>,
-    ) -> Vec<AssistantContent> {
+    pub(super) fn convert_output(output: Option<Vec<ResponseOutputItem>>) -> Vec<AssistantContent> {
         let mut result = Vec::new();
         if let Some(items) = output {
             for item in items {
@@ -375,7 +378,7 @@ impl Client {
     }
 
     /// Convert messages to the structured input format that preserves roles
-    pub(super) fn convert_messages_to_input(&self, messages: &[AppMessage]) -> Option<InputType> {
+    pub(super) fn convert_messages_to_input(messages: &[AppMessage]) -> Option<InputType> {
         let mut input_items = Vec::new();
 
         for message in messages {
@@ -473,8 +476,8 @@ impl Client {
     }
 
     /// Convert a Responses API response to an app CompletionResponse
-    pub(super) fn convert_response(&self, response: ResponsesApiResponse) -> CompletionResponse {
-        let content = self.convert_output(response.output);
+    pub(super) fn convert_response(response: ResponsesApiResponse) -> CompletionResponse {
+        let content = Self::convert_output(response.output);
 
         // Note: The top-level `reasoning` field in the response is just metadata
         // about reasoning configuration. The actual reasoning content comes through
@@ -537,7 +540,7 @@ impl Client {
             log_request_payload(&request, false);
             let headers = self.auth_headers(auth_ctx.clone()).await?;
             let request_builder = self
-                .http_client
+                .http
                 .post(&self.base_url)
                 .headers(headers)
                 .json(&request);
@@ -669,7 +672,7 @@ impl Client {
                 }
             })?;
 
-            return Ok(self.convert_response(parsed));
+            return Ok(Self::convert_response(parsed));
         }
     }
 
@@ -698,7 +701,7 @@ impl Client {
 
             let headers = self.auth_headers(auth_ctx.clone()).await?;
             let request_builder = self
-                .http_client
+                .http
                 .post(&self.base_url)
                 .headers(headers)
                 .json(&request);
@@ -894,15 +897,18 @@ impl Client {
                             Some("response.function_call_arguments.delta" |
         "response.custom_tool_call_input.delta" | "response.mcp_call_arguments.delta") => {
                                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                                    match handle_tool_call_delta(
-                                        &data,
-                                        &item_to_call_id,
+                                    let mut tool_state = ToolCallState::new(
                                         &mut tool_calls,
                                         &mut tool_call_positions,
                                         &mut content,
                                         &mut tool_call_keys,
                                         &mut pending_tool_deltas,
-                                        &tool_calls_started,
+                                        &mut tool_calls_started,
+                                    );
+                                    match handle_tool_call_delta(
+                                        &data,
+                                        &item_to_call_id,
+                                        &mut tool_state,
                                         &["delta", "input", "arguments"],
                                     ) {
                                         ToolDeltaOutcome::Emit { id, delta } => {
@@ -922,13 +928,18 @@ impl Client {
                             Some("response.function_call_arguments.done" |
         "response.custom_tool_call_input.done" | "response.mcp_call_arguments.done") => {
                                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                                    handle_tool_call_done(
-                                        &data,
-                                        &item_to_call_id,
+                                    let mut tool_state = ToolCallState::new(
                                         &mut tool_calls,
                                         &mut tool_call_positions,
                                         &mut content,
                                         &mut tool_call_keys,
+                                        &mut pending_tool_deltas,
+                                        &mut tool_calls_started,
+                                    );
+                                    handle_tool_call_done(
+                                        &data,
+                                        &item_to_call_id,
+                                        &mut tool_state,
                                         &["arguments", "input", "delta"],
                                     );
                                 }
@@ -946,16 +957,15 @@ impl Client {
                                     };
                                     let name = extract_first_non_empty_str(&data, &["name", "tool_name"]);
                                     let args = extract_first_non_empty_str(&data, &["arguments", "input"]);
-                                    if let Some(chunk) = register_tool_call(
-                                        &call_id,
-                                        name,
-                                        args,
+                                    let mut tool_state = ToolCallState::new(
                                         &mut tool_calls,
                                         &mut tool_call_positions,
                                         &mut content,
                                         &mut tool_call_keys,
+                                        &mut pending_tool_deltas,
                                         &mut tool_calls_started,
-                                    ) {
+                                    );
+                                    if let Some(chunk) = register_tool_call(&call_id, name, args, &mut tool_state) {
                                         yield chunk;
                                     }
                                     if tool_calls_started.contains(&call_id) {
@@ -990,9 +1000,7 @@ impl Client {
                                             if let Some(item_id) = item_id
                                                 && !item_id.is_empty() {
                                                     item_to_call_id.insert(item_id.clone(), call_id.clone());
-                                                    promote_tool_call_id(
-                                                        &item_id,
-                                                        &call_id,
+                                                    let mut tool_state = ToolCallState::new(
                                                         &mut tool_calls,
                                                         &mut tool_call_positions,
                                                         &mut content,
@@ -1000,19 +1008,20 @@ impl Client {
                                                         &mut pending_tool_deltas,
                                                         &mut tool_calls_started,
                                                     );
+                                                    promote_tool_call_id(&item_id, &call_id, &mut tool_state);
                                                 }
                                             let name = extract_first_non_empty_str(item, &["name", "tool_name"]);
                                             let args = extract_first_non_empty_str(item, &["arguments", "input"]);
-                                            if let Some(chunk) = register_tool_call(
-                                                &call_id,
-                                                name,
-                                                args,
+                                            let mut tool_state = ToolCallState::new(
                                                 &mut tool_calls,
                                                 &mut tool_call_positions,
                                                 &mut content,
                                                 &mut tool_call_keys,
+                                                &mut pending_tool_deltas,
                                                 &mut tool_calls_started,
-                                            ) {
+                                            );
+                                            if let Some(chunk) = register_tool_call(&call_id, name, args, &mut tool_state)
+                                            {
                                                 yield chunk;
                                             }
                                             if tool_calls_started.contains(&call_id) {
@@ -1200,6 +1209,35 @@ fn should_emit_summary(
     }
 }
 
+struct ToolCallState<'a> {
+    tool_calls: &'a mut std::collections::HashMap<String, (String, String)>,
+    tool_call_positions: &'a mut std::collections::HashMap<String, usize>,
+    content: &'a mut Vec<AssistantContent>,
+    tool_call_keys: &'a mut Vec<Option<String>>,
+    pending_tool_deltas: &'a mut std::collections::HashMap<String, Vec<String>>,
+    tool_calls_started: &'a mut std::collections::HashSet<String>,
+}
+
+impl<'a> ToolCallState<'a> {
+    fn new(
+        tool_calls: &'a mut std::collections::HashMap<String, (String, String)>,
+        tool_call_positions: &'a mut std::collections::HashMap<String, usize>,
+        content: &'a mut Vec<AssistantContent>,
+        tool_call_keys: &'a mut Vec<Option<String>>,
+        pending_tool_deltas: &'a mut std::collections::HashMap<String, Vec<String>>,
+        tool_calls_started: &'a mut std::collections::HashSet<String>,
+    ) -> Self {
+        Self {
+            tool_calls,
+            tool_call_positions,
+            content,
+            tool_call_keys,
+            pending_tool_deltas,
+            tool_calls_started,
+        }
+    }
+}
+
 fn append_text_delta(
     content: &mut Vec<AssistantContent>,
     tool_call_keys: &mut Vec<Option<String>>,
@@ -1264,12 +1302,7 @@ fn ensure_tool_call_placeholder(
 fn handle_tool_call_delta(
     data: &serde_json::Value,
     item_to_call_id: &std::collections::HashMap<String, String>,
-    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
-    tool_call_positions: &mut std::collections::HashMap<String, usize>,
-    content: &mut Vec<AssistantContent>,
-    tool_call_keys: &mut Vec<Option<String>>,
-    pending_tool_deltas: &mut std::collections::HashMap<String, Vec<String>>,
-    tool_calls_started: &std::collections::HashSet<String>,
+    tool_state: &mut ToolCallState<'_>,
     delta_keys: &[&str],
 ) -> ToolDeltaOutcome {
     let Some(delta) = extract_first_non_empty_str(data, delta_keys) else {
@@ -1280,37 +1313,47 @@ fn handle_tool_call_delta(
     };
     match resolution {
         ToolCallIdResolution::Resolved(call_id) => {
-            let entry = tool_calls
+            let entry = tool_state
+                .tool_calls
                 .entry(call_id.clone())
                 .or_insert_with(|| (String::new(), String::new()));
             entry.1.push_str(&delta);
             ensure_tool_call_placeholder(
                 &call_id,
-                tool_calls,
-                tool_call_positions,
-                content,
-                tool_call_keys,
+                tool_state.tool_calls,
+                tool_state.tool_call_positions,
+                tool_state.content,
+                tool_state.tool_call_keys,
             );
-            if tool_calls_started.contains(&call_id) {
+            if tool_state.tool_calls_started.contains(&call_id) {
                 ToolDeltaOutcome::Emit { id: call_id, delta }
             } else {
-                pending_tool_deltas.entry(call_id).or_default().push(delta);
+                tool_state
+                    .pending_tool_deltas
+                    .entry(call_id)
+                    .or_default()
+                    .push(delta);
                 ToolDeltaOutcome::Buffered
             }
         }
         ToolCallIdResolution::Pending(item_id) => {
-            let entry = tool_calls
+            let entry = tool_state
+                .tool_calls
                 .entry(item_id.clone())
                 .or_insert_with(|| (String::new(), String::new()));
             entry.1.push_str(&delta);
             ensure_tool_call_placeholder(
                 &item_id,
-                tool_calls,
-                tool_call_positions,
-                content,
-                tool_call_keys,
+                tool_state.tool_calls,
+                tool_state.tool_call_positions,
+                tool_state.content,
+                tool_state.tool_call_keys,
             );
-            pending_tool_deltas.entry(item_id).or_default().push(delta);
+            tool_state
+                .pending_tool_deltas
+                .entry(item_id)
+                .or_default()
+                .push(delta);
             ToolDeltaOutcome::Buffered
         }
     }
@@ -1319,10 +1362,7 @@ fn handle_tool_call_delta(
 fn handle_tool_call_done(
     data: &serde_json::Value,
     item_to_call_id: &std::collections::HashMap<String, String>,
-    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
-    tool_call_positions: &mut std::collections::HashMap<String, usize>,
-    content: &mut Vec<AssistantContent>,
-    tool_call_keys: &mut Vec<Option<String>>,
+    tool_state: &mut ToolCallState<'_>,
     arg_keys: &[&str],
 ) {
     let Some(resolution) = resolve_tool_call_id_for_event(data, item_to_call_id) else {
@@ -1335,16 +1375,17 @@ fn handle_tool_call_done(
         ToolCallIdResolution::Resolved(call_id) => call_id,
         ToolCallIdResolution::Pending(item_id) => item_id,
     };
-    let entry = tool_calls
+    let entry = tool_state
+        .tool_calls
         .entry(key.clone())
         .or_insert_with(|| (String::new(), String::new()));
     entry.1 = arguments;
     ensure_tool_call_placeholder(
         &key,
-        tool_calls,
-        tool_call_positions,
-        content,
-        tool_call_keys,
+        tool_state.tool_calls,
+        tool_state.tool_call_positions,
+        tool_state.content,
+        tool_state.tool_call_keys,
     );
 }
 
@@ -1352,18 +1393,15 @@ fn register_tool_call(
     call_id: &str,
     name: Option<String>,
     args: Option<String>,
-    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
-    tool_call_positions: &mut std::collections::HashMap<String, usize>,
-    content: &mut Vec<AssistantContent>,
-    tool_call_keys: &mut Vec<Option<String>>,
-    tool_calls_started: &mut std::collections::HashSet<String>,
+    tool_state: &mut ToolCallState<'_>,
 ) -> Option<StreamChunk> {
     if call_id.is_empty() {
         return None;
     }
     let mut name_to_emit = None;
     {
-        let entry = tool_calls
+        let entry = tool_state
+            .tool_calls
             .entry(call_id.to_string())
             .or_insert_with(|| (String::new(), String::new()));
         if let Some(name) = name.filter(|value| !value.is_empty())
@@ -1382,13 +1420,13 @@ fn register_tool_call(
     }
     ensure_tool_call_placeholder(
         call_id,
-        tool_calls,
-        tool_call_positions,
-        content,
-        tool_call_keys,
+        tool_state.tool_calls,
+        tool_state.tool_call_positions,
+        tool_state.content,
+        tool_state.tool_call_keys,
     );
     if let Some(name) = name_to_emit {
-        if tool_calls_started.insert(call_id.to_string()) {
+        if tool_state.tool_calls_started.insert(call_id.to_string()) {
             return Some(StreamChunk::ToolUseStart {
                 id: call_id.to_string(),
                 name,
@@ -1415,22 +1453,14 @@ fn drop_tool_call_placeholder_at(
     }
 }
 
-fn promote_tool_call_id(
-    provisional_id: &str,
-    call_id: &str,
-    tool_calls: &mut std::collections::HashMap<String, (String, String)>,
-    tool_call_positions: &mut std::collections::HashMap<String, usize>,
-    content: &mut Vec<AssistantContent>,
-    tool_call_keys: &mut Vec<Option<String>>,
-    pending_tool_deltas: &mut std::collections::HashMap<String, Vec<String>>,
-    tool_calls_started: &mut std::collections::HashSet<String>,
-) {
+fn promote_tool_call_id(provisional_id: &str, call_id: &str, tool_state: &mut ToolCallState<'_>) {
     if provisional_id == call_id {
         return;
     }
 
-    if let Some((pending_name, pending_args)) = tool_calls.remove(provisional_id) {
-        let entry = tool_calls
+    if let Some((pending_name, pending_args)) = tool_state.tool_calls.remove(provisional_id) {
+        let entry = tool_state
+            .tool_calls
             .entry(call_id.to_string())
             .or_insert_with(|| (String::new(), String::new()));
         if entry.0.is_empty() {
@@ -1441,58 +1471,71 @@ fn promote_tool_call_id(
         }
     }
 
-    if let Some(deltas) = pending_tool_deltas.remove(provisional_id) {
-        pending_tool_deltas
+    if let Some(deltas) = tool_state.pending_tool_deltas.remove(provisional_id) {
+        tool_state
+            .pending_tool_deltas
             .entry(call_id.to_string())
             .or_default()
             .extend(deltas);
     }
 
-    if tool_calls_started.remove(provisional_id) {
-        tool_calls_started.insert(call_id.to_string());
+    if tool_state.tool_calls_started.remove(provisional_id) {
+        tool_state.tool_calls_started.insert(call_id.to_string());
     }
 
-    for key in tool_call_keys.iter_mut() {
+    for key in tool_state.tool_call_keys.iter_mut() {
         if key.as_deref() == Some(provisional_id) {
             *key = Some(call_id.to_string());
         }
     }
 
-    let provisional_pos = tool_call_positions.get(provisional_id).copied();
-    let call_pos = tool_call_positions.get(call_id).copied();
+    let provisional_pos = tool_state.tool_call_positions.get(provisional_id).copied();
+    let call_pos = tool_state.tool_call_positions.get(call_id).copied();
 
     match (provisional_pos, call_pos) {
         (Some(p_pos), None) => {
-            tool_call_positions.remove(provisional_id);
-            tool_call_positions.insert(call_id.to_string(), p_pos);
+            tool_state.tool_call_positions.remove(provisional_id);
+            tool_state
+                .tool_call_positions
+                .insert(call_id.to_string(), p_pos);
         }
-        (Some(p_pos), Some(c_pos)) => {
-            if p_pos < c_pos {
+        (Some(p_pos), Some(c_pos)) => match p_pos.cmp(&c_pos) {
+            std::cmp::Ordering::Less => {
                 drop_tool_call_placeholder_at(
                     call_id,
                     c_pos,
-                    tool_call_positions,
-                    content,
-                    tool_call_keys,
+                    tool_state.tool_call_positions,
+                    tool_state.content,
+                    tool_state.tool_call_keys,
                 );
-                tool_call_positions.remove(provisional_id);
-                tool_call_positions.insert(call_id.to_string(), p_pos);
-            } else if c_pos < p_pos {
+                tool_state.tool_call_positions.remove(provisional_id);
+                tool_state
+                    .tool_call_positions
+                    .insert(call_id.to_string(), p_pos);
+            }
+            std::cmp::Ordering::Greater => {
                 drop_tool_call_placeholder_at(
                     provisional_id,
                     p_pos,
-                    tool_call_positions,
-                    content,
-                    tool_call_keys,
+                    tool_state.tool_call_positions,
+                    tool_state.content,
+                    tool_state.tool_call_keys,
                 );
-                tool_call_positions.insert(call_id.to_string(), c_pos);
-            } else {
-                tool_call_positions.remove(provisional_id);
-                tool_call_positions.insert(call_id.to_string(), p_pos);
+                tool_state
+                    .tool_call_positions
+                    .insert(call_id.to_string(), c_pos);
             }
-        }
+            std::cmp::Ordering::Equal => {
+                tool_state.tool_call_positions.remove(provisional_id);
+                tool_state
+                    .tool_call_positions
+                    .insert(call_id.to_string(), p_pos);
+            }
+        },
         (None, Some(c_pos)) => {
-            tool_call_positions.insert(call_id.to_string(), c_pos);
+            tool_state
+                .tool_call_positions
+                .insert(call_id.to_string(), c_pos);
         }
         (None, None) => {}
     }
@@ -1700,8 +1743,6 @@ mod tests {
 
     #[test]
     fn test_responses_api_message_conversion() {
-        let client = Client::new("test_key".to_string());
-
         let messages = vec![
             Message {
                 data: MessageData::User {
@@ -1725,7 +1766,7 @@ mod tests {
             },
         ];
 
-        let actual = client.convert_messages_to_input(&messages);
+        let actual = Client::convert_messages_to_input(&messages);
         let expected = Some(InputType::Messages(vec![
             InputItem::Message {
                 role: "user".to_string(),
@@ -1747,7 +1788,7 @@ mod tests {
 
     #[test]
     fn test_responses_api_tool_conversion() {
-        let client = Client::new("test_key".to_string());
+        let client = Client::new("test_key".to_string()).expect("openai responses client");
 
         let tools = vec![ToolSchema {
             name: "get_weather".to_string(),
@@ -1800,7 +1841,7 @@ mod tests {
 
     #[test]
     fn test_responses_api_dispatch_agent_schema_includes_target() {
-        let client = Client::new("test_key".to_string());
+        let client = Client::new("test_key".to_string()).expect("openai responses client");
 
         let input_schema: steer_tools::InputSchema = schema_for!(DispatchAgentParams).into();
         let tools = vec![ToolSchema {
@@ -1864,7 +1905,7 @@ mod tests {
 
     #[test]
     fn test_responses_api_reasoning_config() {
-        let client = Client::new("test_key".to_string());
+        let client = Client::new("test_key".to_string()).expect("openai responses client");
 
         let messages = vec![Message {
             data: MessageData::User {
@@ -1906,8 +1947,6 @@ mod tests {
 
     #[test]
     fn test_responses_api_tool_result_conversion() {
-        let client = Client::new("test_key".to_string());
-
         let messages = vec![
             Message {
                 data: MessageData::User {
@@ -1950,7 +1989,7 @@ mod tests {
             },
         ];
 
-        let actual = client.convert_messages_to_input(&messages);
+        let actual = Client::convert_messages_to_input(&messages);
         let expected = Some(InputType::Messages(vec![
             InputItem::Message {
                 role: "user".to_string(),
@@ -1976,8 +2015,6 @@ mod tests {
 
     #[test]
     fn test_responses_api_output_parsing() {
-        let client = Client::new("test_key".to_string());
-
         // Test parsing function call output
         let output = vec![ResponseOutputItem::FunctionCall {
             id: "fc_123".to_string(),
@@ -1987,7 +2024,7 @@ mod tests {
             status: "completed".to_string(),
         }];
 
-        let actual = client.convert_output(Some(output));
+        let actual = Client::convert_output(Some(output));
         let expected = vec![AssistantContent::ToolCall {
             tool_call: steer_tools::ToolCall {
                 id: "call_456".to_string(),
@@ -2002,8 +2039,6 @@ mod tests {
 
     #[test]
     fn test_responses_api_output_refusal_parsing() {
-        let client = Client::new("test_key".to_string());
-
         let output = vec![ResponseOutputItem::Message {
             id: "msg_123".to_string(),
             status: "completed".to_string(),
@@ -2013,7 +2048,7 @@ mod tests {
             }],
         }];
 
-        let actual = client.convert_output(Some(output));
+        let actual = Client::convert_output(Some(output));
         let expected = vec![AssistantContent::Text {
             text: "I can't help with that.".to_string(),
         }];
@@ -2023,8 +2058,6 @@ mod tests {
 
     #[test]
     fn test_responses_api_output_custom_tool_call_parsing() {
-        let client = Client::new("test_key".to_string());
-
         let output = vec![ResponseOutputItem::CustomToolCall {
             id: Some("ctc_123".to_string()),
             call_id: Some("call_456".to_string()),
@@ -2035,7 +2068,7 @@ mod tests {
             extra: Default::default(),
         }];
 
-        let actual = client.convert_output(Some(output));
+        let actual = Client::convert_output(Some(output));
         let expected = vec![AssistantContent::ToolCall {
             tool_call: steer_tools::ToolCall {
                 id: "call_456".to_string(),
@@ -2050,12 +2083,10 @@ mod tests {
 
     #[test]
     fn test_responses_api_reasoning_extraction() {
-        let client = Client::new("test_key".to_string());
-
         let response = ResponsesApiResponse {
             id: "resp_123".to_string(),
             object: "response".to_string(),
-            created_at: 1234567890,
+            created_at: 1_234_567_890,
             status: "completed".to_string(),
             error: None,
             output: Some(vec![
@@ -2084,7 +2115,7 @@ mod tests {
             extra: Default::default(),
         };
 
-        let actual = client.convert_response(response);
+        let actual = Client::convert_response(response);
         let expected = CompletionResponse {
             content: vec![
                 AssistantContent::Thought {

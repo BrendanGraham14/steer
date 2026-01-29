@@ -255,7 +255,7 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ChatBlock::Message(_) => {} // Expected
-            _ => panic!("Expected Message ChatBlock"),
+            ChatBlock::ToolInteraction { .. } => panic!("Expected Message ChatBlock"),
         }
     }
 

@@ -162,7 +162,7 @@ impl McpBackend {
             }
             McpTransport::Sse { url, headers } => {
                 // Use the dedicated SSE client transport for SSE connections
-                if headers.is_some() && !headers.as_ref().unwrap().is_empty() {
+                if headers.as_ref().is_some_and(|h| !h.is_empty()) {
                     info!(
                         "SSE transport with custom headers requested; headers may not be applied"
                     );
@@ -188,7 +188,7 @@ impl McpBackend {
                 // Use the simpler from_uri method
                 let transport = StreamableHttpClientTransport::from_uri(url.clone());
 
-                if headers.is_some() && !headers.as_ref().unwrap().is_empty() {
+                if headers.as_ref().is_some_and(|h| !h.is_empty()) {
                     info!(
                         "HTTP transport with custom headers requested; headers may not be applied"
                     );

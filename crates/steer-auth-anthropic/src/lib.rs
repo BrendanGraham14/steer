@@ -390,7 +390,7 @@ pub async fn refresh_if_needed(
 
     let mut tokens = match credential {
         Credential::OAuth2(tokens) => tokens,
-        _ => return Err(AuthError::ReauthRequired),
+        Credential::ApiKey { .. } => return Err(AuthError::ReauthRequired),
     };
 
     if tokens_need_refresh(&tokens) {
@@ -425,7 +425,7 @@ async fn force_refresh(
 
     let tokens = match credential {
         Credential::OAuth2(tokens) => tokens,
-        _ => return Err(AuthError::ReauthRequired),
+        Credential::ApiKey { .. } => return Err(AuthError::ReauthRequired),
     };
 
     match oauth_client.refresh_tokens(&tokens.refresh_token).await {
@@ -512,7 +512,7 @@ impl AuthenticationFlow for AnthropicOAuthFlow {
                     },
                 })
             }
-            _ => Err(AuthError::UnsupportedMethod {
+            AuthMethod::ApiKey => Err(AuthError::UnsupportedMethod {
                 method: format!("{method:?}"),
                 provider: PROVIDER_ID.to_string(),
             }),
@@ -531,7 +531,7 @@ impl AuthenticationFlow for AnthropicOAuthFlow {
                     auth_url: auth_url.clone(),
                 })
             }
-            _ => Err(AuthError::UnsupportedMethod {
+            AuthMethod::ApiKey => Err(AuthError::UnsupportedMethod {
                 method: format!("{method:?}"),
                 provider: PROVIDER_ID.to_string(),
             }),

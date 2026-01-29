@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .build_server(false)
         .build_client(false)
-        .type_attribute(".", "#[allow(clippy::large_enum_variant)]")
+        .type_attribute(".", "#[expect(clippy::large_enum_variant)]")
         .compile_protos_with_config(config, &[common_proto_str], &[proto_dir_str])?;
 
     let mut config = prost_build::Config::new();
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
-        .type_attribute(".", "#[allow(clippy::large_enum_variant)]")
+        .type_attribute(".", "#[expect(clippy::large_enum_variant)]")
         .compile_protos_with_config(
             config,
             &[agent_proto_str, remote_workspace_proto_str],

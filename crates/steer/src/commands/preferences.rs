@@ -3,6 +3,7 @@ use crate::error::Error;
 use async_trait::async_trait;
 use eyre::Result;
 use shell_words::split;
+use std::io::Write;
 use std::process::Command as ProcessCommand;
 use steer_core::preferences::Preferences;
 
@@ -32,8 +33,9 @@ impl PreferencesCommand {
         let prefs = Preferences::load()?;
         let path = Preferences::config_path()?;
 
-        println!("Preferences file: {}", path.display());
-        println!("\n{}", toml::to_string_pretty(&prefs)?);
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "Preferences file: {}", path.display())?;
+        writeln!(stdout, "\n{}", toml::to_string_pretty(&prefs)?)?;
         Ok(())
     }
 
@@ -108,9 +110,11 @@ impl PreferencesCommand {
 
         if path.exists() {
             std::fs::remove_file(&path)?;
-            println!("Preferences reset to defaults");
+            let mut stdout = std::io::stdout();
+            writeln!(stdout, "Preferences reset to defaults")?;
         } else {
-            println!("No preferences file found");
+            let mut stdout = std::io::stdout();
+            writeln!(stdout, "No preferences file found")?;
         }
         Ok(())
     }

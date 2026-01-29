@@ -1,8 +1,8 @@
 use crate::tui::theme::Theme;
-use lazy_static::lazy_static;
 use ratatui::text::Line;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use steer_grpc::client_api::ToolResult;
 
 pub mod astgrep;
@@ -63,34 +63,39 @@ pub trait ToolFormatter: Send + Sync {
     }
 }
 
-lazy_static! {
-    static ref FORMATTERS: HashMap<&'static str, Box<dyn ToolFormatter>> = {
-        use steer_tools::tools::{BASH_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, GLOB_TOOL_NAME, VIEW_TOOL_NAME, EDIT_TOOL_NAME, edit, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, AST_GREP_TOOL_NAME, FETCH_TOOL_NAME, DISPATCH_AGENT_TOOL_NAME};
-
-        let mut map: HashMap<&'static str, Box<dyn ToolFormatter>> = HashMap::new();
-
-        map.insert(BASH_TOOL_NAME, Box::new(BashFormatter));
-        map.insert(GREP_TOOL_NAME, Box::new(GrepFormatter));
-        map.insert(LS_TOOL_NAME, Box::new(LsFormatter));
-        map.insert(GLOB_TOOL_NAME, Box::new(GlobFormatter));
-        map.insert(VIEW_TOOL_NAME, Box::new(ViewFormatter));
-        map.insert(EDIT_TOOL_NAME, Box::new(EditFormatter));
-        map.insert(edit::multi_edit::MULTI_EDIT_TOOL_NAME, Box::new(EditFormatter)); // Multi-edit uses same formatter
-        map.insert(REPLACE_TOOL_NAME, Box::new(ReplaceFormatter));
-        map.insert(TODO_READ_TOOL_NAME, Box::new(TodoReadFormatter));
-        map.insert(TODO_WRITE_TOOL_NAME, Box::new(TodoWriteFormatter));
-        map.insert(AST_GREP_TOOL_NAME, Box::new(AstGrepFormatter));
-        map.insert(FETCH_TOOL_NAME, Box::new(FetchFormatter));
-        map.insert(DISPATCH_AGENT_TOOL_NAME, Box::new(DispatchAgentFormatter));
-
-        // Catch-all formatter for external/MCP tools (name prefix "mcp__") will be handled in get_formatter
-
-        map
+static FORMATTERS: LazyLock<HashMap<&'static str, Box<dyn ToolFormatter>>> = LazyLock::new(|| {
+    use steer_tools::tools::{
+        AST_GREP_TOOL_NAME, BASH_TOOL_NAME, DISPATCH_AGENT_TOOL_NAME, EDIT_TOOL_NAME,
+        FETCH_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, REPLACE_TOOL_NAME,
+        TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, VIEW_TOOL_NAME, edit,
     };
 
-    static ref DEFAULT_FORMATTER: Box<dyn ToolFormatter> = Box::new(DefaultFormatter);
-    static ref EXTERNAL_FORMATTER: Box<dyn ToolFormatter> = Box::new(ExternalFormatter);
-}
+    let mut map: HashMap<&'static str, Box<dyn ToolFormatter>> = HashMap::new();
+
+    map.insert(BASH_TOOL_NAME, Box::new(BashFormatter));
+    map.insert(GREP_TOOL_NAME, Box::new(GrepFormatter));
+    map.insert(LS_TOOL_NAME, Box::new(LsFormatter));
+    map.insert(GLOB_TOOL_NAME, Box::new(GlobFormatter));
+    map.insert(VIEW_TOOL_NAME, Box::new(ViewFormatter));
+    map.insert(EDIT_TOOL_NAME, Box::new(EditFormatter));
+    map.insert(
+        edit::multi_edit::MULTI_EDIT_TOOL_NAME,
+        Box::new(EditFormatter),
+    );
+    map.insert(REPLACE_TOOL_NAME, Box::new(ReplaceFormatter));
+    map.insert(TODO_READ_TOOL_NAME, Box::new(TodoReadFormatter));
+    map.insert(TODO_WRITE_TOOL_NAME, Box::new(TodoWriteFormatter));
+    map.insert(AST_GREP_TOOL_NAME, Box::new(AstGrepFormatter));
+    map.insert(FETCH_TOOL_NAME, Box::new(FetchFormatter));
+    map.insert(DISPATCH_AGENT_TOOL_NAME, Box::new(DispatchAgentFormatter));
+
+    map
+});
+
+static DEFAULT_FORMATTER: LazyLock<Box<dyn ToolFormatter>> =
+    LazyLock::new(|| Box::new(DefaultFormatter));
+static EXTERNAL_FORMATTER: LazyLock<Box<dyn ToolFormatter>> =
+    LazyLock::new(|| Box::new(ExternalFormatter));
 
 pub fn get_formatter(tool_name: &str) -> &'static dyn ToolFormatter {
     if let Some(fmt) = FORMATTERS.get(tool_name) {

@@ -163,6 +163,15 @@ impl ModelRegistry {
         Ok(registry)
     }
 
+    /// Build an empty registry (primarily for fallbacks/tests).
+    pub fn empty() -> Self {
+        Self {
+            models: HashMap::new(),
+            aliases: HashMap::new(),
+            providers: HashSet::new(),
+        }
+    }
+
     /// Get a model by its ID.
     pub fn get(&self, id: &ModelId) -> Option<&ModelConfig> {
         self.models.get(id)

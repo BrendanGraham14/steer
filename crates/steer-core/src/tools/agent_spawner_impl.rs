@@ -243,7 +243,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
         let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
         let api_client = Arc::new(ApiClient::new_with_deps(
-            test_llm_config_provider(),
+            test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry.clone(),
         ));
@@ -287,7 +287,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
         let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
         let api_client = Arc::new(ApiClient::new_with_deps(
-            test_llm_config_provider(),
+            test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry.clone(),
         ));

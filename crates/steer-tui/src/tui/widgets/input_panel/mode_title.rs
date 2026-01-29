@@ -20,27 +20,30 @@ pub struct ModeTitleWidget<'a> {
     queued_count: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ModeTitleParams<'a> {
+    pub mode: InputMode,
+    pub is_processing: bool,
+    pub spinner_state: usize,
+    pub is_editing: bool,
+    pub editing_preview: Option<&'a str>,
+    pub theme: &'a Theme,
+    pub has_content: bool,
+    pub queued_count: usize,
+}
+
 impl<'a> ModeTitleWidget<'a> {
     /// Create a new mode title widget
-    pub fn new(
-        mode: InputMode,
-        is_processing: bool,
-        spinner_state: usize,
-        is_editing: bool,
-        editing_preview: Option<&'a str>,
-        theme: &'a Theme,
-        has_content: bool,
-        queued_count: usize,
-    ) -> Self {
+    pub fn new(params: ModeTitleParams<'a>) -> Self {
         Self {
-            mode,
-            is_processing,
-            spinner_state,
-            is_editing,
-            editing_preview,
-            theme,
-            has_content,
-            queued_count,
+            mode: params.mode,
+            is_processing: params.is_processing,
+            spinner_state: params.spinner_state,
+            is_editing: params.is_editing,
+            editing_preview: params.editing_preview,
+            theme: params.theme,
+            has_content: params.has_content,
+            queued_count: params.queued_count,
         }
     }
 

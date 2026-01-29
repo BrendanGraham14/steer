@@ -50,7 +50,7 @@ impl EventProcessor for ToolEventProcessor {
                 id,
                 parameters,
             } => {
-                self.handle_tool_started(id, name, parameters, ctx);
+                Self::handle_tool_started(id, name, parameters, ctx);
                 ProcessingResult::Handled
             }
             ClientEvent::ToolCompleted {
@@ -58,11 +58,11 @@ impl EventProcessor for ToolEventProcessor {
                 result,
                 id,
             } => {
-                self.handle_tool_completed(id, result, ctx);
+                Self::handle_tool_completed(id, result, ctx);
                 ProcessingResult::Handled
             }
             ClientEvent::ToolFailed { name, error, id } => {
-                self.handle_tool_failed(id, name, error, ctx);
+                Self::handle_tool_failed(id, name, error, ctx);
                 ProcessingResult::Handled
             }
             ClientEvent::ApprovalRequested {
@@ -91,7 +91,6 @@ impl EventProcessor for ToolEventProcessor {
 
 impl ToolEventProcessor {
     fn handle_tool_started(
-        &self,
         id: ToolCallId,
         name: String,
         parameters: serde_json::Value,
@@ -130,9 +129,7 @@ impl ToolEventProcessor {
         *ctx.messages_updated = true;
     }
 
-    fn handle_tool_completed(
-        &self,
-        id: ToolCallId, result: ToolResult, ctx: &mut ProcessingContext) {
+    fn handle_tool_completed(id: ToolCallId, result: ToolResult, ctx: &mut ProcessingContext) {
         *ctx.progress_message = None;
 
         ctx.chat_store.remove_pending_tool(id.as_str());
@@ -153,7 +150,6 @@ impl ToolEventProcessor {
     }
 
     fn handle_tool_failed(
-        &self,
         id: ToolCallId,
         name: String,
         error: String,

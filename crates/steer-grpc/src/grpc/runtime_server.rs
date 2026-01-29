@@ -85,26 +85,28 @@ impl AuthFlowManager {
     }
 }
 
+pub struct RuntimeAgentDeps {
+    pub runtime: RuntimeHandle,
+    pub catalog: Arc<dyn SessionCatalog>,
+    pub llm_config_provider: steer_core::config::LlmConfigProvider,
+    pub model_registry: Arc<steer_core::model_registry::ModelRegistry>,
+    pub provider_registry: Arc<steer_core::auth::ProviderRegistry>,
+    pub environment_manager: Arc<dyn EnvironmentManager>,
+    pub workspace_manager: Arc<dyn WorkspaceManager>,
+    pub repo_manager: Arc<dyn RepoManager>,
+}
+
 impl RuntimeAgentService {
-    pub fn new(
-        runtime: RuntimeHandle,
-        catalog: Arc<dyn SessionCatalog>,
-        llm_config_provider: steer_core::config::LlmConfigProvider,
-        model_registry: Arc<steer_core::model_registry::ModelRegistry>,
-        provider_registry: Arc<steer_core::auth::ProviderRegistry>,
-        environment_manager: Arc<dyn EnvironmentManager>,
-        workspace_manager: Arc<dyn WorkspaceManager>,
-        repo_manager: Arc<dyn RepoManager>,
-    ) -> Self {
+    pub fn new(deps: RuntimeAgentDeps) -> Self {
         Self {
-            runtime,
-            catalog,
-            llm_config_provider,
-            model_registry,
-            provider_registry,
-            environment_manager,
-            workspace_manager,
-            repo_manager,
+            runtime: deps.runtime,
+            catalog: deps.catalog,
+            llm_config_provider: deps.llm_config_provider,
+            model_registry: deps.model_registry,
+            provider_registry: deps.provider_registry,
+            environment_manager: deps.environment_manager,
+            workspace_manager: deps.workspace_manager,
+            repo_manager: deps.repo_manager,
             auth_flow_manager: Arc::new(AuthFlowManager::new()),
         }
     }
@@ -367,7 +369,6 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                                         Err(broadcast::error::TryRecvError::Empty) => break,
                                         Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
                                             warn!("Delta subscription lagged by {} messages", skipped);
-                                            continue;
                                         }
                                         Err(broadcast::error::TryRecvError::Closed) => {
                                             deltas_closed = true;
@@ -485,7 +486,9 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned());
                 }
-                Err(_) => {}
+                Err(err) => {
+                    warn!("Failed to resolve repo for session: {}", err);
+                }
             }
         }
 

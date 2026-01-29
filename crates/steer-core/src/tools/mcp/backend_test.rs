@@ -423,7 +423,9 @@ mod tests {
                 assert_eq!(h.get("Authorization").unwrap(), "Bearer token123");
                 assert_eq!(h.get("X-Custom-Header").unwrap(), "custom-value");
             }
-            _ => unreachable!("MCP SSE backend with headers"),
+            BackendConfig::Mcp { .. } => {
+                unreachable!("MCP SSE backend with headers")
+            }
         }
 
         // Cancel the server
@@ -568,7 +570,9 @@ mod tests {
             } => {
                 assert_eq!(h.get("X-API-Key").unwrap(), "secret-key");
             }
-            _ => unreachable!("MCP HTTP backend with headers"),
+            BackendConfig::Mcp { .. } => {
+                unreachable!("MCP HTTP backend with headers")
+            }
         }
 
         // Execute a tool to verify the backend works
@@ -632,7 +636,7 @@ mod tests {
         let (registry, mcp_servers) = config.build_registry().await.unwrap();
 
         assert!(
-            mcp_servers.get("will-fail").is_some(),
+            mcp_servers.contains_key("will-fail"),
             "Failed backend should be tracked"
         );
 

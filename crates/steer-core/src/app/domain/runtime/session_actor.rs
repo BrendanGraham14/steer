@@ -24,7 +24,7 @@ const DELTA_BROADCAST_CAPACITY: usize = 1024;
 
 pub(crate) enum SessionCmd {
     Dispatch {
-        action: Action,
+        action: Box<Action>,
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     Subscribe {
@@ -72,7 +72,7 @@ impl SessionActorHandle {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCmd::Dispatch {
-                action,
+                action: Box::new(action),
                 reply: reply_tx,
             })
             .await
@@ -184,7 +184,7 @@ impl SessionActor {
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
                         SessionCmd::Dispatch { action, reply } => {
-                            let result = self.handle_action(action).await;
+                            let result = self.handle_action(*action).await;
                             let _ = reply.send(result);
                         }
                         SessionCmd::Subscribe { reply } => {
@@ -776,7 +776,7 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
                 .iter()
                 .filter_map(|c| match c {
                     UserContent::Text { text } => Some(text.as_str()),
-                    _ => None,
+                    UserContent::CommandExecution { .. } => None,
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -787,7 +787,7 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
                 .iter()
                 .filter_map(|c| match c {
                     AssistantContent::Text { text } => Some(text.as_str()),
-                    _ => None,
+                    AssistantContent::ToolCall { .. } | AssistantContent::Thought { .. } => None,
                 })
                 .collect::<Vec<_>>()
                 .join(" ");

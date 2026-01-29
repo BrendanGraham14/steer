@@ -187,7 +187,7 @@ impl SessionConfigLoader {
         };
 
         self.apply_overrides(&mut config)?;
-        self.validate_config(&config)?;
+        Self::validate_config(&config)?;
 
         Ok(config)
     }
@@ -317,7 +317,7 @@ impl SessionConfigLoader {
         Ok(())
     }
 
-    fn validate_config(&self, config: &SessionConfig) -> Result<(), SessionConfigError> {
+    fn validate_config(config: &SessionConfig) -> Result<(), SessionConfigError> {
         for backend in &config.tool_config.backends {
             let BackendConfig::Mcp {
                 server_name,
@@ -403,19 +403,16 @@ mod tests {
         match backend2 {
             BackendConfig::Mcp {
                 server_name,
-                transport,
+                transport: steer_core::tools::McpTransport::Stdio { command, args },
                 ..
             } => {
                 assert_eq!(server_name, "test");
-                match transport {
-                    steer_core::tools::McpTransport::Stdio { command, args } => {
-                        assert_eq!(command, "python");
-                        assert_eq!(args, vec!["-m", "test"]);
-                    }
-                    _ => unreachable!("Expected Stdio transport"),
-                }
+                assert_eq!(command, "python");
+                assert_eq!(args, vec!["-m", "test"]);
             }
-            _ => unreachable!("Expected correct variant"),
+            BackendConfig::Mcp { transport, .. } => {
+                panic!("Expected stdio transport, got {transport:?}");
+            }
         }
     }
 
@@ -736,7 +733,8 @@ visibility = {{ whitelist = ["grep", "ls", "view"] }}
                 assert!(tools.contains("ls"));
                 assert!(tools.contains("view"));
             }
-            _ => unreachable!("Expected Whitelist visibility"),
+            Some(ToolVisibility::Blacklist(_) | ToolVisibility::All | ToolVisibility::ReadOnly)
+            | None => unreachable!("Expected Whitelist visibility"),
         }
     }
 
@@ -764,7 +762,8 @@ visibility = {{ blacklist = ["bash", "edit_file"] }}
                 assert!(tools.contains("bash"));
                 assert!(tools.contains("edit_file"));
             }
-            _ => unreachable!("Expected Blacklist visibility"),
+            Some(ToolVisibility::Whitelist(_) | ToolVisibility::All | ToolVisibility::ReadOnly)
+            | None => unreachable!("Expected Blacklist visibility"),
         }
     }
 
@@ -799,10 +798,10 @@ auth = {{ Bearer = {{ token = "secret-token" }} }}
                     RemoteAuth::Bearer { token } => {
                         assert_eq!(token, "secret-token");
                     }
-                    _ => unreachable!("Expected Bearer auth"),
+                    RemoteAuth::ApiKey { .. } => unreachable!("Expected Bearer auth"),
                 }
             }
-            _ => unreachable!("Expected Remote workspace"),
+            WorkspaceConfig::Local { .. } => unreachable!("Expected Remote workspace"),
         }
     }
 
@@ -1014,13 +1013,12 @@ tools = ["grep", "ls"]
                 .contains("ls")
         );
         assert!(
-            config
+            !config
                 .policy_overrides
                 .approval_policy
                 .preapproved
                 .per_tool
-                .get("bash")
-                .is_none()
+                .contains_key("bash")
         );
     }
 

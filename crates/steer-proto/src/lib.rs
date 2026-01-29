@@ -1,3 +1,6 @@
+// Generated proto code contains #[allow] attributes that we can't change
+#![allow(clippy::allow_attributes)]
+
 pub mod common {
     pub mod v1 {
         #![allow(

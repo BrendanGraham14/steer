@@ -4,7 +4,7 @@ use steer_core::app::conversation::AssistantContent;
 use steer_core::test_utils::read_only_session_config;
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_headless_mode_integration() {
     dotenvy::dotenv().ok();
 

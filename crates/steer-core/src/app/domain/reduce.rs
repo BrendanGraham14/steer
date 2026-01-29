@@ -454,11 +454,14 @@ fn handle_tool_approval_requested(
 
     match decision {
         ToolDecision::Allow => {
-            let op_id = state
-                .current_operation
-                .as_ref()
-                .map(|o| o.op_id)
-                .expect("Operation should exist");
+            let Some(op_id) = state.current_operation.as_ref().map(|o| o.op_id) else {
+                return vec![Effect::EmitEvent {
+                    session_id,
+                    event: SessionEvent::Error {
+                        message: "Tool approval requested without active operation".to_string(),
+                    },
+                }];
+            };
             state.add_pending_tool_call(crate::app::domain::types::ToolCallId::from_string(
                 &tool_call.id,
             ));
@@ -639,16 +642,26 @@ fn fail_tool_call_without_execution(
         return effects;
     }
 
-    let op_id = state
-        .current_operation
-        .as_ref()
-        .map(|o| o.op_id)
-        .expect("Operation should exist");
-    let model = state
-        .operation_models
-        .get(&op_id)
-        .cloned()
-        .expect("Model should exist for operation");
+    let Some(op_id) = state.current_operation.as_ref().map(|o| o.op_id) else {
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: "Tool failure recorded without active operation".to_string(),
+            },
+        });
+        return effects;
+    };
+    let model = if let Some(model) = state.operation_models.get(&op_id).cloned() {
+        model
+    } else {
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::Error {
+                message: format!("Missing model for operation {op_id}"),
+            },
+        });
+        return effects;
+    };
 
     let all_tools_complete = state
         .current_operation
@@ -729,11 +742,15 @@ fn handle_tool_approval_decided(
             }
         }
 
-        let op_id = state
-            .current_operation
-            .as_ref()
-            .map(|o| o.op_id)
-            .expect("Operation should exist");
+        let Some(op_id) = state.current_operation.as_ref().map(|o| o.op_id) else {
+            effects.push(Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::Error {
+                    message: "Tool approval decided without active operation".to_string(),
+                },
+            });
+            return effects;
+        };
         state.add_pending_tool_call(crate::app::domain::types::ToolCallId::from_string(
             &pending.tool_call.id,
         ));
@@ -773,11 +790,17 @@ fn process_next_queued_approval(
 
         match decision {
             ToolDecision::Allow => {
-                let op_id = state
-                    .current_operation
-                    .as_ref()
-                    .map(|o| o.op_id)
-                    .expect("Operation should exist");
+                let Some(op_id) = state.current_operation.as_ref().map(|o| o.op_id) else {
+                    effects.push(Effect::EmitEvent {
+                        session_id,
+                        event: SessionEvent::Error {
+                            message: "Queued tool approval processed without active operation"
+                                .to_string(),
+                        },
+                    });
+                    state.approval_queue.push_front(queued);
+                    break;
+                };
                 state.add_pending_tool_call(crate::app::domain::types::ToolCallId::from_string(
                     &queued.tool_call.id,
                 ));
@@ -787,7 +810,6 @@ fn process_next_queued_approval(
                     op_id,
                     tool_call: queued.tool_call,
                 });
-                continue;
             }
             ToolDecision::Deny => {
                 let tool_name = queued.tool_call.name.clone();
@@ -801,7 +823,6 @@ fn process_next_queued_approval(
                     "denied",
                     false,
                 ));
-                continue;
             }
             ToolDecision::Ask => {
                 let request_id = crate::app::domain::types::RequestId::new();
@@ -2033,7 +2054,7 @@ mod tests {
                 op_id,
                 message_id,
                 model,
-                timestamp: 1234567890,
+                timestamp: 1_234_567_890,
             },
         );
 
@@ -2964,14 +2985,10 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Effect::CallModel { .. }))
         );
-        assert!(
-            state
-                .current_operation
-                .as_ref()
-                .expect("Operation should exist")
-                .pending_tool_calls
+        assert!(state.current_operation.as_ref().is_some_and(|op| {
+            op.pending_tool_calls
                 .contains(&ToolCallId::from_string("tc_1"))
-        );
+        }));
     }
 
     #[test]

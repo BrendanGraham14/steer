@@ -46,7 +46,6 @@ fn generate_provider_constants(out_dir: &Path, providers: &[ProviderData]) -> st
 fn generate_model_constants(out_dir: &Path, models: &[ModelData]) -> std::io::Result<()> {
     let mut output = String::new();
     output.push_str("// Generated model constants from default_catalog.toml\n");
-    output.push_str("use crate::config::provider::*;\n");
     output.push_str("use crate::config::model::ModelId;\n\n");
 
     // First pass: generate primary constants for each model
@@ -54,7 +53,7 @@ fn generate_model_constants(out_dir: &Path, models: &[ModelData]) -> std::io::Re
         let const_name = model.id.to_lowercase().replace(['-', '.'], "_");
         let provider_fn = model.provider.to_lowercase();
         output.push_str(&format!(
-            "#[inline]\npub fn {}() -> ModelId {{ ModelId {{ provider: {}(), id: \"{}\".to_string() }} }}\n",
+            "#[inline]\npub fn {}() -> ModelId {{ ModelId {{ provider: crate::config::provider::{}(), id: \"{}\".to_string() }} }}\n",
             const_name, provider_fn, model.id
         ));
     }

@@ -8,7 +8,7 @@ use std::path::Path;
 /// This struct is pure domain logic – no networking or gRPC dependencies.
 #[derive(Debug, Clone)]
 pub struct ProviderRegistry {
-    providers: HashMap<ProviderId, ProviderConfig>,
+    pub(crate) providers: HashMap<ProviderId, ProviderConfig>,
 }
 
 const DEFAULT_CATALOG_TOML: &str = include_str!("../../assets/default_catalog.toml");
@@ -70,6 +70,13 @@ impl ProviderRegistry {
         })?;
 
         Ok(Some(catalog))
+    }
+
+    /// Build an empty registry (primarily for fallbacks/tests).
+    pub fn empty() -> Self {
+        Self {
+            providers: HashMap::new(),
+        }
     }
 
     /// Get a provider config by ID.

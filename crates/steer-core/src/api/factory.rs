@@ -24,12 +24,12 @@ pub fn create_provider(
                         value.clone(),
                         Some(base_url.to_string()),
                         crate::api::openai::OpenAIMode::Responses,
-                    )
+                    )?
                 } else {
                     OpenAIClient::with_mode(
                         value.clone(),
                         crate::api::openai::OpenAIMode::Responses,
-                    )
+                    )?
                 };
                 Ok(Arc::new(client))
             }
@@ -39,9 +39,9 @@ pub fn create_provider(
                         value.clone(),
                         Some(base_url.to_string()),
                         crate::api::openai::OpenAIMode::Chat,
-                    )
+                    )?
                 } else {
-                    OpenAIClient::with_mode(value.clone(), crate::api::openai::OpenAIMode::Chat)
+                    OpenAIClient::with_mode(value.clone(), crate::api::openai::OpenAIMode::Chat)?
                 };
                 Ok(Arc::new(client))
             }
@@ -52,7 +52,7 @@ pub fn create_provider(
                         "Base URL override not yet supported for Anthropic API format".to_string(),
                     ));
                 }
-                Ok(Arc::new(AnthropicClient::with_api_key(value)))
+                Ok(Arc::new(AnthropicClient::with_api_key(value)?))
             }
             ApiFormat::Google => {
                 // TODO: Add base_url support to GeminiClient
@@ -65,9 +65,9 @@ pub fn create_provider(
             }
             ApiFormat::Xai => {
                 let client = if let Some(base_url) = &provider_cfg.base_url {
-                    XAIClient::with_base_url(value.clone(), Some(base_url.to_string()))
+                    XAIClient::with_base_url(value.clone(), Some(base_url.to_string()))?
                 } else {
-                    XAIClient::new(value.clone())
+                    XAIClient::new(value.clone())?
                 };
                 Ok(Arc::new(client))
             }
@@ -94,7 +94,7 @@ pub fn create_provider_with_directive(
             Ok(Arc::new(OpenAIClient::with_directive(
                 openai.clone(),
                 base_url,
-            )))
+            )?))
         }
         AuthDirective::Anthropic(anthropic) => {
             if provider_cfg.api_format != ApiFormat::Anthropic {
@@ -107,7 +107,9 @@ pub fn create_provider_with_directive(
                     "Base URL override not yet supported for Anthropic API format".to_string(),
                 ));
             }
-            Ok(Arc::new(AnthropicClient::with_directive(anthropic.clone())))
+            Ok(Arc::new(AnthropicClient::with_directive(
+                anthropic.clone(),
+            )?))
         }
     }
 }

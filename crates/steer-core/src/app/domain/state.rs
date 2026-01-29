@@ -297,11 +297,8 @@ impl AppState {
             .and_then(|context| context.environment.clone());
         self.cached_system_context = Some(SystemContext::with_environment(prompt, environment));
 
-        self.approved_tools = config
-            .tool_config
-            .approval_policy
-            .pre_approved_tools()
-            .clone();
+        self.approved_tools
+            .clone_from(config.tool_config.approval_policy.pre_approved_tools());
         self.approved_bash_patterns.clear();
         self.static_bash_patterns = config
             .tool_config

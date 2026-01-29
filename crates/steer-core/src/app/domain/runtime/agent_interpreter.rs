@@ -131,7 +131,7 @@ impl AgentInterpreter {
         let initial_outputs = vec![AgentOutput::CallModel {
             model: agent_config.model.clone(),
             messages: initial_messages,
-            system_context: agent_config.system_context.clone(),
+            system_context: Box::new(agent_config.system_context.clone()),
             tools: agent_config.tools.clone(),
         }];
 
@@ -196,7 +196,7 @@ impl AgentInterpreter {
                         .call_model(
                             model.clone(),
                             messages,
-                            system_context,
+                            *system_context,
                             tools,
                             cancel_token.clone(),
                         )
@@ -481,7 +481,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
         let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));

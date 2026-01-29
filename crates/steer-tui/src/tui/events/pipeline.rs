@@ -21,10 +21,10 @@ impl EventPipeline {
         self
     }
 
-    pub async fn process_event<'a>(
+    pub async fn process_event(
         &mut self,
         event: ClientEvent,
-        ctx: &mut ProcessingContext<'a>,
+        ctx: &mut ProcessingContext<'_>,
     ) -> Result<()> {
         for processor in &mut self.processors {
             if !processor.can_handle(&event) {
@@ -32,14 +32,9 @@ impl EventPipeline {
             }
 
             match processor.process(event.clone(), ctx).await {
-                ProcessingResult::Handled => {
-                    continue;
-                }
+                ProcessingResult::Handled | ProcessingResult::NotHandled => {}
                 ProcessingResult::HandledAndComplete => {
                     return Ok(());
-                }
-                ProcessingResult::NotHandled => {
-                    continue;
                 }
                 ProcessingResult::Failed(error) => {
                     warn!(target: "tui.pipeline", "Processor {} failed: {}", processor.name(), error);

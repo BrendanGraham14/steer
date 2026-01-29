@@ -149,7 +149,7 @@ impl StaticTool for DispatchAgentTool {
         if let Some(manager) = ctx.services.workspace_manager() {
             if let Ok(info) = manager.resolve_workspace(&base_path).await {
                 workspace_id = Some(info.workspace_id);
-                workspace_name = info.name.clone();
+                workspace_name.clone_from(&info.name);
                 repo_id = Some(info.repo_id);
                 workspace_ref = Some(WorkspaceRef {
                     environment_id: info.environment_id,
@@ -240,7 +240,7 @@ impl StaticTool for DispatchAgentTool {
 
             workspace_id = Some(info.workspace_id);
             created_workspace_id = Some(info.workspace_id);
-            workspace_name = info.name.clone();
+            workspace_name.clone_from(&info.name);
             workspace_ref = Some(WorkspaceRef {
                 environment_id: info.environment_id,
                 workspace_id: info.workspace_id,
@@ -741,7 +741,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));
@@ -795,7 +795,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));
@@ -857,7 +857,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));
@@ -920,7 +920,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));
@@ -968,7 +968,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));
@@ -1024,6 +1024,7 @@ mod tests {
         match register_agent_spec(spec) {
             Ok(()) => {}
             Err(AgentSpecError::AlreadyRegistered(_)) => {}
+            Err(AgentSpecError::RegistryPoisoned) => {}
         }
 
         let captured = Arc::new(tokio::sync::Mutex::new(None));
@@ -1059,8 +1060,8 @@ mod tests {
         let backend_names: Vec<String> = captured
             .mcp_backends
             .iter()
-            .filter_map(|backend| match backend {
-                BackendConfig::Mcp { server_name, .. } => Some(server_name.clone()),
+            .map(|backend| match backend {
+                BackendConfig::Mcp { server_name, .. } => server_name.clone(),
             })
             .collect();
 
@@ -1074,7 +1075,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));
@@ -1115,6 +1116,7 @@ mod tests {
         match register_agent_spec(spec) {
             Ok(()) => {}
             Err(AgentSpecError::AlreadyRegistered(_)) => {}
+            Err(AgentSpecError::RegistryPoisoned) => {}
         }
 
         let captured = Arc::new(tokio::sync::Mutex::new(None));
@@ -1156,7 +1158,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));
@@ -1198,6 +1200,7 @@ mod tests {
         match register_agent_spec(spec) {
             Ok(()) => {}
             Err(AgentSpecError::AlreadyRegistered(_)) => {}
+            Err(AgentSpecError::RegistryPoisoned) => {}
         }
 
         let captured = Arc::new(tokio::sync::Mutex::new(None));
@@ -1239,7 +1242,7 @@ mod tests {
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));

@@ -6,20 +6,28 @@ use steer_core::config::provider::ProviderId;
 use steer_grpc::AgentClient;
 use steer_grpc::local_server::{LocalGrpcSetup, setup_local_grpc_with_catalog};
 use tempfile::TempDir;
+use thiserror::Error;
 
-async fn setup_client(catalog_paths: Vec<String>) -> (AgentClient, LocalGrpcSetup) {
+type TestResult<T> = Result<T, TestError>;
+
+#[derive(Debug, Error)]
+enum TestError {
+    #[error(transparent)]
+    Grpc(#[from] steer_grpc::GrpcError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+async fn setup_client(catalog_paths: Vec<String>) -> TestResult<(AgentClient, LocalGrpcSetup)> {
     let setup = setup_local_grpc_with_catalog(
         steer_core::config::model::builtin::default_model(),
         None,
         CatalogConfig::with_catalogs(catalog_paths),
         None,
     )
-    .await
-    .expect("local grpc setup");
-    let client = AgentClient::from_channel(setup.channel.clone())
-        .await
-        .expect("grpc client");
-    (client, setup)
+    .await?;
+    let client = AgentClient::from_channel(setup.channel.clone()).await?;
+    Ok((client, setup))
 }
 
 async fn shutdown(setup: LocalGrpcSetup) {
@@ -30,32 +38,31 @@ async fn shutdown(setup: LocalGrpcSetup) {
 async fn resolve_with_fallback(
     client: &AgentClient,
     preferred: Option<&str>,
-) -> steer_core::config::model::ModelId {
-    let server_default = client
-        .get_default_model()
-        .await
-        .expect("server default model");
+) -> TestResult<steer_core::config::model::ModelId> {
+    let server_default = client.get_default_model().await?;
 
-    if let Some(input) = preferred {
+    let resolved = if let Some(input) = preferred {
         match client.resolve_model(input).await {
             Ok(model_id) => model_id,
             Err(_) => server_default,
         }
     } else {
         server_default
-    }
+    };
+
+    Ok(resolved)
 }
 
-fn write_catalog(contents: &str) -> (TempDir, String) {
-    let tmp = TempDir::new().expect("temp dir");
+fn write_catalog(contents: &str) -> TestResult<(TempDir, String)> {
+    let tmp = TempDir::new()?;
     let path = tmp.path().join("catalog.toml");
-    fs::write(&path, contents).expect("write catalog");
-    (tmp, path.to_string_lossy().to_string())
+    fs::write(&path, contents)?;
+    Ok((tmp, path.to_string_lossy().to_string()))
 }
 
 #[tokio::test]
 async fn get_default_model_uses_builtin_when_recommended() {
-    let (client, setup) = setup_client(Vec::new()).await;
+    let (client, setup) = setup_client(Vec::new()).await.expect("setup client");
 
     let default_model = client.get_default_model().await.expect("default model");
     let builtin_default = steer_core::config::model::builtin::default_model();
@@ -83,8 +90,8 @@ provider = "aaa"
 id = "aaa-model"
 recommended = true
 "#;
-    let (_tmp, path) = write_catalog(catalog);
-    let (client, setup) = setup_client(vec![path]).await;
+    let (_tmp, path) = write_catalog(catalog).expect("write catalog");
+    let (client, setup) = setup_client(vec![path]).await.expect("setup client");
 
     let default_model = client.get_default_model().await.expect("default model");
     assert_eq!(
@@ -114,10 +121,12 @@ provider = "aaa"
 id = "aaa-model"
 recommended = true
 "#;
-    let (_tmp, path) = write_catalog(catalog);
-    let (client, setup) = setup_client(vec![path]).await;
+    let (_tmp, path) = write_catalog(catalog).expect("write catalog");
+    let (client, setup) = setup_client(vec![path]).await.expect("setup client");
 
-    let resolved = resolve_with_fallback(&client, Some("codex")).await;
+    let resolved = resolve_with_fallback(&client, Some("codex"))
+        .await
+        .expect("resolve model");
     assert_eq!(
         resolved,
         ModelId::new(ProviderId::from("openai"), "gpt-5.2-codex")
@@ -145,10 +154,12 @@ provider = "aaa"
 id = "aaa-model"
 recommended = true
 "#;
-    let (_tmp, path) = write_catalog(catalog);
-    let (client, setup) = setup_client(vec![path]).await;
+    let (_tmp, path) = write_catalog(catalog).expect("write catalog");
+    let (client, setup) = setup_client(vec![path]).await.expect("setup client");
 
-    let resolved = resolve_with_fallback(&client, Some("not-a-model")).await;
+    let resolved = resolve_with_fallback(&client, Some("not-a-model"))
+        .await
+        .expect("resolve model");
     assert_eq!(resolved, ModelId::new(ProviderId::from("aaa"), "aaa-model"));
 
     shutdown(setup).await;

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::{Local, TimeZone, Utc};
 use eyre::{Result, eyre};
+use std::io::Write;
 use uuid::Uuid;
 
 use super::super::Command;
@@ -41,25 +42,29 @@ impl Command for ShowSessionCommand {
 
         match summary {
             Some(info) => {
-                println!("Session Details:");
-                println!("ID: {}", info.id);
-                println!(
+                let mut stdout = std::io::stdout();
+                writeln!(stdout, "Session Details:")?;
+                writeln!(stdout, "ID: {}", info.id)?;
+                writeln!(
+                    stdout,
                     "Created: {}",
                     info.created_at
                         .with_timezone(&Local)
                         .format("%Y-%m-%d %H:%M:%S")
-                );
-                println!(
+                )?;
+                writeln!(
+                    stdout,
                     "Updated: {}",
                     info.updated_at
                         .with_timezone(&Local)
                         .format("%Y-%m-%d %H:%M:%S")
-                );
-                println!("Messages: {}", info.message_count);
-                println!(
+                )?;
+                writeln!(stdout, "Messages: {}", info.message_count)?;
+                writeln!(
+                    stdout,
                     "Last Model: {}",
                     info.last_model.unwrap_or_else(|| "N/A".to_string())
-                );
+                )?;
             }
             None => {
                 return Err(eyre!("Session not found: {}", self.session_id));
@@ -89,19 +94,22 @@ impl ShowSessionCommand {
 
         match session_state {
             Some(state) => {
-                println!("Remote Session Details:");
-                println!("ID: {}", state.id);
+                let mut stdout = std::io::stdout();
+                writeln!(stdout, "Remote Session Details:")?;
+                writeln!(stdout, "ID: {}", state.id)?;
 
                 if let Some(created_at) = state.created_at {
                     let secs = created_at.seconds;
                     let nsecs = created_at.nanos as u32;
                     let datetime = Utc.timestamp_opt(secs, nsecs).single();
-                    match datetime {
-                        Some(dt) => println!(
+                    if let Some(dt) = datetime {
+                        writeln!(
+                            stdout,
                             "Created: {}",
                             dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S")
-                        ),
-                        None => println!("Created: N/A"),
+                        )?;
+                    } else {
+                        writeln!(stdout, "Created: N/A")?;
                     }
                 }
 
@@ -109,23 +117,25 @@ impl ShowSessionCommand {
                     let secs = updated_at.seconds;
                     let nsecs = updated_at.nanos as u32;
                     let datetime = Utc.timestamp_opt(secs, nsecs).single();
-                    match datetime {
-                        Some(dt) => println!(
+                    if let Some(dt) = datetime {
+                        writeln!(
+                            stdout,
                             "Updated: {}",
                             dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S")
-                        ),
-                        None => println!("Updated: N/A"),
+                        )?;
+                    } else {
+                        writeln!(stdout, "Updated: N/A")?;
                     }
                 }
 
-                println!("Messages: {}", state.messages.len());
-                println!("Last Event Sequence: {}", state.last_event_sequence);
-                println!("Approved Tools: {:?}", state.approved_tools);
+                writeln!(stdout, "Messages: {}", state.messages.len())?;
+                writeln!(stdout, "Last Event Sequence: {}", state.last_event_sequence)?;
+                writeln!(stdout, "Approved Tools: {:?}", state.approved_tools)?;
 
                 if !state.metadata.is_empty() {
-                    println!("Metadata:");
+                    writeln!(stdout, "Metadata:")?;
                     for (key, value) in &state.metadata {
-                        println!("  {key}: {value}");
+                        writeln!(stdout, "  {key}: {value}")?;
                     }
                 }
             }

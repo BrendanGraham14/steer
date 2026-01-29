@@ -161,12 +161,13 @@ impl VcsUtils {
 
                 match (jj_distance, git_distance) {
                     (Some(jj_distance), Some(git_distance)) => {
-                        if jj_distance < git_distance {
-                            Some(Box::new(JjProvider { root: jj_root }))
-                        } else if git_distance < jj_distance {
-                            Some(Box::new(GitProvider { root: git_root }))
-                        } else {
-                            Some(Box::new(JjProvider { root: jj_root }))
+                        match jj_distance.cmp(&git_distance) {
+                            std::cmp::Ordering::Less | std::cmp::Ordering::Equal => {
+                                Some(Box::new(JjProvider { root: jj_root }))
+                            }
+                            std::cmp::Ordering::Greater => {
+                                Some(Box::new(GitProvider { root: git_root }))
+                            }
                         }
                     }
                     (Some(_), None) => Some(Box::new(JjProvider { root: jj_root })),

@@ -38,8 +38,8 @@ impl ChatRenderable for ToolWidget {
             && self.cache.last_width == width
         {
             return match mode {
-                ViewMode::Compact => self.rendered_compact_lines.as_ref().unwrap(),
-                ViewMode::Detailed => self.rendered_detailed_lines.as_ref().unwrap(),
+                ViewMode::Compact => self.rendered_compact_lines.as_deref().unwrap_or(&[]),
+                ViewMode::Detailed => self.rendered_detailed_lines.as_deref().unwrap_or(&[]),
             };
         }
 
@@ -90,8 +90,8 @@ impl ChatRenderable for ToolWidget {
         self.rendered_detailed_lines = Some(detailed_lines);
 
         match mode {
-            ViewMode::Compact => self.rendered_compact_lines.as_ref().unwrap(),
-            ViewMode::Detailed => self.rendered_detailed_lines.as_ref().unwrap(),
+            ViewMode::Compact => self.rendered_compact_lines.as_deref().unwrap_or(&[]),
+            ViewMode::Detailed => self.rendered_detailed_lines.as_deref().unwrap_or(&[]),
         }
     }
 }
@@ -140,7 +140,7 @@ impl ChatRenderable for PendingToolCallWidget {
             }
             self.rendered_lines = Some(lines);
         }
-        self.rendered_lines.as_ref().unwrap()
+        self.rendered_lines.as_deref().unwrap_or(&[])
     }
 }
 

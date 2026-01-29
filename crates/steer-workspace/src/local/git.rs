@@ -14,7 +14,6 @@ pub(crate) struct GitWorktreeNames {
 }
 
 pub(crate) fn worktree_names(
-    layout: &WorkspaceLayout,
     workspace_id: WorkspaceId,
     sanitized_name: &str,
     workspace_path: &Path,
@@ -32,7 +31,7 @@ pub(crate) fn worktree_names(
         .unwrap_or("workspace")
         .to_string();
     let branch_name = format!("steer/{workspace_slug}-{short}");
-    let worktree_name = layout.sanitize_name(&format!("steer-{workspace_slug}-{short}"));
+    let worktree_name = WorkspaceLayout::sanitize_name(&format!("steer-{workspace_slug}-{short}"));
     GitWorktreeNames {
         branch_name,
         worktree_name,
@@ -49,7 +48,6 @@ pub(crate) fn repo_id_for_path(path: &Path) -> WorkspaceManagerResult<RepoId> {
 }
 
 pub(crate) fn create_worktree(
-    layout: &WorkspaceLayout,
     repo_root: &Path,
     worktree_path: &Path,
     worktree_name: &str,
@@ -106,7 +104,7 @@ pub(crate) fn create_worktree(
     let common_dir = repo.common_dir().to_path_buf();
     let worktrees_root = common_dir.join("worktrees");
     std::fs::create_dir_all(&worktrees_root)?;
-    let worktree_git_dir = layout.ensure_unique_path(&worktrees_root, worktree_name);
+    let worktree_git_dir = WorkspaceLayout::ensure_unique_path(&worktrees_root, worktree_name);
     std::fs::create_dir_all(&worktree_git_dir)?;
     std::fs::create_dir_all(worktree_git_dir.join("refs"))?;
     guard.mark_git_dir_created(worktree_git_dir.clone());

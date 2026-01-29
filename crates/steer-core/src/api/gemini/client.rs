@@ -339,13 +339,13 @@ struct GeminiCitationSource {
 struct GeminiUsageMetadata {
     #[serde(rename = "promptTokenCount")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    prompt_token_count: Option<i32>,
+    prompt: Option<i32>,
     #[serde(rename = "candidatesTokenCount")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    candidates_token_count: Option<i32>,
+    candidates: Option<i32>,
     #[serde(rename = "totalTokenCount")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    total_token_count: Option<i32>,
+    total: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -728,9 +728,7 @@ fn sanitize_for_gemini(root: &Value, schema: &Value) -> Value {
             | "minItems"
             | "maxItems"
             | "uniqueItems"
-            | "deprecated" => {
-                continue;
-            }
+            | "deprecated" => {}
             "type" => {
                 out.insert("type".to_string(), normalize_type(value));
             }
@@ -1012,7 +1010,7 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
     // Log usage metadata if present
     if let Some(usage) = &response.usage_metadata {
         debug!(target: "gemini::convert_response", "Usage - Prompt Tokens: {:?}, Candidates Tokens: {:?}, Total Tokens: {:?}",
-               usage.prompt_token_count, usage.candidates_token_count, usage.total_token_count);
+               usage.prompt, usage.candidates, usage.total);
     }
 
     let content: Vec<AssistantContent> = candidate

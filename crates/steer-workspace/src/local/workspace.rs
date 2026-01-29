@@ -260,7 +260,7 @@ fn list_directory_internal(
                 });
             }
             Err(e) => {
-                eprintln!("Error accessing entry: {e}");
+                tracing::warn!("Error accessing entry: {e}");
             }
         }
     }

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::{Local, TimeZone, Utc};
 use eyre::{Result, eyre};
+use std::io::Write;
 
 use super::super::Command;
 
@@ -40,21 +41,25 @@ impl Command for ListSessionCommand {
             .map_err(|e| eyre!("Failed to list sessions: {}", e))?;
 
         if sessions.is_empty() {
-            println!("No sessions found.");
+            let mut stdout = std::io::stdout();
+            writeln!(stdout, "No sessions found.")?;
             return Ok(());
         }
 
-        println!("Sessions:");
-        println!(
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "Sessions:")?;
+        writeln!(
+            stdout,
             "{:<36} {:<20} {:<20} {:<10} {:<30}",
             "ID", "Created", "Updated", "Messages", "Last Model"
-        );
-        println!("{}", "-".repeat(116));
+        )?;
+        writeln!(stdout, "{}", "-".repeat(116))?;
 
         for session in sessions {
             let model_str = session.last_model.unwrap_or_else(|| "N/A".to_string());
 
-            println!(
+            writeln!(
+                stdout,
                 "{:<36} {:<20} {:<20} {:<10} {:<30}",
                 session.id,
                 session
@@ -67,7 +72,7 @@ impl Command for ListSessionCommand {
                     .format("%Y-%m-%d %H:%M:%S"),
                 session.message_count,
                 model_str,
-            );
+            )?;
         }
 
         Ok(())
@@ -78,7 +83,10 @@ impl ListSessionCommand {
     async fn handle_remote(&self) -> Result<()> {
         use steer_grpc::AgentClient;
 
-        let remote_addr = self.remote.as_ref().unwrap();
+        let remote_addr = match self.remote.as_ref() {
+            Some(remote_addr) => remote_addr,
+            None => return Ok(()),
+        };
 
         let client = AgentClient::connect(remote_addr).await.map_err(|e| {
             eyre!(
@@ -94,22 +102,24 @@ impl ListSessionCommand {
             .map_err(|e| eyre!("Failed to list remote sessions: {}", e))?;
 
         if sessions.is_empty() {
-            println!("No remote sessions found.");
+            let mut stdout = std::io::stdout();
+            writeln!(stdout, "No remote sessions found.")?;
             return Ok(());
         }
 
-        println!("Remote Sessions:");
-        println!(
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "Remote Sessions:")?;
+        writeln!(
+            stdout,
             "{:<36} {:<20} {:<20} {:<10}",
             "ID", "Created", "Updated", "Status"
-        );
-        println!("{}", "-".repeat(86));
+        )?;
+        writeln!(stdout, "{}", "-".repeat(86))?;
 
         for session in sessions {
-            let created_str = session
-                .created_at
-                .as_ref()
-                .map(|ts: &prost_types::Timestamp| {
+            let created_str = session.created_at.as_ref().map_or_else(
+                || "N/A".to_string(),
+                |ts: &prost_types::Timestamp| {
                     let secs = ts.seconds;
                     let nsecs = ts.nanos as u32;
                     let datetime = Utc.timestamp_opt(secs, nsecs).single();
@@ -120,13 +130,12 @@ impl ListSessionCommand {
                             .to_string(),
                         None => "N/A".to_string(),
                     }
-                })
-                .unwrap_or_else(|| "N/A".to_string());
+                },
+            );
 
-            let updated_str = session
-                .updated_at
-                .as_ref()
-                .map(|ts: &prost_types::Timestamp| {
+            let updated_str = session.updated_at.as_ref().map_or_else(
+                || "N/A".to_string(),
+                |ts: &prost_types::Timestamp| {
                     let secs = ts.seconds;
                     let nsecs = ts.nanos as u32;
                     let datetime = Utc.timestamp_opt(secs, nsecs).single();
@@ -137,8 +146,8 @@ impl ListSessionCommand {
                             .to_string(),
                         None => "N/A".to_string(),
                     }
-                })
-                .unwrap_or_else(|| "N/A".to_string());
+                },
+            );
 
             let status_str = match session.status {
                 0 => "Unspecified",
@@ -147,10 +156,11 @@ impl ListSessionCommand {
                 _ => "Unknown",
             };
 
-            println!(
+            writeln!(
+                stdout,
                 "{:<36} {:<20} {:<20} {:<10}",
                 session.id, created_str, updated_str, status_str,
-            );
+            )?;
         }
 
         Ok(())

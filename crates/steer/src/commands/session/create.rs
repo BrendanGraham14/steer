@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
+use std::io::Write;
 use tracing::warn;
 
 use super::super::Command;
@@ -31,7 +32,8 @@ impl Command for CreateSessionCommand {
 
         let mut local_grpc_setup = None;
         let client = if let Some(remote_addr) = &self.remote {
-            println!("Creating remote session at {remote_addr}");
+            let mut stdout = std::io::stdout();
+            writeln!(stdout, "Creating remote session at {remote_addr}")?;
             if !self.catalogs.is_empty() {
                 tracing::warn!("Ignoring --catalog for remote session creation");
             }
@@ -86,9 +88,11 @@ impl Command for CreateSessionCommand {
                         "Failed to resolve preferred model '{}': {}. Using server default {}.",
                         input, e, fallback
                     );
-                    eprintln!(
+                    let mut stderr = std::io::stderr();
+                    writeln!(
+                        stderr,
                         "Warning: preferred model '{input}' is invalid. Using server default {fallback}."
-                    );
+                    )?;
                     server_default.clone()
                 }
             }
@@ -118,7 +122,8 @@ impl Command for CreateSessionCommand {
             setup.runtime_service.shutdown().await;
         }
 
-        println!("Created session: {session_id}");
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "Created session: {session_id}")?;
         Ok(())
     }
 }

@@ -37,8 +37,9 @@ impl MessageGraph {
             timestamp: Message::current_timestamp(),
             parent_message_id: self.active_message_id.clone(),
         });
-        self.active_message_id = Some(self.messages.last().unwrap().id().to_string());
-        self.messages.last().unwrap()
+        let last_index = self.messages.len().saturating_sub(1);
+        self.active_message_id = Some(self.messages[last_index].id().to_string());
+        &self.messages[last_index]
     }
 
     pub fn clear(&mut self) {

@@ -11,14 +11,14 @@ use tokio_util::sync::CancellationToken;
 #[test]
 fn test_xai_client_creation() {
     let api_key = "test_key".to_string();
-    let client = XAIClient::new(api_key);
+    let client = XAIClient::new(api_key).expect("xai client");
     assert_eq!(client.name(), "xai");
 }
 
 #[tokio::test]
 async fn test_xai_client_provider_trait() {
     let api_key = "test_key".to_string();
-    let client = XAIClient::new(api_key);
+    let client = XAIClient::new(api_key).expect("xai client");
 
     let _name: &str = client.name();
     assert_eq!(_name, "xai");
@@ -166,7 +166,7 @@ async fn test_convert_xai_stream_cancellation() {
 async fn test_stream_complete_real_api() {
     dotenvy::dotenv().ok();
     let api_key = std::env::var("XAI_API_KEY").expect("XAI_API_KEY must be set");
-    let client = XAIClient::new(api_key);
+    let client = XAIClient::new(api_key).expect("xai client");
 
     let message = crate::app::conversation::Message {
         data: MessageData::User {

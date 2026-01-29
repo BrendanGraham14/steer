@@ -54,7 +54,7 @@ impl ProviderSelectionWidget {
                     AuthStatus::OAuthConfigured => ("✓", theme.style(Component::SetupStatusActive)),
                     AuthStatus::ApiKeySet => ("✓", theme.style(Component::SetupStatusActive)),
                     AuthStatus::InProgress => ("⟳", theme.style(Component::SetupStatusInProgress)),
-                    _ => ("✗", theme.style(Component::SetupStatusInactive)),
+                    AuthStatus::NotConfigured => ("✗", theme.style(Component::SetupStatusInactive)),
                 };
 
                 let style = if i == state.provider_cursor {

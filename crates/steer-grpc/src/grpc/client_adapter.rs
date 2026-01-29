@@ -436,12 +436,15 @@ impl AgentClient {
         Ok(())
     }
 
-    pub async fn subscribe_client_events(&self) -> mpsc::Receiver<ClientEvent> {
-        self.client_event_rx
-            .lock()
-            .await
-            .take()
-            .expect("Client event receiver already taken - only supports single subscription")
+    pub async fn subscribe_client_events(&self) -> GrpcResult<mpsc::Receiver<ClientEvent>> {
+        let mut guard = self.client_event_rx.lock().await;
+        if let Some(receiver) = guard.take() {
+            Ok(receiver)
+        } else {
+            let reason = "Client events already subscribed".to_string();
+            warn!("{reason}");
+            Err(GrpcError::InvalidSessionState { reason })
+        }
     }
 
     pub async fn session_id(&self) -> Option<String> {

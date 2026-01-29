@@ -171,8 +171,8 @@ impl<'a> DiffWidget<'a> {
                 ChangeTag::Equal => {
                     // Equal lines - show on both sides
                     let content = change.value().trim_end();
-                    let left = self.truncate_or_pad(content, half_width);
-                    let right = self.truncate_or_pad(content, half_width);
+                    let left = Self::truncate_or_pad(content, half_width);
+                    let right = Self::truncate_or_pad(content, half_width);
 
                     lines.push(Line::from(vec![
                         Span::styled(" ", self.theme.style(Component::DimText)),
@@ -205,7 +205,7 @@ impl<'a> DiffWidget<'a> {
                         // Pure deletion - show on left only
                         for del in deletes {
                             let content = del.value().trim_end();
-                            let left = self.truncate_or_pad(content, half_width);
+                            let left = Self::truncate_or_pad(content, half_width);
                             let right = " ".repeat(half_width);
 
                             lines.push(Line::from(vec![
@@ -233,8 +233,8 @@ impl<'a> DiffWidget<'a> {
                                 ""
                             };
 
-                            let left = self.truncate_or_pad(left_content, half_width);
-                            let right = self.truncate_or_pad(right_content, half_width);
+                            let left = Self::truncate_or_pad(left_content, half_width);
+                            let right = Self::truncate_or_pad(right_content, half_width);
 
                             // Determine prefixes based on whether there's content
                             let left_prefix = if left_content.is_empty() { " " } else { "-" };
@@ -276,7 +276,7 @@ impl<'a> DiffWidget<'a> {
                     // Pure insertion (not part of replacement) - show on right only
                     let content = change.value().trim_end();
                     let left = " ".repeat(half_width);
-                    let right = self.truncate_or_pad(content, half_width);
+                    let right = Self::truncate_or_pad(content, half_width);
 
                     lines.push(Line::from(vec![
                         Span::styled(" ", self.theme.style(Component::DimText)),
@@ -340,7 +340,7 @@ impl<'a> DiffWidget<'a> {
         ))
     }
 
-    fn truncate_or_pad(&self, s: &str, width: usize) -> String {
+    fn truncate_or_pad(s: &str, width: usize) -> String {
         // Use Unicode-aware truncation
         let char_count = s.chars().count();
         if char_count > width {

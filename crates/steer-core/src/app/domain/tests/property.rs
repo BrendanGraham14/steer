@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::app::conversation::AssistantContent;
-    use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory};
+    use crate::app::domain::action::Action;
     use crate::app::domain::effect::Effect;
     use crate::app::domain::event::SessionEvent;
     use crate::app::domain::reduce::reduce;
@@ -29,10 +29,6 @@ mod tests {
 
     fn arb_message_id() -> impl Strategy<Value = MessageId> {
         "[a-z]{1,10}".prop_map(|s| MessageId::from_string(format!("msg_{s}")))
-    }
-
-    fn arb_request_id() -> impl Strategy<Value = RequestId> {
-        any::<u128>().prop_map(|n| RequestId::from(uuid::Uuid::from_u128(n)))
     }
 
     fn arb_tool_call_id() -> impl Strategy<Value = ToolCallId> {
@@ -65,7 +61,7 @@ mod tests {
             arb_op_id(),
             arb_message_id(),
             arb_non_empty_string(),
-            0u64..1000000u64,
+            0u64..1_000_000u64,
         )
             .prop_map(
                 move |(op_id, message_id, text, timestamp)| Action::UserInput {
@@ -79,68 +75,6 @@ mod tests {
             )
     }
 
-    fn arb_cancel_action(session_id: SessionId) -> impl Strategy<Value = Action> {
-        prop_oneof![
-            Just(Action::Cancel {
-                session_id,
-                op_id: None,
-            }),
-            arb_op_id().prop_map(move |op_id| Action::Cancel {
-                session_id,
-                op_id: Some(op_id),
-            }),
-        ]
-    }
-
-    fn arb_tool_approval_requested(session_id: SessionId) -> impl Strategy<Value = Action> {
-        (arb_request_id(), arb_tool_call()).prop_map(move |(request_id, tool_call)| {
-            Action::ToolApprovalRequested {
-                session_id,
-                request_id,
-                tool_call,
-            }
-        })
-    }
-
-    fn arb_tool_approval_decided(session_id: SessionId) -> impl Strategy<Value = Action> {
-        (
-            arb_request_id(),
-            any::<bool>(),
-            prop::option::of(arb_tool_name()),
-        )
-            .prop_map(move |(request_id, approved, remember_tool)| {
-                Action::ToolApprovalDecided {
-                    session_id,
-                    request_id,
-                    decision: if approved {
-                        ApprovalDecision::Approved
-                    } else {
-                        ApprovalDecision::Denied
-                    },
-                    remember: remember_tool.map(ApprovalMemory::Tool),
-                }
-            })
-    }
-
-    fn count_effects_by_type(effects: &[Effect]) -> (usize, usize, usize, usize) {
-        let mut emit_events = 0;
-        let mut call_models = 0;
-        let mut request_approvals = 0;
-        let mut execute_tools = 0;
-
-        for effect in effects {
-            match effect {
-                Effect::EmitEvent { .. } => emit_events += 1,
-                Effect::CallModel { .. } => call_models += 1,
-                Effect::RequestUserApproval { .. } => request_approvals += 1,
-                Effect::ExecuteTool { .. } => execute_tools += 1,
-                _ => {}
-            }
-        }
-
-        (emit_events, call_models, request_approvals, execute_tools)
-    }
-
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
@@ -150,7 +84,7 @@ mod tests {
             op_id in arb_op_id(),
             message_id in arb_message_id(),
             text in arb_non_empty_string(),
-            timestamp in 0u64..1000000u64,
+            timestamp in 0u64..1_000_000u64,
         ) {
             let action = Action::UserInput {
                 session_id,
@@ -186,7 +120,7 @@ mod tests {
 
         #[test]
         fn prop_user_input_always_starts_operation(
-            session_id in arb_session_id(),
+            _session_id in arb_session_id(),
             action in arb_user_input_action(SessionId::from(uuid::Uuid::from_u128(12345))).prop_map(|a| {
                 if let Action::UserInput { text, op_id, message_id, timestamp, .. } = a {
                     Action::UserInput {
@@ -345,7 +279,7 @@ mod tests {
             op_id in arb_op_id(),
             message_id in arb_message_id(),
             text in "[a-zA-Z ]{1,100}",
-            timestamp in 0u64..1000000u64,
+            timestamp in 0u64..1_000_000u64,
         ) {
             let mut state = AppState::new(session_id);
             state.current_operation = Some(OperationState {

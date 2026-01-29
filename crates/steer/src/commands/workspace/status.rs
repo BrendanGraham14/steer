@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
+use std::io::Write;
 
 use super::super::Command;
 use super::connect_client;
@@ -18,7 +19,8 @@ impl Command for WorkspaceStatusCommand {
         let workspace_id = self.resolve_workspace_id(&client).await?;
         let status = client.get_workspace_status(&workspace_id).await?;
 
-        println!("{}", format_workspace_status(&status));
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "{}", format_workspace_status(&status))?;
         Ok(())
     }
 }

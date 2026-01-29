@@ -105,7 +105,7 @@ impl AuthenticationFlow for ApiKeyAuthFlow {
             AuthMethod::ApiKey => Ok(ApiKeyAuthState {
                 awaiting_input: true,
             }),
-            _ => Err(AuthError::UnsupportedMethod {
+            AuthMethod::OAuth => Err(AuthError::UnsupportedMethod {
                 method: format!("{method:?}"),
                 provider: self.provider_display_name(),
             }),
@@ -122,7 +122,7 @@ impl AuthenticationFlow for ApiKeyAuthFlow {
                 "Enter your {} API key",
                 self.provider_display_name()
             ))),
-            _ => Err(AuthError::UnsupportedMethod {
+            AuthMethod::OAuth => Err(AuthError::UnsupportedMethod {
                 method: format!("{method:?}"),
                 provider: self.provider_display_name(),
             }),

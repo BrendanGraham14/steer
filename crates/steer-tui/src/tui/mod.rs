@@ -65,6 +65,9 @@ use crate::tui::terminal::{SetupGuard, cleanup};
 use crate::tui::ui_layout::UiLayout;
 use crate::tui::widgets::EditSelectionOverlayState;
 use crate::tui::widgets::InputPanel;
+use crate::tui::widgets::input_panel::InputPanelParams;
+use tracing::error as tracing_error;
+use tracing::info as tracing_info;
 
 pub mod commands;
 pub mod custom_commands;
@@ -437,14 +440,14 @@ impl Tui {
         });
     }
 
-    fn format_grpc_error(&self, error: &steer_grpc::GrpcError) -> String {
+    fn format_grpc_error(error: &steer_grpc::GrpcError) -> String {
         match error {
             steer_grpc::GrpcError::CallFailed(status) => status.message().to_string(),
             _ => error.to_string(),
         }
     }
 
-    fn format_workspace_status(&self, status: &WorkspaceStatus) -> String {
+    fn format_workspace_status(status: &WorkspaceStatus) -> String {
         let mut output = String::new();
         output.push_str(&format!("Workspace: {}\n", status.workspace_id.as_uuid()));
         output.push_str(&format!(
@@ -492,7 +495,7 @@ impl Tui {
             .await
             .map_err(|e| Error::Generic(format!("Failed to create new session: {e}")))?;
 
-        self.session_id = new_session_id.clone();
+        self.session_id.clone_from(&new_session_id);
         self.client.subscribe_session_events().await?;
         self.chat_store = ChatStore::new();
         self.tool_registry = ToolCallRegistry::new();
@@ -951,7 +954,7 @@ impl Tui {
 
             self.chat_viewport.rebuild(
                 &chat_items,
-                layout.chat_area.width,
+                layout.chat.width,
                 self.chat_viewport.state().view_mode,
                 &self.theme,
                 &self.chat_store,
@@ -959,20 +962,20 @@ impl Tui {
             );
 
             self.chat_viewport
-                .render(f, layout.chat_area, spinner_state, None, &self.theme);
+                .render(f, layout.chat, spinner_state, None, &self.theme);
 
-            let input_panel = InputPanel::new(
+            let input_panel = InputPanel::new(InputPanelParams {
                 input_mode,
-                current_tool_call,
+                current_approval: current_tool_call,
                 is_processing,
                 spinner_state,
                 is_editing,
-                editing_preview.as_deref(),
-                &self.theme,
-                self.queued_count,
-                queue_preview,
-            );
-            f.render_stateful_widget(input_panel, layout.input_area, &mut self.input_panel_state);
+                editing_preview: editing_preview.as_deref(),
+                queued_count: self.queued_count,
+                queued_preview: queue_preview,
+                theme: &self.theme,
+            });
+            f.render_stateful_widget(input_panel, layout.input, &mut self.input_panel_state);
 
             let update_badge = match &self.update_status {
                 UpdateStatus::Available(info) => {
@@ -1222,14 +1225,14 @@ impl Tui {
             if content.starts_with('!') && content.len() > 1 {
                 let command = content[1..].trim().to_string();
                 if let Err(e) = self.client.execute_bash_command(command).await {
-                    self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
+                    self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                 }
             } else if let Err(e) = self
                 .client
                 .edit_message(message_id_to_edit, content, self.current_model.clone())
                 .await
             {
-                self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
+                self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
             }
             return Ok(());
         }
@@ -1238,7 +1241,7 @@ impl Tui {
             .send_message(content, self.current_model.clone())
             .await
         {
-            self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
+            self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
         }
         Ok(())
     }
@@ -1503,14 +1506,14 @@ impl Tui {
 
                         match self.client.get_workspace_status(&target_id).await {
                             Ok(status) => {
-                                let response = self.format_workspace_status(&status);
+                                let response = Self::format_workspace_status(&status);
                                 self.push_tui_response(
                                     tui_cmd.as_command_str(),
                                     TuiCommandResponse::Text(response),
                                 );
                             }
                             Err(e) => {
-                                self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
+                                self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                             }
                         }
                     }
@@ -1533,13 +1536,13 @@ impl Tui {
                         .compact_session(self.current_model.clone())
                         .await
                     {
-                        self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
+                        self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                     }
                 }
                 crate::tui::core_commands::CoreCommandType::Agent { target } => {
                     if let Some(agent_id) = target {
                         if let Err(e) = self.client.switch_primary_agent(agent_id.clone()).await {
-                            self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
+                            self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                         } else {
                             self.push_notice(
                                 NoticeLevel::Info,
@@ -1565,7 +1568,7 @@ impl Tui {
                                 );
                             }
                             Err(e) => {
-                                self.push_notice(NoticeLevel::Error, self.format_grpc_error(&e));
+                                self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                             }
                         }
                     } else {
@@ -1596,7 +1599,7 @@ impl Tui {
                         .iter()
                         .filter_map(|block| match block {
                             UserContent::Text { text } => Some(text.as_str()),
-                            _ => None,
+                            UserContent::CommandExecution { .. } => None,
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -1678,8 +1681,8 @@ pub fn setup_panic_hook() {
     std::panic::set_hook(Box::new(|panic_info| {
         cleanup();
         // Print panic info to stderr after restoring terminal state
-        eprintln!("Application panicked:");
-        eprintln!("{panic_info}");
+        tracing_error!("Application panicked:");
+        tracing_error!("{panic_info}");
     }));
 }
 
@@ -1749,7 +1752,7 @@ pub async fn run_tui(
             session_id,
             messages.len()
         );
-        println!("Session ID: {session_id}");
+        tracing_info!("Session ID: {session_id}");
         (session_id, messages)
     } else {
         // Create a new session
@@ -1775,7 +1778,7 @@ pub async fn run_tui(
     };
 
     client.subscribe_session_events().await.map_err(Box::new)?;
-    let event_rx = client.subscribe_client_events().await;
+    let event_rx = client.subscribe_client_events().await.map_err(Box::new)?;
     let mut tui = Tui::new(client, model.clone(), session_id.clone(), theme.clone()).await?;
 
     // Ensure terminal cleanup even if we error before entering the event loop
@@ -1887,12 +1890,14 @@ mod tests {
     async fn test_restore_messages_preserves_tool_call_params() {
         let _guard = TerminalCleanupGuard;
         // Create a TUI instance for testing
-        let workspace_root = tempdir().unwrap();
+        let workspace_root = tempdir().expect("tempdir");
         let (client, _server_handle) =
             local_client_and_server(None, Some(workspace_root.path().to_path_buf())).await;
         let model = builtin::claude_sonnet_4_5();
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
+        let mut tui = Tui::new(client, model, session_id, None)
+            .await
+            .expect("create tui");
 
         // Build test messages: Assistant with ToolCall, then Tool result
         let tool_id = "test_tool_123".to_string();
@@ -1914,7 +1919,7 @@ mod tests {
                 }],
             },
             id: "msg_assistant".to_string(),
-            timestamp: 1234567890,
+            timestamp: 1_234_567_890,
             parent_message_id: None,
         };
 
@@ -1931,7 +1936,7 @@ mod tests {
                 ),
             },
             id: "msg_tool".to_string(),
-            timestamp: 1234567891,
+            timestamp: 1_234_567_891,
             parent_message_id: Some("msg_assistant".to_string()),
         };
 
@@ -1941,12 +1946,12 @@ mod tests {
         tui.restore_messages(messages);
 
         // Verify tool call was preserved in registry
-        let stored_call = tui
-            .tool_registry
-            .get_tool_call(&tool_id)
-            .expect("Tool call should be in registry");
-        assert_eq!(stored_call.name, "view");
-        assert_eq!(stored_call.parameters, tool_call.parameters);
+        if let Some(stored_call) = tui.tool_registry.get_tool_call(&tool_id) {
+            assert_eq!(stored_call.name, "view");
+            assert_eq!(stored_call.parameters, tool_call.parameters);
+        } else {
+            panic!("Tool call should be in registry");
+        }
     }
 
     #[tokio::test]
@@ -1954,12 +1959,14 @@ mod tests {
     async fn test_restore_messages_handles_tool_result_before_assistant() {
         let _guard = TerminalCleanupGuard;
         // Test edge case where Tool result arrives before Assistant message
-        let workspace_root = tempdir().unwrap();
+        let workspace_root = tempdir().expect("tempdir");
         let (client, _server_handle) =
             local_client_and_server(None, Some(workspace_root.path().to_path_buf())).await;
         let model = builtin::claude_sonnet_4_5();
         let session_id = "test_session_id".to_string();
-        let mut tui = Tui::new(client, model, session_id, None).await.unwrap();
+        let mut tui = Tui::new(client, model, session_id, None)
+            .await
+            .expect("create tui");
 
         let tool_id = "test_tool_456".to_string();
         let real_params = json!({
@@ -1986,7 +1993,7 @@ mod tests {
                 ),
             },
             id: "msg_tool".to_string(),
-            timestamp: 1234567890,
+            timestamp: 1_234_567_890,
             parent_message_id: None,
         };
 
@@ -1998,7 +2005,7 @@ mod tests {
                 }],
             },
             id: "msg_456".to_string(),
-            timestamp: 1234567891,
+            timestamp: 1_234_567_891,
             parent_message_id: None,
         };
 
@@ -2007,11 +2014,11 @@ mod tests {
         tui.restore_messages(messages);
 
         // Should still have proper parameters
-        let stored_call = tui
-            .tool_registry
-            .get_tool_call(&tool_id)
-            .expect("Tool call should be in registry");
-        assert_eq!(stored_call.parameters, real_params);
-        assert_eq!(stored_call.name, "view");
+        if let Some(stored_call) = tui.tool_registry.get_tool_call(&tool_id) {
+            assert_eq!(stored_call.parameters, real_params);
+            assert_eq!(stored_call.name, "view");
+        } else {
+            panic!("Tool call should be in registry");
+        }
     }
 }

@@ -6,9 +6,7 @@ mod tests {
     use crate::app::domain::event::SessionEvent;
     use crate::app::domain::reduce::{apply_event_to_state, reduce};
     use crate::app::domain::state::{AppState, OperationKind, OperationState};
-    use crate::app::domain::types::{
-        MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
-    };
+    use crate::app::domain::types::{MessageId, NonEmptyString, OpId, RequestId, SessionId};
     use crate::config::model::builtin;
     use std::collections::HashSet;
     use steer_tools::ToolCall;
@@ -33,10 +31,6 @@ mod tests {
 
     fn deterministic_request_id(n: u128) -> RequestId {
         RequestId::from(uuid::Uuid::from_u128(n))
-    }
-
-    fn deterministic_tool_call_id(s: &str) -> ToolCallId {
-        ToolCallId::from_string(s)
     }
 
     fn reduce_ok(state: &mut AppState, action: Action) -> Vec<Effect> {
@@ -474,7 +468,6 @@ mod tests {
         let mut state = AppState::new(session_id);
 
         let initial_message_count = state.message_graph.messages.len();
-        let initial_event_seq = state.event_sequence;
 
         let _ = reduce_ok(
             &mut state,

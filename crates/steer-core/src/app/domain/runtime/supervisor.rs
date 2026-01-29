@@ -58,7 +58,7 @@ impl From<SessionError> for RuntimeError {
 
 pub(crate) enum SupervisorCmd {
     CreateSession {
-        config: SessionConfig,
+        config: Box<SessionConfig>,
         reply: oneshot::Sender<Result<SessionId, RuntimeError>>,
     },
     ResumeSession {
@@ -75,7 +75,7 @@ pub(crate) enum SupervisorCmd {
     },
     DispatchAction {
         session_id: SessionId,
-        action: Action,
+        action: Box<Action>,
         reply: oneshot::Sender<Result<(), RuntimeError>>,
     },
     SubscribeEvents {
@@ -139,7 +139,7 @@ impl RuntimeSupervisor {
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
                         SupervisorCmd::CreateSession { config, reply } => {
-                            let result = self.create_session(config).await;
+                            let result = self.create_session(*config).await;
                             let _ = reply.send(result);
                         }
                         SupervisorCmd::ResumeSession { session_id, reply } => {
@@ -155,7 +155,7 @@ impl RuntimeSupervisor {
                             let _ = reply.send(result);
                         }
                         SupervisorCmd::DispatchAction { session_id, action, reply } => {
-                            let result = self.dispatch_action(session_id, action).await;
+                            let result = self.dispatch_action(session_id, *action).await;
                             let _ = reply.send(result);
                         }
                         SupervisorCmd::SubscribeEvents { session_id, reply } => {
@@ -464,7 +464,7 @@ impl RuntimeHandle {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(SupervisorCmd::CreateSession {
-                config,
+                config: Box::new(config),
                 reply: reply_tx,
             })
             .await
@@ -517,7 +517,7 @@ impl RuntimeHandle {
         self.tx
             .send(SupervisorCmd::DispatchAction {
                 session_id,
-                action,
+                action: Box::new(action),
                 reply: reply_tx,
             })
             .await
@@ -833,7 +833,7 @@ mod tests {
         let model_registry = Arc::new(crate::model_registry::ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
         let api_client = Arc::new(ApiClient::new_with_deps(
-            crate::test_utils::test_llm_config_provider(),
+            crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
             model_registry,
         ));

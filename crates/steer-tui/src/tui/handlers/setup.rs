@@ -56,7 +56,10 @@ impl SetupHandler {
 
     pub async fn handle_key_event(tui: &mut Tui, key: KeyEvent) -> Result<Option<InputMode>> {
         // Clone the current step to avoid borrow conflicts
-        let current_step = tui.setup_state.as_ref().unwrap().current_step.clone();
+        let Some(setup_state) = tui.setup_state.as_ref() else {
+            return Ok(None);
+        };
+        let current_step = setup_state.current_step.clone();
 
         debug!(
             "SetupHandler::handle_key_event - step: {:?}, key: {:?}",
@@ -64,9 +67,17 @@ impl SetupHandler {
         );
 
         match &current_step {
-            SetupStep::Welcome => Self::handle_welcome(tui.setup_state.as_mut().unwrap(), key),
+            SetupStep::Welcome => {
+                let Some(state) = tui.setup_state.as_mut() else {
+                    return Ok(None);
+                };
+                Self::handle_welcome(state, key)
+            }
             SetupStep::ProviderSelection => {
-                Self::handle_provider_selection(tui.setup_state.as_mut().unwrap(), key)
+                let Some(state) = tui.setup_state.as_mut() else {
+                    return Ok(None);
+                };
+                Self::handle_provider_selection(state, key)
             }
             SetupStep::Authentication(provider_id) => {
                 let provider_id = provider_id.clone();
@@ -211,7 +222,9 @@ impl SetupHandler {
                         }
 
                         {
-                            let setup_state = tui.setup_state.as_mut().unwrap();
+                            let Some(setup_state) = tui.setup_state.as_mut() else {
+                                return Ok(None);
+                            };
                             setup_state.auth_progress = Some(progress.clone());
                             setup_state.auth_input.clear();
 
@@ -224,7 +237,9 @@ impl SetupHandler {
 
                         if completed {
                             let status = Self::refresh_auth_status(tui, &provider_id).await?;
-                            let setup_state = tui.setup_state.as_mut().unwrap();
+                            let Some(setup_state) = tui.setup_state.as_mut() else {
+                                return Ok(None);
+                            };
                             setup_state
                                 .auth_providers
                                 .insert(provider_id.clone(), status);
@@ -237,7 +252,9 @@ impl SetupHandler {
                 Ok(None)
             }
             KeyCode::Char(c) => {
-                let state = tui.setup_state.as_mut().unwrap();
+                let Some(state) = tui.setup_state.as_mut() else {
+                    return Ok(None);
+                };
                 let expects_input = state.auth_progress.as_ref().is_some_and(|progress| {
                     matches!(
                         progress,
@@ -250,7 +267,9 @@ impl SetupHandler {
                 Ok(None)
             }
             KeyCode::Backspace => {
-                let state = tui.setup_state.as_mut().unwrap();
+                let Some(state) = tui.setup_state.as_mut() else {
+                    return Ok(None);
+                };
                 let expects_input = state.auth_progress.as_ref().is_some_and(|progress| {
                     matches!(
                         progress,
@@ -263,7 +282,9 @@ impl SetupHandler {
                 Ok(None)
             }
             KeyCode::Esc => {
-                let state = tui.setup_state.as_mut().unwrap();
+                let Some(state) = tui.setup_state.as_mut() else {
+                    return Ok(None);
+                };
                 if let Some(flow_id) = state.auth_flow_id.take() {
                     let _ = tui.client.cancel_auth(flow_id).await;
                 }
@@ -333,7 +354,9 @@ impl SetupHandler {
             return Ok(true);
         }
 
-        let flow_id = flow_id.expect("auth_flow_id just checked");
+        let Some(flow_id) = flow_id else {
+            return Ok(false);
+        };
 
         if tui
             .setup_state

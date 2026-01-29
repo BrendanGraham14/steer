@@ -91,7 +91,7 @@ impl BashValidator {
     }
 
     /// Check if a command is banned (basic, fast check) - matches src/tools/bash.rs
-    fn is_banned_command(&self, command: &str) -> bool {
+    fn is_banned_command(command: &str) -> bool {
         static BANNED_COMMAND_REGEXES: std::sync::LazyLock<Vec<Regex>> =
             std::sync::LazyLock::new(|| {
                 let banned_commands = [
@@ -147,9 +147,20 @@ impl BashValidator {
                 ];
                 banned_commands
                     .iter()
-                    .map(|cmd| {
-                        Regex::new(&format!(r"^\s*(\S*/)?{}\b", regex::escape(cmd)))
-                            .expect("Failed to compile banned command regex")
+                    .filter_map(|cmd| {
+                        let pattern = format!(r"^\s*(\S*/)?{}\b", regex::escape(cmd));
+                        match Regex::new(&pattern) {
+                            Ok(regex) => Some(regex),
+                            Err(err) => {
+                                tracing::error!(
+                                    target: "tools::bash",
+                                    command = %cmd,
+                                    error = %err,
+                                    "Failed to compile banned command regex"
+                                );
+                                None
+                            }
+                        }
                     })
                     .collect()
             });
@@ -173,7 +184,7 @@ impl ToolValidator for BashValidator {
             .map_err(|e| ValidationError::InvalidParams(e.to_string()))?;
 
         // First check basic banned commands (fast path)
-        if self.is_banned_command(&params.command) {
+        if Self::is_banned_command(&params.command) {
             return Ok(ValidationResult {
                 allowed: false,
                 reason: Some(format!(

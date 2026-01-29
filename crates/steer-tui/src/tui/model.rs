@@ -112,7 +112,8 @@ impl ChatItem {
     pub fn timestamp(&self) -> OffsetDateTime {
         match &self.data {
             ChatItemData::Message(message) => {
-                OffsetDateTime::from_unix_timestamp(message.timestamp() as i64).unwrap()
+                OffsetDateTime::from_unix_timestamp(message.timestamp() as i64)
+                    .unwrap_or(OffsetDateTime::UNIX_EPOCH)
             }
             ChatItemData::PendingToolCall { ts, .. } => *ts,
             ChatItemData::SlashInput { ts, .. } => *ts,

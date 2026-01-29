@@ -155,9 +155,20 @@ static BANNED_COMMAND_REGEXES: std::sync::LazyLock<Vec<Regex>> = std::sync::Lazy
 
     banned_commands
         .iter()
-        .map(|cmd| {
-            Regex::new(&format!(r"^\\s*(\\S*/)?{}\\b", regex::escape(cmd)))
-                .expect("Failed to compile banned command regex")
+        .filter_map(|cmd| {
+            let pattern = format!(r"^\\s*(\\S*/)?{}\\b", regex::escape(cmd));
+            match Regex::new(&pattern) {
+                Ok(regex) => Some(regex),
+                Err(err) => {
+                    tracing::error!(
+                        target: "tools::bash",
+                        command = %cmd,
+                        error = %err,
+                        "Failed to compile banned command regex"
+                    );
+                    None
+                }
+            }
         })
         .collect()
 });

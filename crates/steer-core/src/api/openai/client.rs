@@ -23,29 +23,36 @@ pub struct OpenAIClient {
 
 impl OpenAIClient {
     /// Create a new OpenAI client with a specific mode.
-    pub fn with_mode(api_key: String, mode: OpenAIMode) -> Self {
-        Self {
-            responses_client: responses::Client::new(api_key.clone()),
-            chat_client: Some(chat::Client::new(api_key)),
+    pub fn with_mode(api_key: String, mode: OpenAIMode) -> Result<Self, ApiError> {
+        Ok(Self {
+            responses_client: responses::Client::new(api_key.clone())?,
+            chat_client: Some(chat::Client::new(api_key)?),
             default_mode: mode,
-        }
+        })
     }
 
     /// Create a new OpenAI client with a custom base URL and mode.
-    pub fn with_base_url_mode(api_key: String, base_url: Option<String>, mode: OpenAIMode) -> Self {
-        Self {
-            responses_client: responses::Client::with_base_url(api_key.clone(), base_url.clone()),
-            chat_client: Some(chat::Client::with_base_url(api_key, base_url)),
+    pub fn with_base_url_mode(
+        api_key: String,
+        base_url: Option<String>,
+        mode: OpenAIMode,
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            responses_client: responses::Client::with_base_url(api_key.clone(), base_url.clone())?,
+            chat_client: Some(chat::Client::with_base_url(api_key, base_url)?),
             default_mode: mode,
-        }
+        })
     }
 
-    pub fn with_directive(directive: OpenAiResponsesAuth, base_url: Option<String>) -> Self {
-        Self {
-            responses_client: responses::Client::with_directive(directive, base_url),
+    pub fn with_directive(
+        directive: OpenAiResponsesAuth,
+        base_url: Option<String>,
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            responses_client: responses::Client::with_directive(directive, base_url)?,
             chat_client: None,
             default_mode: OpenAIMode::Responses,
-        }
+        })
     }
 }
 

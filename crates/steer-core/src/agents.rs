@@ -66,6 +66,8 @@ pub struct AgentSpec {
 pub enum AgentSpecError {
     #[error("Agent spec already registered: {0}")]
     AlreadyRegistered(String),
+    #[error("Agent spec registry lock poisoned")]
+    RegistryPoisoned,
 }
 
 static AGENT_SPECS: std::sync::LazyLock<RwLock<HashMap<String, AgentSpec>>> =
@@ -80,7 +82,7 @@ static AGENT_SPECS: std::sync::LazyLock<RwLock<HashMap<String, AgentSpec>>> =
 pub fn register_agent_spec(spec: AgentSpec) -> Result<(), AgentSpecError> {
     let mut registry = AGENT_SPECS
         .write()
-        .expect("Agent spec registry lock poisoned");
+        .map_err(|_| AgentSpecError::RegistryPoisoned)?;
     if registry.contains_key(&spec.id) {
         return Err(AgentSpecError::AlreadyRegistered(spec.id));
     }

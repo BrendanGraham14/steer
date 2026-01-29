@@ -108,11 +108,12 @@ fn test_xai_client_with_custom_base_url() {
     let custom_url = "https://custom-xai-api.example.com".to_string();
 
     // Test with custom base URL
-    let _client = XAIClient::with_base_url(api_key.clone(), Some(custom_url.clone()));
+    let _client =
+        XAIClient::with_base_url(api_key.clone(), Some(custom_url.clone())).expect("xai client");
     // The client should be created successfully
     // In a real test, we'd verify it uses the custom URL for requests
 
     // Test without custom base URL (uses default)
-    let _default_client = XAIClient::new(api_key);
+    let _default_client = XAIClient::new(api_key).expect("xai client");
     // Should use the default xAI API URL
 }

@@ -41,7 +41,6 @@ impl SessionEventSubscription {
                         lagged = n,
                         "Event subscriber lagged, some events were dropped"
                     );
-                    continue;
                 }
             }
         }

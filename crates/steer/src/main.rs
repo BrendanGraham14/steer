@@ -1,6 +1,7 @@
 use clap::Parser;
 use eyre::Result;
 
+use std::io::Write;
 use std::path::PathBuf;
 use steer::cli::{Cli, Commands};
 use steer::commands::{
@@ -317,9 +318,11 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
                     "Failed to resolve preferred model '{}': {}. Using server default {}.",
                     model_str, e, fallback
                 );
-                eprintln!(
+                let mut stderr = std::io::stderr();
+                writeln!(
+                    stderr,
                     "Warning: preferred model '{model_str}' is invalid. Using server default {fallback}."
-                );
+                )?;
                 server_default.clone()
             }
         }
@@ -367,7 +370,8 @@ async fn run_tui_local(params: TuiParams) -> Result<()> {
             .await
             .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
         tracing::info!("Created session from config: {}", new_session_id);
-        println!("Session ID: {new_session_id}");
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "Session ID: {new_session_id}")?;
         session_id = Some(new_session_id);
     }
 
@@ -439,9 +443,11 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
                     "Failed to resolve preferred model '{}': {}. Using server default {}.",
                     model_str, e, fallback
                 );
-                eprintln!(
+                let mut stderr = std::io::stderr();
+                writeln!(
+                    stderr,
                     "Warning: preferred model '{model_str}' is invalid. Using server default {fallback}."
-                );
+                )?;
                 server_default.clone()
             }
         }
@@ -469,7 +475,8 @@ async fn run_tui_remote(params: RemoteTuiParams) -> Result<()> {
             .await
             .map_err(|e| eyre::eyre!("Failed to create session: {}", e))?;
         tracing::info!("Created session from config: {}", new_session_id);
-        println!("Session ID: {new_session_id}");
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "Session ID: {new_session_id}")?;
         session_id = Some(new_session_id);
     }
 
@@ -494,8 +501,13 @@ async fn setup_signal_handlers() {
         use tokio::signal::unix::{SignalKind, signal};
 
         let _sigterm_task = tokio::spawn(async move {
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("Failed to set up SIGTERM handler");
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(signal) => signal,
+                Err(error) => {
+                    warn!(error = %error, "Failed to set up SIGTERM handler");
+                    return;
+                }
+            };
             sigterm.recv().await;
 
             // Always clean up terminal on SIGTERM
@@ -505,8 +517,13 @@ async fn setup_signal_handlers() {
         });
 
         let _sigint_task = tokio::spawn(async move {
-            let mut sigint =
-                signal(SignalKind::interrupt()).expect("Failed to set up SIGINT handler");
+            let mut sigint = match signal(SignalKind::interrupt()) {
+                Ok(signal) => signal,
+                Err(error) => {
+                    warn!(error = %error, "Failed to set up SIGINT handler");
+                    return;
+                }
+            };
             sigint.recv().await;
 
             // Always clean up terminal on SIGINT

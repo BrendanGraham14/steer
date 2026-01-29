@@ -100,7 +100,9 @@ impl AuthStorage for KeyringStorage {
                 .or_default()
                 .insert(cred_type, credential);
 
-            let data = serde_json::to_string(&store).expect("serialize credential store");
+            let data = serde_json::to_string(&store).map_err(|e| {
+                keyring::Error::PlatformFailure(format!("serialize credential store: {e}").into())
+            })?;
             entry.set_password(&data)?;
             Ok(())
         })
@@ -141,7 +143,11 @@ impl AuthStorage for KeyringStorage {
                 // No credentials left – remove the keyring entry entirely.
                 let _ = entry.delete_credential();
             } else {
-                let data = serde_json::to_string(&store).expect("serialize credential store");
+                let data = serde_json::to_string(&store).map_err(|e| {
+                    keyring::Error::PlatformFailure(
+                        format!("serialize credential store: {e}").into(),
+                    )
+                })?;
                 entry.set_password(&data)?;
             }
             Ok(())
@@ -279,10 +285,12 @@ mod tests {
                 assert_eq!(token.refresh_token, "old_refresh_token");
                 assert_eq!(
                     token.expires_at,
-                    SystemTime::UNIX_EPOCH + Duration::from_secs(1678886400)
+                    SystemTime::UNIX_EPOCH + Duration::from_secs(1_678_886_400)
                 );
             }
-            _ => panic!("Deserialization failed: expected OAuth2 credential"),
+            Credential::ApiKey { .. } => {
+                panic!("Deserialization failed: expected OAuth2 credential")
+            }
         }
     }
 

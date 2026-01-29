@@ -147,7 +147,7 @@ impl WorkspaceRegistry {
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
-        row.map(|row| self.row_to_repo_info(row)).transpose()
+        row.map(Self::row_to_repo_info).transpose()
     }
 
     #[expect(dead_code)]
@@ -170,7 +170,7 @@ impl WorkspaceRegistry {
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
-        row.map(|row| self.row_to_repo_info(row)).transpose()
+        row.map(Self::row_to_repo_info).transpose()
     }
 
     pub async fn list_repos(
@@ -190,9 +190,7 @@ impl WorkspaceRegistry {
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
-        rows.into_iter()
-            .map(|row| self.row_to_repo_info(row))
-            .collect()
+        rows.into_iter().map(Self::row_to_repo_info).collect()
     }
 
     pub async fn insert_workspace(&self, info: &WorkspaceInfo) -> WorkspaceManagerResult<()> {
@@ -247,7 +245,7 @@ impl WorkspaceRegistry {
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
-        row.map(|row| self.row_to_workspace_info(row)).transpose()
+        row.map(Self::row_to_workspace_info).transpose()
     }
 
     pub async fn find_by_path(&self, path: &Path) -> WorkspaceManagerResult<Option<WorkspaceInfo>> {
@@ -264,7 +262,7 @@ impl WorkspaceRegistry {
         .await
         .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
-        row.map(|row| self.row_to_workspace_info(row)).transpose()
+        row.map(Self::row_to_workspace_info).transpose()
     }
 
     pub async fn list_workspaces(
@@ -279,13 +277,10 @@ impl WorkspaceRegistry {
             .await
             .map_err(|e| WorkspaceManagerError::Other(e.to_string()))?;
 
-        rows.into_iter()
-            .map(|row| self.row_to_workspace_info(row))
-            .collect()
+        rows.into_iter().map(Self::row_to_workspace_info).collect()
     }
 
     fn row_to_workspace_info(
-        &self,
         row: sqlx::sqlite::SqliteRow,
     ) -> WorkspaceManagerResult<WorkspaceInfo> {
         let workspace_id_str: String = row.get("workspace_id");
@@ -335,7 +330,7 @@ impl WorkspaceRegistry {
         })
     }
 
-    fn row_to_repo_info(&self, row: sqlx::sqlite::SqliteRow) -> WorkspaceManagerResult<RepoInfo> {
+    fn row_to_repo_info(row: sqlx::sqlite::SqliteRow) -> WorkspaceManagerResult<RepoInfo> {
         let repo_id_str: String = row.get("repo_id");
         let environment_id_str: String = row.get("environment_id");
         let root_path_str: String = row.get("root_path");

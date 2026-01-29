@@ -48,21 +48,21 @@ impl EventProcessor for MessageEventProcessor {
             ClientEvent::AssistantMessageAdded { message, .. }
             | ClientEvent::UserMessageAdded { message }
             | ClientEvent::ToolMessageAdded { message } => {
-                self.handle_message_added(message, ctx);
+                Self::handle_message_added(message, ctx);
                 ProcessingResult::Handled
             }
             ClientEvent::MessageUpdated { message } => {
-                self.handle_message_updated(message, ctx);
+                Self::handle_message_updated(message, ctx);
                 ProcessingResult::Handled
             }
             ClientEvent::MessageDelta { id, delta } => {
-                self.handle_message_delta(&id, delta, ctx);
+                Self::handle_message_delta(&id, delta, ctx);
                 ProcessingResult::Handled
             }
             ClientEvent::ThinkingDelta {
                 message_id, delta, ..
             } => {
-                self.handle_thinking_delta(&message_id, delta, ctx);
+                Self::handle_thinking_delta(&message_id, delta, ctx);
                 ProcessingResult::Handled
             }
             ClientEvent::ToolCallDelta {
@@ -71,7 +71,7 @@ impl EventProcessor for MessageEventProcessor {
                 delta,
                 ..
             } => {
-                self.handle_tool_call_delta(&message_id, tool_call_id.as_str(), delta, ctx);
+                Self::handle_tool_call_delta(&message_id, tool_call_id.as_str(), delta, ctx);
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,
@@ -84,7 +84,7 @@ impl EventProcessor for MessageEventProcessor {
 }
 
 impl MessageEventProcessor {
-    fn handle_message_added(&self, message: Message, ctx: &mut ProcessingContext) {
+    fn handle_message_added(message: Message, ctx: &mut ProcessingContext) {
         if let MessageData::Assistant { content, .. } = &message.data {
             tracing::debug!(
                 target: "tui.message_event",
@@ -115,44 +115,43 @@ impl MessageEventProcessor {
         *ctx.messages_updated = true;
     }
 
-    fn handle_message_updated(&self, message: Message, ctx: &mut ProcessingContext) {
-        self.handle_message_added(message, ctx);
+    fn handle_message_updated(message: Message, ctx: &mut ProcessingContext) {
+        Self::handle_message_added(message, ctx);
     }
 
-    fn handle_message_delta(&self, id: &MessageId, delta: String, ctx: &mut ProcessingContext) {
-        if !self.append_text_delta(id, &delta, ctx) {
-            self.insert_placeholder_message(id, ctx);
-            if !self.append_text_delta(id, &delta, ctx) {
+    fn handle_message_delta(id: &MessageId, delta: String, ctx: &mut ProcessingContext) {
+        if !Self::append_text_delta(id, &delta, ctx) {
+            Self::insert_placeholder_message(id, ctx);
+            if !Self::append_text_delta(id, &delta, ctx) {
                 tracing::warn!(target: "tui.message", "MessageDelta received for unknown ID: {}", id);
             }
         }
     }
 
-    fn handle_thinking_delta(&self, id: &MessageId, delta: String, ctx: &mut ProcessingContext) {
-        if !self.append_thinking_delta(id, &delta, ctx) {
-            self.insert_placeholder_message(id, ctx);
-            if !self.append_thinking_delta(id, &delta, ctx) {
+    fn handle_thinking_delta(id: &MessageId, delta: String, ctx: &mut ProcessingContext) {
+        if !Self::append_thinking_delta(id, &delta, ctx) {
+            Self::insert_placeholder_message(id, ctx);
+            if !Self::append_thinking_delta(id, &delta, ctx) {
                 tracing::warn!(target: "tui.message", "ThinkingDelta received for unknown ID: {}", id);
             }
         }
     }
 
     fn handle_tool_call_delta(
-        &self,
         id: &MessageId,
         tool_call_id: &str,
         delta: ToolCallDelta,
         ctx: &mut ProcessingContext,
     ) {
-        if !self.apply_tool_call_delta(id, tool_call_id, &delta, ctx) {
-            self.insert_placeholder_message(id, ctx);
-            if !self.apply_tool_call_delta(id, tool_call_id, &delta, ctx) {
+        if !Self::apply_tool_call_delta(id, tool_call_id, &delta, ctx) {
+            Self::insert_placeholder_message(id, ctx);
+            if !Self::apply_tool_call_delta(id, tool_call_id, &delta, ctx) {
                 tracing::warn!(target: "tui.message", "ToolCallDelta received for unknown ID: {}", id);
             }
         }
     }
 
-    fn insert_placeholder_message(&self, id: &MessageId, ctx: &mut ProcessingContext) {
+    fn insert_placeholder_message(id: &MessageId, ctx: &mut ProcessingContext) {
         let message = Message {
             data: MessageData::Assistant {
                 content: Vec::new(),
@@ -165,7 +164,7 @@ impl MessageEventProcessor {
         *ctx.messages_updated = true;
     }
 
-    fn append_text_delta(&self, id: &MessageId, delta: &str, ctx: &mut ProcessingContext) -> bool {
+    fn append_text_delta(id: &MessageId, delta: &str, ctx: &mut ProcessingContext) -> bool {
         for item in ctx.chat_store.iter_mut() {
             if let ChatItemData::Message(message) = &mut item.data
                 && message.id() == id.as_str()
@@ -230,9 +229,7 @@ impl MessageEventProcessor {
         false
     }
 
-    fn append_thinking_delta(
-        &self,
-        id: &MessageId, delta: &str, ctx: &mut ProcessingContext) -> bool {
+    fn append_thinking_delta(id: &MessageId, delta: &str, ctx: &mut ProcessingContext) -> bool {
         for item in ctx.chat_store.iter_mut() {
             if let ChatItemData::Message(message) = &mut item.data {
                 if message.id() == id.as_str() {
@@ -270,7 +267,6 @@ impl MessageEventProcessor {
     }
 
     fn apply_tool_call_delta(
-        &self,
         id: &MessageId,
         tool_call_id: &str,
         delta: &ToolCallDelta,
@@ -310,7 +306,7 @@ impl MessageEventProcessor {
 
                         match delta {
                             ToolCallDelta::Name(name) => {
-                                tool_call.name = name.clone();
+                                tool_call.name.clone_from(name);
                             }
                             ToolCallDelta::ArgumentChunk(chunk) => {
                                 match tool_call.parameters.as_str() {
@@ -385,7 +381,7 @@ mod tests {
         let chat_store = ChatStore::new();
         let chat_list_state = ChatListState::new();
         let tool_registry = ToolCallRegistry::new();
-        let workspace_root = tempfile::TempDir::new().unwrap();
+        let workspace_root = tempfile::TempDir::new().expect("tempdir");
         let (client, _server_handle) = crate::tui::test_utils::local_client_and_server(
             None,
             Some(workspace_root.path().to_path_buf()),
@@ -472,7 +468,7 @@ mod tests {
                 }],
             },
             id: "msg_123".to_string(),
-            timestamp: 1234567890,
+            timestamp: 1_234_567_890,
             parent_message_id: None,
         };
 
@@ -507,12 +503,12 @@ mod tests {
         assert!(matches!(result, ProcessingResult::Handled));
 
         // Verify the registry was updated with real params
-        let stored_call = ctx
-            .tool_registry
-            .get_tool_call(&tool_id)
-            .expect("Tool call should be in registry");
-        assert_eq!(stored_call.parameters, real_params);
-        assert_eq!(stored_call.name, "view");
-        assert_eq!(stored_call.id, tool_id);
+        if let Some(stored_call) = ctx.tool_registry.get_tool_call(&tool_id) {
+            assert_eq!(stored_call.parameters, real_params);
+            assert_eq!(stored_call.name, "view");
+            assert_eq!(stored_call.id, tool_id);
+        } else {
+            panic!("Tool call should be in registry");
+        }
     }
 }

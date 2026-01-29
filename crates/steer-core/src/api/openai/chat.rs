@@ -26,30 +26,37 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub(super) fn new(api_key: String) -> Self {
+    pub(super) fn new(api_key: String) -> Result<Self, ApiError> {
         Self::with_base_url(api_key, None)
     }
 
-    pub(super) fn with_base_url(api_key: String, base_url: Option<String>) -> Self {
+    pub(super) fn with_base_url(
+        api_key: String,
+        base_url: Option<String>,
+    ) -> Result<Self, ApiError> {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {api_key}"))
-                .expect("Invalid API key format"),
+            header::HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|e| {
+                ApiError::AuthenticationFailed {
+                    provider: super::PROVIDER_NAME.to_string(),
+                    details: format!("Invalid API key: {e}"),
+                }
+            })?,
         );
 
         let http_client = reqwest::Client::builder()
             .default_headers(headers)
             .timeout(std::time::Duration::from_secs(super::HTTP_TIMEOUT_SECS))
             .build()
-            .expect("Failed to build HTTP client");
+            .map_err(ApiError::Network)?;
 
         let base_url = crate::api::util::normalize_chat_url(base_url.as_deref(), DEFAULT_API_URL);
 
-        Self {
+        Ok(Self {
             http_client,
             base_url,
-        }
+        })
     }
 
     pub(super) async fn complete(
@@ -72,7 +79,7 @@ impl Client {
         }
 
         for message in messages {
-            openai_messages.extend(self.convert_message(message)?);
+            openai_messages.extend(Self::convert_message(message)?);
         }
 
         let openai_tools = tools.map(|tools| {
@@ -181,7 +188,7 @@ impl Client {
         })?;
 
         if let Some(choice) = parsed.choices.first() {
-            Ok(self.convert_response_message(&choice.message))
+            Ok(Self::convert_response_message(&choice.message))
         } else {
             Err(ApiError::ResponseParsingError {
                 provider: super::PROVIDER_NAME.to_string(),
@@ -190,7 +197,7 @@ impl Client {
         }
     }
 
-    fn convert_message(&self, message: AppMessage) -> Result<Vec<OpenAIMessage>, ApiError> {
+    fn convert_message(message: AppMessage) -> Result<Vec<OpenAIMessage>, ApiError> {
         match message.data {
             MessageData::User { content, .. } => {
                 let mut text_parts = Vec::new();
@@ -285,7 +292,7 @@ impl Client {
         }
     }
 
-    fn convert_response_message(&self, message: &OpenAIResponseMessage) -> CompletionResponse {
+    fn convert_response_message(message: &OpenAIResponseMessage) -> CompletionResponse {
         let mut content = Vec::new();
 
         if let Some(msg_content) = &message.content {
@@ -352,7 +359,7 @@ impl Client {
         }
 
         for message in messages {
-            openai_messages.extend(self.convert_message(message)?);
+            openai_messages.extend(Self::convert_message(message)?);
         }
 
         let openai_tools = tools.map(|tools| {
@@ -577,13 +584,13 @@ impl Client {
 
                             if let Some(id) = &tc.id {
                                 if !id.is_empty() {
-                                    entry.id = id.clone();
+                                    entry.id.clone_from(id);
                                 }
                             }
                             if let Some(func) = &tc.function {
                                 if let Some(name) = &func.name {
                                     if !name.is_empty() {
-                                        entry.name = name.clone();
+                                        entry.name.clone_from(name);
                                     }
                                 }
                             }
@@ -819,9 +826,12 @@ struct OpenAIResponseMessage {
 #[derive(Debug, Deserialize)]
 #[expect(dead_code)]
 struct OpenAIUsage {
-    prompt_tokens: u32,
-    completion_tokens: u32,
-    total_tokens: u32,
+    #[serde(rename = "prompt_tokens")]
+    prompt: u32,
+    #[serde(rename = "completion_tokens")]
+    completion: u32,
+    #[serde(rename = "total_tokens")]
+    total: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1039,8 +1049,6 @@ mod tests {
 
     #[test]
     fn test_convert_message_with_command_execution() {
-        let client = Client::new("test_key".to_string());
-
         let message = Message {
             data: MessageData::User {
                 content: vec![
@@ -1061,9 +1069,8 @@ mod tests {
             parent_message_id: None,
         };
 
-        let result = client.convert_message(message).unwrap();
+        let result = Client::convert_message(message).unwrap();
         assert_eq!(result.len(), 1);
-
         match &result[0] {
             OpenAIMessage::User { content, .. } => match content {
                 OpenAIContent::Array(parts) => {
@@ -1085,9 +1092,13 @@ mod tests {
                         }
                     }
                 }
-                _ => unreachable!("Expected array content"),
+                OpenAIContent::String(_text) => {
+                    panic!("Expected Array content, got String");
+                }
             },
-            _ => unreachable!("Expected user message"),
+            OpenAIMessage::Assistant { .. }
+            | OpenAIMessage::System { .. }
+            | OpenAIMessage::Tool { .. } => unreachable!("Expected user message"),
         }
     }
 
@@ -1096,7 +1107,7 @@ mod tests {
     async fn test_stream_complete_real_api() {
         dotenvy::dotenv().ok();
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
-        let client = Client::new(api_key);
+        let client = Client::new(api_key).expect("openai chat client");
 
         let message = Message {
             data: MessageData::User {

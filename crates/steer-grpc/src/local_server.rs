@@ -33,8 +33,8 @@ pub async fn create_local_channel(
     let repo_manager: Arc<dyn RepoManager> = workspace_manager.clone();
     let environment_manager = Arc::new(LocalEnvironmentManager::new(environment_root));
 
-    let service = RuntimeAgentService::new(
-        runtime_service.handle(),
+    let service = RuntimeAgentService::new(crate::grpc::RuntimeAgentDeps {
+        runtime: runtime_service.handle(),
         catalog,
         llm_config_provider,
         model_registry,
@@ -42,21 +42,44 @@ pub async fn create_local_channel(
         environment_manager,
         workspace_manager,
         repo_manager,
-    );
+    });
     let svc = AgentServiceServer::new(service);
 
     let server_handle: tokio::task::JoinHandle<()> = tokio::spawn(async move {
-        let addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-        let local_addr = listener.local_addr().unwrap();
+        let addr: std::net::SocketAddr = match "127.0.0.1:0".parse() {
+            Ok(addr) => addr,
+            Err(error) => {
+                tracing::error!(error = %error, "Failed to parse localhost address");
+                return;
+            }
+        };
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => listener,
+            Err(error) => {
+                tracing::error!(error = %error, "Failed to bind localhost listener");
+                return;
+            }
+        };
+        let local_addr = match listener.local_addr() {
+            Ok(local_addr) => local_addr,
+            Err(error) => {
+                tracing::error!(error = %error, "Failed to read localhost address");
+                return;
+            }
+        };
 
-        tx.send(local_addr).unwrap();
+        if tx.send(local_addr).is_err() {
+            tracing::warn!("Failed to send localhost address to channel");
+            return;
+        }
 
-        Server::builder()
+        if let Err(error) = Server::builder()
             .add_service(svc)
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
-            .expect("Failed to run localhost server");
+        {
+            tracing::error!(error = %error, "Failed to run localhost server");
+        }
     });
 
     let addr = rx
@@ -199,7 +222,7 @@ mod tests {
     use steer_core::app::domain::action::Action;
     use steer_core::app::domain::types::OpId;
     use steer_core::config::model::ModelId;
-    use steer_core::session::state::SessionConfig;
+
     use steer_proto::agent::v1::{
         CompactSessionRequest, ExecuteBashCommandRequest, SendMessageRequest,
         SubscribeSessionEventsRequest, agent_service_client::AgentServiceClient,

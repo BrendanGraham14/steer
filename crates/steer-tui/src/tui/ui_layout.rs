@@ -15,13 +15,13 @@ use steer_grpc::client_api::ModelId;
 /// Computed layout areas for the UI
 pub struct UiLayout {
     /// The main chat area (includes border)
-    pub chat_area: Rect,
+    pub chat: Rect,
     /// The input panel area
-    pub input_area: Rect,
+    pub input: Rect,
     /// The status bar area
-    pub status_area: Rect,
+    pub status: Rect,
     /// The full terminal area
-    pub terminal_area: Rect,
+    pub terminal: Rect,
 }
 
 impl UiLayout {
@@ -38,22 +38,22 @@ impl UiLayout {
             .split(size);
 
         Self {
-            chat_area: chunks[0],
-            input_area: chunks[1],
-            status_area: chunks[2],
-            terminal_area: size,
+            chat: chunks[0],
+            input: chunks[1],
+            status: chunks[2],
+            terminal: size,
         }
     }
 
     /// Clear and prepare the background
     pub fn prepare_background(&self, f: &mut Frame, theme: &Theme) {
         // Clear the entire terminal area
-        f.render_widget(Clear, self.terminal_area);
+        f.render_widget(Clear, self.terminal);
 
         // Apply background color if theme has one
         if let Some(bg_color) = theme.get_background_color() {
             let background_block = Block::default().style(Style::default().bg(bg_color));
-            f.render_widget(background_block, self.terminal_area);
+            f.render_widget(background_block, self.terminal);
         }
     }
 
@@ -66,6 +66,6 @@ impl UiLayout {
         update_badge: crate::tui::widgets::status_bar::UpdateBadge,
     ) {
         let status_bar = StatusBar::new(current_model, theme).with_update_badge(update_badge);
-        f.render_widget(status_bar, self.status_area);
+        f.render_widget(status_bar, self.status);
     }
 }

@@ -19,7 +19,7 @@ impl WorkspaceLayout {
             .join(repo_id.as_uuid().to_string())
     }
 
-    pub(crate) fn sanitize_name(&self, name: &str) -> String {
+    pub(crate) fn sanitize_name(name: &str) -> String {
         let mut sanitized = String::new();
         for ch in name.chars() {
             if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
@@ -35,13 +35,13 @@ impl WorkspaceLayout {
         }
     }
 
-    pub(crate) fn default_workspace_name(&self, workspace_id: WorkspaceId) -> String {
+    pub(crate) fn default_workspace_name(workspace_id: WorkspaceId) -> String {
         let id = workspace_id.as_uuid().to_string();
         let short = id.split('-').next().unwrap_or("workspace");
         format!("ws-{short}")
     }
 
-    pub(crate) fn ensure_unique_path(&self, base_dir: &Path, name: &str) -> PathBuf {
+    pub(crate) fn ensure_unique_path(base_dir: &Path, name: &str) -> PathBuf {
         let mut candidate = base_dir.join(name);
         if !candidate.exists() {
             return candidate;
@@ -57,7 +57,7 @@ impl WorkspaceLayout {
         }
     }
 
-    pub(crate) fn default_workspace_name_for_path(&self, path: &Path) -> Option<String> {
+    pub(crate) fn default_workspace_name_for_path(path: &Path) -> Option<String> {
         path.file_name()
             .map(|name| name.to_string_lossy().to_string())
     }

@@ -10,7 +10,7 @@ mod textarea;
 
 pub use approval_prompt::ApprovalWidget;
 pub use fuzzy_state::FuzzyFinderHelper;
-pub use mode_title::ModeTitleWidget;
+pub use mode_title::{ModeTitleParams, ModeTitleWidget};
 pub use queued_preview::QueuedPreviewWidget;
 pub use textarea::TextAreaWidget;
 
@@ -305,6 +305,20 @@ impl InputPanelState {
 
 /// Properties for the [`InputPanel`] widget.
 #[derive(Clone, Copy, Debug)]
+pub struct InputPanelParams<'a> {
+    pub input_mode: InputMode,
+    pub current_approval: Option<&'a ToolCall>,
+    pub is_processing: bool,
+    pub spinner_state: usize,
+    pub is_editing: bool,
+    pub editing_preview: Option<&'a str>,
+    pub queued_count: usize,
+    pub queued_preview: Option<&'a str>,
+    pub theme: &'a Theme,
+}
+
+/// Properties for the [`InputPanel`] widget.
+#[derive(Clone, Copy, Debug)]
 pub struct InputPanel<'a> {
     pub input_mode: InputMode,
     pub current_approval: Option<&'a ToolCall>,
@@ -318,27 +332,17 @@ pub struct InputPanel<'a> {
 }
 
 impl<'a> InputPanel<'a> {
-    pub fn new(
-        input_mode: InputMode,
-        current_approval: Option<&'a ToolCall>,
-        is_processing: bool,
-        spinner_state: usize,
-        is_editing: bool,
-        editing_preview: Option<&'a str>,
-        theme: &'a Theme,
-        queued_count: usize,
-        queued_preview: Option<&'a str>,
-    ) -> Self {
+    pub fn new(params: InputPanelParams<'a>) -> Self {
         Self {
-            input_mode,
-            current_approval,
-            is_processing,
-            spinner_state,
-            is_editing,
-            editing_preview,
-            queued_count,
-            queued_preview,
-            theme,
+            input_mode: params.input_mode,
+            current_approval: params.current_approval,
+            is_processing: params.is_processing,
+            spinner_state: params.spinner_state,
+            is_editing: params.is_editing,
+            editing_preview: params.editing_preview,
+            queued_count: params.queued_count,
+            queued_preview: params.queued_preview,
+            theme: params.theme,
         }
     }
 }
@@ -352,16 +356,16 @@ impl StatefulWidget for InputPanel<'_> {
             return;
         }
 
-        let title = ModeTitleWidget::new(
-            self.input_mode,
-            self.is_processing,
-            self.spinner_state,
-            self.is_editing,
-            self.editing_preview,
-            self.theme,
-            state.has_content(),
-            self.queued_count,
-        )
+        let title = ModeTitleWidget::new(ModeTitleParams {
+            mode: self.input_mode,
+            is_processing: self.is_processing,
+            spinner_state: self.spinner_state,
+            is_editing: self.is_editing,
+            editing_preview: self.editing_preview,
+            theme: self.theme,
+            has_content: state.has_content(),
+            queued_count: self.queued_count,
+        })
         .render();
 
         let has_queue = self.queued_preview.is_some() || self.queued_count > 0;
@@ -384,7 +388,7 @@ impl StatefulWidget for InputPanel<'_> {
             QueuedPreviewWidget::new(self.queued_preview, self.theme).render(layout[0], buf);
         }
 
-        let input_area = if has_queue { layout[1] } else { area };
+        let input_rect = if has_queue { layout[1] } else { area };
         let block = Block::default()
             .borders(Borders::NONE)
             .padding(Padding::new(1, 1, 0, 1))
@@ -394,7 +398,7 @@ impl StatefulWidget for InputPanel<'_> {
             .with_block(block)
             .with_mode(self.input_mode)
             .with_editing(self.is_editing)
-            .render(input_area, buf);
+            .render(input_rect, buf);
     }
 }
 

@@ -12,12 +12,16 @@ impl FuzzyFinderHelper {
 
         // Add up all the bytes from lines before the cursor
         for (i, line) in lines.iter().enumerate() {
-            if i < cursor_row {
-                offset += line.len() + 1; // +1 for the newline
-            } else if i == cursor_row {
-                // For the cursor line, only count up to the cursor column
-                offset += line[..cursor_col.min(line.len())].len();
-                break;
+            match i.cmp(&cursor_row) {
+                std::cmp::Ordering::Less => {
+                    offset += line.len() + 1; // +1 for the newline
+                }
+                std::cmp::Ordering::Equal => {
+                    // For the cursor line, only count up to the cursor column
+                    offset += line[..cursor_col.min(line.len())].len();
+                    break;
+                }
+                std::cmp::Ordering::Greater => break,
             }
         }
 

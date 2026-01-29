@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use eyre::{Result, eyre};
+use std::io::Write;
 use tracing::info;
 
 use super::Command;
@@ -45,8 +46,9 @@ impl Command for ServeCommand {
             .map_err(|e| eyre!("Failed to start server: {}", e))?;
 
         info!("gRPC server started on {}", addr);
-        println!("Server listening on {addr}");
-        println!("Press Ctrl+C to shutdown");
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "Server listening on {addr}")?;
+        writeln!(stdout, "Press Ctrl+C to shutdown")?;
 
         // Wait for shutdown signal
         tokio::signal::ctrl_c().await?;

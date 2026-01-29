@@ -96,20 +96,18 @@ async fn handle_request(
     tx: Arc<mpsc::Sender<Result<CallbackResponse>>>,
     expected_state: &str,
     expected_path: &str,
-) -> std::result::Result<Response<String>, hyper::Error> {
+) -> std::result::Result<Response<String>, hyper::http::Error> {
     if req.method() != Method::GET {
-        return Ok(Response::builder()
+        return Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
-            .body("Method not allowed".to_string())
-            .unwrap());
+            .body("Method not allowed".to_string());
     }
 
     let path = req.uri().path();
     if path != expected_path {
-        return Ok(Response::builder()
+        return Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body("Not found".to_string())
-            .unwrap());
+            .body("Not found".to_string());
     }
 
     let query = req.uri().query().unwrap_or("");
@@ -120,7 +118,7 @@ async fn handle_request(
 
     if let Some(error) = params.get("error") {
         let _ = tx.send(Err(AuthError::Cancelled)).await;
-        return Ok(Response::builder()
+        return Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "text/html")
             .body(format!(
@@ -139,36 +137,30 @@ async fn handle_request(
     <p>You can close this window and return to the terminal.</p>
 </body>
 </html>"#
-            ))
-            .unwrap());
+            ));
     }
 
-    let code = params.get("code");
-    let state = params.get("state");
-
-    if code.is_none() || state.is_none() {
-        return Ok(Response::builder()
+    let (Some(code), Some(state)) = (params.get("code"), params.get("state")) else {
+        return Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body("Missing code or state".to_string())
-            .unwrap());
-    }
+            .body("Missing code or state".to_string());
+    };
 
-    if state.unwrap() != expected_state {
+    if state != expected_state {
         let _ = tx.send(Err(AuthError::StateMismatch)).await;
-        return Ok(Response::builder()
+        return Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body("State mismatch".to_string())
-            .unwrap());
+            .body("State mismatch".to_string());
     }
 
     let response = CallbackResponse {
-        code: code.unwrap().to_string(),
-        state: state.unwrap().to_string(),
+        code: code.clone(),
+        state: state.clone(),
     };
 
     let _ = tx.send(Ok(response)).await;
 
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/html")
         .body(
@@ -188,5 +180,4 @@ async fn handle_request(
 </html>"#
                 .to_string(),
         )
-        .unwrap())
 }

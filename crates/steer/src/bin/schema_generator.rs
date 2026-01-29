@@ -1,3 +1,5 @@
+#![allow(clippy::print_stdout)]
+
 use schemars::schema_for;
 use std::fs;
 use std::path::Path;

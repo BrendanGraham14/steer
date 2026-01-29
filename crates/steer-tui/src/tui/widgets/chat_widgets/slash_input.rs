@@ -39,7 +39,7 @@ impl ChatRenderable for SlashInputWidget {
             self.rendered_lines = Some(lines);
         }
 
-        self.rendered_lines.as_ref().unwrap()
+        self.rendered_lines.as_deref().unwrap_or(&[])
     }
 }
 

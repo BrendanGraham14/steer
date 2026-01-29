@@ -329,8 +329,8 @@ where
             Tag::FootnoteDefinition(_) => {}
             Tag::Table(_) => self.end_table(),
             Tag::TableHead => self.end_table_head(),
-            Tag::TableRow => self.end_table_row(),
-            Tag::TableCell => self.end_table_cell(),
+            Tag::TableRow => Self::end_table_row(),
+            Tag::TableCell => Self::end_table_cell(),
             Tag::Emphasis => self.pop_inline_style(),
             Tag::Strong => self.pop_inline_style(),
             Tag::Strikethrough => self.pop_inline_style(),
@@ -402,8 +402,7 @@ where
         }
 
         // Check if we're in a table cell
-        let in_table =
-            self.table_rows.last().is_some() && self.table_rows.last().unwrap().last().is_some();
+        let in_table = self.table_rows.last().and_then(|row| row.last()).is_some();
 
         if in_table {
             // If we're in a table, just add the text as a span to the current cell
@@ -424,8 +423,16 @@ where
                 self.code_block_language.is_some() && self.theme.syntax_theme.is_some();
 
             if use_highlighting {
-                let lang = self.code_block_language.as_ref().unwrap();
-                let syntax_theme = self.theme.syntax_theme.as_ref().unwrap();
+                let lang = if let Some(lang) = self.code_block_language.as_ref() {
+                    lang
+                } else {
+                    self.needs_newline = text.ends_with('\n');
+                    return;
+                };
+                let Some(syntax_theme) = self.theme.syntax_theme.as_ref() else {
+                    self.needs_newline = text.ends_with('\n');
+                    return;
+                };
 
                 // Find the syntax definition
                 let syntax = SYNTAX_SET
@@ -635,14 +642,24 @@ where
     #[instrument(level = "trace", skip(self))]
     fn push_span(&mut self, span: Span<'a>) {
         // Check if we're in a table cell first
-        let in_table =
-            self.table_rows.last().is_some() && self.table_rows.last().unwrap().last().is_some();
+        let in_table = self.table_rows.last().and_then(|row| row.last()).is_some();
 
         if in_table {
-            // We know we have a table row and cell, so we can safely unwrap
-            let current_row = self.table_rows.last_mut().unwrap();
-            let current_cell = current_row.last_mut().unwrap();
-            current_cell.push(span);
+            if let Some(current_row) = self.table_rows.last_mut() {
+                if let Some(current_cell) = current_row.last_mut() {
+                    current_cell.push(span);
+                } else if let Some(marked_line) = self.marked_text.lines.last_mut() {
+                    let static_span = Span::styled(span.content.into_owned(), span.style);
+                    marked_line.line.push_span(static_span);
+                } else {
+                    self.push_line(Line::from(vec![span]));
+                }
+            } else if let Some(marked_line) = self.marked_text.lines.last_mut() {
+                let static_span = Span::styled(span.content.into_owned(), span.style);
+                marked_line.line.push_span(static_span);
+            } else {
+                self.push_line(Line::from(vec![span]));
+            }
         } else if let Some(marked_line) = self.marked_text.lines.last_mut() {
             // Convert to owned span for 'static lifetime
             let static_span = Span::styled(span.content.into_owned(), span.style);
@@ -700,7 +717,7 @@ where
         self.table_rows.push(Vec::new());
     }
 
-    fn end_table_row(&mut self) {
+    fn end_table_row() {
         // Nothing to do here, row is already added
     }
 
@@ -711,7 +728,7 @@ where
         }
     }
 
-    fn end_table_cell(&mut self) {
+    fn end_table_cell() {
         // Nothing to do here, cell is already added
     }
 
@@ -767,7 +784,7 @@ where
                         .collect::<Vec<_>>()
                         .join("");
 
-                    let padded = self.align_text(
+                    let padded = Self::align_text(
                         &cell_text,
                         col_widths[col_idx],
                         self.table_alignments[col_idx],
@@ -815,7 +832,7 @@ where
     }
 
     /// Align text within a given width based on alignment
-    fn align_text(&self, text: &str, width: usize, alignment: pulldown_cmark::Alignment) -> String {
+    fn align_text(text: &str, width: usize, alignment: pulldown_cmark::Alignment) -> String {
         let text_len = text.width();
         // Total spaces needed = width - text_len
         // We already have 2 spaces in the format string (1 before, 1 after)

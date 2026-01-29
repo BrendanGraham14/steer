@@ -23,7 +23,7 @@ impl InFlightOperationWidget {
 impl ChatRenderable for InFlightOperationWidget {
     fn lines(&mut self, width: u16, _mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
         if self.rendered_lines.is_some() && self.cache.last_width == width {
-            return self.rendered_lines.as_ref().unwrap();
+            return self.rendered_lines.as_deref().unwrap_or(&[]);
         }
 
         // Note: The spinner character will be handled by the GutterWidget
@@ -32,7 +32,7 @@ impl ChatRenderable for InFlightOperationWidget {
             theme.style(Component::TodoInProgress),
         ));
         self.rendered_lines = Some(vec![line]);
-        self.rendered_lines.as_ref().unwrap()
+        self.rendered_lines.as_deref().unwrap_or(&[])
     }
 }
 

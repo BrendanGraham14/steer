@@ -24,7 +24,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 
 /// Create a test workspace with some files
 async fn setup_test_workspace() -> Result<(TempDir, PathBuf)> {
-    let temp_dir = TempDir::new().expect("Failed to create temporary directory");
+    let temp_dir = TempDir::new()?;
     let workspace_path = temp_dir.path().to_path_buf();
 
     // Create some test files
@@ -41,15 +41,13 @@ version = "0.1.0"
 edition = "2024"
 "#,
     )
-    .await
-    .expect("Failed to write Cargo.toml");
+    .await?;
 
     tokio::fs::write(
         workspace_path.join("README.md"),
         "# Test Project\n\nThis is a test project for fuzzy finder testing.\n",
     )
-    .await
-    .expect("Failed to write README.md");
+    .await?;
 
     tokio::fs::write(
         workspace_path.join("src/main.rs"),
@@ -58,8 +56,7 @@ edition = "2024"
 }
 "#,
     )
-    .await
-    .expect("Failed to write src/main.rs");
+    .await?;
 
     tokio::fs::write(
         workspace_path.join("src/lib.rs"),
@@ -96,12 +93,10 @@ fn test_something() {
     Ok((temp_dir, workspace_path))
 }
 
-fn unused_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind to ephemeral port")
-        .local_addr()
-        .expect("local addr")
-        .port()
+fn unused_port() -> Result<u16> {
+    Ok(std::net::TcpListener::bind("127.0.0.1:0")?
+        .local_addr()?
+        .port())
 }
 
 #[tokio::test]
@@ -267,7 +262,7 @@ async fn test_tui_agent_service_file_listing() {
 }
 
 #[tokio::test]
-async fn test_tui_auth_flow_poll_no_input() {
+async fn test_tui_auth_flow_poll_no_input() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
     let (_temp_dir, workspace_path) = setup_test_workspace()
@@ -275,7 +270,7 @@ async fn test_tui_auth_flow_poll_no_input() {
         .expect("Failed to setup test workspace");
 
     let db_path = workspace_path.join("test_sessions_auth.db");
-    let bind_addr = format!("127.0.0.1:{}", unused_port()).parse().unwrap();
+    let bind_addr = format!("127.0.0.1:{}", unused_port()?).parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
         bind_addr,
@@ -318,19 +313,27 @@ async fn test_tui_auth_flow_poll_no_input() {
     assert!(!matches!(progress.state, Some(AuthProgressState::Error(_))));
 
     service_host.shutdown().await.unwrap();
+    Ok(())
 }
 
 async fn wait_for_mcp_event(
     event_rx: &mut tokio::sync::mpsc::Receiver<ClientEvent>,
     server_name: &str,
-) {
+) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let event = timeout_at(deadline, event_rx.recv())
-            .await
-            .expect("timed out waiting for MCP state event");
+        let event = timeout_at(deadline, event_rx.recv()).await.map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out waiting for MCP state event",
+            )
+        })?;
         let Some(event) = event else {
-            panic!("event stream closed before receiving MCP state event");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "event stream closed before receiving MCP state event",
+            )
+            .into());
         };
 
         if let ClientEvent::McpServerStateChanged {
@@ -338,20 +341,20 @@ async fn wait_for_mcp_event(
         } = event
         {
             if name == server_name {
-                return;
+                return Ok(());
             }
         }
     }
 }
 
 #[tokio::test]
-async fn test_agent_client_resubscribes_events_on_session_switch() {
+async fn test_agent_client_resubscribes_events_on_session_switch() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
     let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
 
     let db_path = workspace_path.join("test_sessions_resubscribe.db");
-    let bind_addr = format!("127.0.0.1:{}", unused_port()).parse().unwrap();
+    let bind_addr = format!("127.0.0.1:{}", unused_port()?).parse().unwrap();
     let config = ServiceHostConfig {
         db_path,
         bind_addr,
@@ -385,7 +388,7 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
 
     let first_session_id = client.create_session(session_params).await.unwrap();
     client.subscribe_session_events().await.unwrap();
-    let mut event_rx = client.subscribe_client_events().await;
+    let mut event_rx = client.subscribe_client_events().await.unwrap();
 
     let first_session = SessionId::parse(&first_session_id).expect("valid session id");
     service_host
@@ -400,7 +403,7 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
         )
         .await
         .unwrap();
-    wait_for_mcp_event(&mut event_rx, "test-mcp-1").await;
+    wait_for_mcp_event(&mut event_rx, "test-mcp-1").await?;
 
     let session_params = CreateSessionParams {
         workspace: ClientWorkspaceConfig::Local {
@@ -431,12 +434,13 @@ async fn test_agent_client_resubscribes_events_on_session_switch() {
         )
         .await
         .unwrap();
-    wait_for_mcp_event(&mut event_rx, "test-mcp-2").await;
+    wait_for_mcp_event(&mut event_rx, "test-mcp-2").await?;
 
     drop(event_rx);
     client.shutdown().await;
 
     service_host.shutdown().await.unwrap();
+    Ok(())
 }
 
 #[tokio::test]

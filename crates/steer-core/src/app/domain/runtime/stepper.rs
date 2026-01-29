@@ -68,7 +68,7 @@ pub enum AgentOutput {
     CallModel {
         model: ModelId,
         messages: Vec<Message>,
-        system_context: Option<SystemContext>,
+        system_context: Box<Option<SystemContext>>,
         tools: Vec<ToolSchema>,
     },
     RequestApproval {
@@ -128,7 +128,7 @@ impl AgentStepper {
                     message_id,
                     timestamp,
                 },
-            ) => self.handle_model_response(messages, content, tool_calls, message_id, timestamp),
+            ) => Self::handle_model_response(messages, content, tool_calls, message_id, timestamp),
 
             (AgentState::AwaitingModel { .. }, AgentInput::ModelError { error }) => (
                 AgentState::Failed {
@@ -145,7 +145,7 @@ impl AgentStepper {
                     denied,
                 },
                 AgentInput::ToolApproved { tool_call_id },
-            ) => self.handle_tool_approved(
+            ) => Self::handle_tool_approved(
                 messages,
                 pending_approvals,
                 approved,
@@ -161,9 +161,13 @@ impl AgentStepper {
                     denied,
                 },
                 AgentInput::ToolDenied { tool_call_id },
-            ) => {
-                self.handle_tool_denied(messages, pending_approvals, approved, denied, tool_call_id)
-            }
+            ) => Self::handle_tool_denied(
+                messages,
+                pending_approvals,
+                approved,
+                denied,
+                tool_call_id,
+            ),
 
             (
                 AgentState::AwaitingToolResults {
@@ -213,14 +217,13 @@ impl AgentStepper {
                 error,
             ),
 
-            (state, AgentInput::Cancel) => self.handle_cancel(state),
+            (state, AgentInput::Cancel) => Self::handle_cancel(state),
 
             (state, _) => (state, vec![]),
         }
     }
 
     fn handle_model_response(
-        &self,
         mut messages: Vec<Message>,
         content: Vec<AssistantContent>,
         tool_calls: Vec<ToolCall>,
@@ -276,7 +279,6 @@ impl AgentStepper {
     }
 
     fn handle_tool_approved(
-        &self,
         messages: Vec<Message>,
         mut pending_approvals: Vec<ToolCall>,
         mut approved: Vec<ToolCall>,
@@ -324,7 +326,6 @@ impl AgentStepper {
     }
 
     fn handle_tool_denied(
-        &self,
         mut messages: Vec<Message>,
         mut pending_approvals: Vec<ToolCall>,
         approved: Vec<ToolCall>,
@@ -338,7 +339,7 @@ impl AgentStepper {
             .position(|tc| tc.id == tool_call_id.0)
         {
             let tool_call = pending_approvals.remove(pos);
-            self.emit_tool_error_message(
+            Self::emit_tool_error_message(
                 &mut messages,
                 &mut outputs,
                 &tool_call,
@@ -389,7 +390,6 @@ impl AgentStepper {
     }
 
     fn emit_tool_error_message(
-        &self,
         messages: &mut Vec<Message>,
         outputs: &mut Vec<AgentOutput>,
         tool_call: &ToolCall,
@@ -448,7 +448,7 @@ impl AgentStepper {
             outputs.push(AgentOutput::CallModel {
                 model: self.config.model.clone(),
                 messages: context.messages.clone(),
-                system_context: self.config.system_context.clone(),
+                system_context: Box::new(self.config.system_context.clone()),
                 tools: self.config.tools.clone(),
             });
 
@@ -479,7 +479,7 @@ impl AgentStepper {
         self.handle_tool_completed(context, result)
     }
 
-    fn handle_cancel(&self, state: AgentState) -> (AgentState, Vec<AgentOutput>) {
+    fn handle_cancel(state: AgentState) -> (AgentState, Vec<AgentOutput>) {
         let mut outputs = Vec::new();
 
         match state {
@@ -490,7 +490,7 @@ impl AgentStepper {
                 denied: _,
             } => {
                 for tool_call in pending_approvals.into_iter().chain(approved.into_iter()) {
-                    self.emit_tool_error_message(
+                    Self::emit_tool_error_message(
                         &mut messages,
                         &mut outputs,
                         &tool_call,
@@ -504,7 +504,7 @@ impl AgentStepper {
                 completed_results: _,
             } => {
                 for (_, tool_call) in pending_results {
-                    self.emit_tool_error_message(
+                    Self::emit_tool_error_message(
                         &mut messages,
                         &mut outputs,
                         &tool_call,

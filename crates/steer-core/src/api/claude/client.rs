@@ -792,12 +792,16 @@ pub enum ClaudeContentBlock {
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 struct ClaudeUsage {
-    input_tokens: usize,
-    output_tokens: usize,
+    #[serde(rename = "input_tokens")]
+    input: usize,
+    #[serde(rename = "output_tokens")]
+    output: usize,
+    #[serde(rename = "cache_creation_input_tokens")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    cache_creation_input_tokens: Option<usize>,
+    cache_creation_input: Option<usize>,
+    #[serde(rename = "cache_read_input_tokens")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    cache_read_input_tokens: Option<usize>,
+    cache_read_input: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -884,25 +888,25 @@ struct ClaudeStreamError {
 }
 
 impl AnthropicClient {
-    pub fn new(api_key: &str) -> Self {
+    pub fn new(api_key: &str) -> Result<Self, ApiError> {
         Self::with_api_key(api_key)
     }
 
-    pub fn with_api_key(api_key: &str) -> Self {
-        Self {
-            http_client: Self::build_http_client(),
+    pub fn with_api_key(api_key: &str) -> Result<Self, ApiError> {
+        Ok(Self {
+            http_client: Self::build_http_client()?,
             auth: AuthMode::ApiKey(api_key.to_string()),
-        }
+        })
     }
 
-    pub fn with_directive(directive: AnthropicAuth) -> Self {
-        Self {
-            http_client: Self::build_http_client(),
+    pub fn with_directive(directive: AnthropicAuth) -> Result<Self, ApiError> {
+        Ok(Self {
+            http_client: Self::build_http_client()?,
             auth: AuthMode::Directive(directive),
-        }
+        })
     }
 
-    fn build_http_client() -> reqwest::Client {
+    fn build_http_client() -> Result<reqwest::Client, ApiError> {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             "anthropic-version",
@@ -916,7 +920,7 @@ impl AnthropicClient {
         reqwest::Client::builder()
             .default_headers(headers)
             .build()
-            .expect("Failed to build HTTP client")
+            .map_err(ApiError::Network)
     }
 
     async fn auth_headers(
@@ -960,24 +964,25 @@ impl AnthropicClient {
             .map_err(|e| ApiError::AuthError(e.to_string()))
     }
 
-    fn request_url(&self) -> String {
+    fn request_url(&self) -> Result<String, ApiError> {
         let AuthMode::Directive(directive) = &self.auth else {
-            return API_URL.to_string();
+            return Ok(API_URL.to_string());
         };
 
         let Some(query_params) = &directive.query_params else {
-            return API_URL.to_string();
+            return Ok(API_URL.to_string());
         };
 
         if query_params.is_empty() {
-            return API_URL.to_string();
+            return Ok(API_URL.to_string());
         }
 
-        let mut url = url::Url::parse(API_URL).expect("API_URL is valid");
+        let mut url = url::Url::parse(API_URL)
+            .map_err(|e| ApiError::Configuration(format!("Invalid API_URL '{API_URL}': {e}")))?;
         for param in query_params {
             url.query_pairs_mut().append_pair(&param.name, &param.value);
         }
-        url.to_string()
+        Ok(url.to_string())
     }
 }
 
@@ -993,7 +998,7 @@ fn convert_messages(messages: Vec<AppMessage>) -> Result<Vec<ClaudeMessage>, Api
             .filter(|msg| {
                 match &msg.content {
                     ClaudeMessageContent::Text { content } => !content.trim().is_empty(),
-                    _ => true, // Keep all non-text messages
+                    ClaudeMessageContent::StructuredContent { .. } => true, // Keep all non-text messages
                 }
             })
             .collect()
@@ -1248,7 +1253,12 @@ impl Provider for AnthropicClient {
             });
         }
 
-        let last_message = claude_messages.last_mut().unwrap();
+        let last_message = claude_messages
+            .last_mut()
+            .ok_or_else(|| ApiError::InvalidRequest {
+                provider: self.name().to_string(),
+                details: "No messages provided".to_string(),
+            })?;
         let cache_setting = Some(CacheControl {
             cache_type: "ephemeral".to_string(),
         });
@@ -1264,7 +1274,7 @@ impl Provider for AnthropicClient {
             ClaudeMessageContent::StructuredContent { content } => {
                 for block in &mut content.0 {
                     if let ClaudeContentBlock::ToolResult { cache_control, .. } = block {
-                        *cache_control = cache_setting.clone();
+                        cache_control.clone_from(&cache_setting);
                     }
                 }
             }
@@ -1341,7 +1351,7 @@ impl Provider for AnthropicClient {
 
         loop {
             let auth_headers = self.auth_headers(auth_ctx.clone()).await?;
-            let url = self.request_url();
+            let url = self.request_url()?;
             let mut request_builder = self.http_client.post(&url).json(&request);
 
             for (name, value) in auth_headers {
@@ -1466,7 +1476,12 @@ impl Provider for AnthropicClient {
             });
         }
 
-        let last_message = claude_messages.last_mut().unwrap();
+        let last_message = claude_messages
+            .last_mut()
+            .ok_or_else(|| ApiError::InvalidRequest {
+                provider: self.name().to_string(),
+                details: "No messages provided".to_string(),
+            })?;
         let cache_setting = Some(CacheControl {
             cache_type: "ephemeral".to_string(),
         });
@@ -1482,7 +1497,7 @@ impl Provider for AnthropicClient {
             ClaudeMessageContent::StructuredContent { content } => {
                 for block in &mut content.0 {
                     if let ClaudeContentBlock::ToolResult { cache_control, .. } = block {
-                        *cache_control = cache_setting.clone();
+                        cache_control.clone_from(&cache_setting);
                     }
                 }
             }
@@ -1557,7 +1572,7 @@ impl Provider for AnthropicClient {
 
         loop {
             let auth_headers = self.auth_headers(auth_ctx.clone()).await?;
-            let url = self.request_url();
+            let url = self.request_url()?;
             let mut request_builder = self.http_client.post(&url).json(&request);
 
             for (name, value) in auth_headers {

@@ -44,8 +44,7 @@ pub fn init_tracing() -> io::Result<()> {
             )
             .with(filter);
 
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("Failed to set global default subscriber");
+        tracing::subscriber::set_global_default(subscriber).map_err(io::Error::other)?;
 
         tracing::debug!(
             target: "steer_core::utils::tracing",
@@ -58,8 +57,7 @@ pub fn init_tracing() -> io::Result<()> {
             .with(fmt::Layer::default().with_ansi(true).with_target(true))
             .with(filter);
 
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("Failed to set global default subscriber");
+        tracing::subscriber::set_global_default(subscriber).map_err(io::Error::other)?;
 
         tracing::debug!(
             target: "steer_core::utils::tracing",

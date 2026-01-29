@@ -49,7 +49,13 @@ struct ProviderEntry {
 impl Client {
     /// Remove a cached provider so that future calls re-create it with fresh credentials.
     fn invalidate_provider(&self, provider_id: &ProviderId) {
-        let mut map = self.provider_map.write().unwrap();
+        let Ok(mut map) = self.provider_map.write() else {
+            warn!(
+                target: "api::client",
+                "Provider cache lock poisoned while invalidating provider"
+            );
+            return;
+        };
         map.remove(provider_id);
     }
 
@@ -81,20 +87,33 @@ impl Client {
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insert_test_provider(&self, provider_id: ProviderId, provider: Arc<dyn Provider>) {
-        let mut map = self.provider_map.write().unwrap();
-        map.insert(
-            provider_id,
-            ProviderEntry {
-                provider,
-                auth_source: AuthSource::None,
-            },
-        );
+        match self.provider_map.write() {
+            Ok(mut map) => {
+                map.insert(
+                    provider_id,
+                    ProviderEntry {
+                        provider,
+                        auth_source: AuthSource::None,
+                    },
+                );
+            }
+            Err(_) => {
+                warn!(
+                    target: "api::client",
+                    "Provider cache lock poisoned while inserting test provider"
+                );
+            }
+        }
     }
 
     async fn get_or_create_provider_entry(&self, provider_id: ProviderId) -> Result<ProviderEntry> {
         // First check without holding the lock across await
         {
-            let map = self.provider_map.read().unwrap();
+            let map = self.provider_map.read().map_err(|_| {
+                crate::error::Error::Api(ApiError::Configuration(
+                    "Provider cache lock poisoned".to_string(),
+                ))
+            })?;
             if let Some(entry) = map.get(&provider_id) {
                 return Ok(entry.clone());
             }
@@ -113,23 +132,24 @@ impl Client {
             .await?;
 
         // Now acquire write lock and create provider
-        let mut map = self.provider_map.write().unwrap();
+        let mut map = self.provider_map.write().map_err(|_| {
+            crate::error::Error::Api(ApiError::Configuration(
+                "Provider cache lock poisoned".to_string(),
+            ))
+        })?;
 
         // Check again in case another thread added it
         if let Some(entry) = map.get(&provider_id) {
             return Ok(entry.clone());
         }
 
-        let entry = self
-            .build_provider_entry(provider_config, &resolved)
-            .map_err(crate::error::Error::Api)?;
+        let entry = Self::build_provider_entry(provider_config, &resolved)?;
 
         map.insert(provider_id, entry.clone());
         Ok(entry)
     }
 
     fn build_provider_entry(
-        &self,
         provider_config: &crate::config::provider::ProviderConfig,
         resolved: &ResolvedAuth,
     ) -> std::result::Result<ProviderEntry, ApiError> {
@@ -157,7 +177,7 @@ impl Client {
     async fn fallback_api_key_entry(
         &self,
         provider_id: &ProviderId,
-    ) -> Result<Option<ProviderEntry>> {
+    ) -> std::result::Result<Option<ProviderEntry>, ApiError> {
         let Some((key, origin)) = self
             .config_provider
             .resolve_api_key_for_provider(provider_id)
@@ -167,14 +187,13 @@ impl Client {
         };
 
         let provider_config = self.provider_registry.get(provider_id).ok_or_else(|| {
-            crate::error::Error::Api(ApiError::Configuration(format!(
+            ApiError::Configuration(format!(
                 "No provider configuration found for {provider_id:?}"
-            )))
+            ))
         })?;
 
         let credential = Credential::ApiKey { value: key };
-        let provider = factory::create_provider(provider_config, &credential)
-            .map_err(crate::error::Error::Api)?;
+        let provider = factory::create_provider(provider_config, &credential)?;
 
         Ok(Some(ProviderEntry {
             provider,
@@ -239,17 +258,15 @@ impl Client {
                 self.invalidate_provider(&provider_id);
 
                 if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
-                    if let Some(fallback) = self
-                        .fallback_api_key_entry(&provider_id)
-                        .await
-                        .map_err(ApiError::from)?
-                    {
+                    if let Some(fallback) = self.fallback_api_key_entry(&provider_id).await? {
                         let fallback_result = fallback
                             .provider
                             .complete(model_id, messages, system, tools, effective_params, token)
                             .await;
                         if fallback_result.is_ok() {
-                            let mut map = self.provider_map.write().unwrap();
+                            let mut map = self.provider_map.write().map_err(|_| {
+                                ApiError::Configuration("Provider cache lock poisoned".to_string())
+                            })?;
                             map.insert(provider_id, fallback);
                         }
                         return fallback_result;
@@ -316,11 +333,7 @@ impl Client {
                     self.invalidate_provider(&provider_id);
 
                     if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
-                        if let Some(fallback) = self
-                            .fallback_api_key_entry(&provider_id)
-                            .await
-                            .map_err(ApiError::from)?
-                        {
+                        if let Some(fallback) = self.fallback_api_key_entry(&provider_id).await? {
                             let fallback_provider = fallback.provider.clone();
                             let fallback_stream = fallback_provider
                                 .stream_complete(
@@ -332,7 +345,9 @@ impl Client {
                                     token.clone(),
                                 )
                                 .await?;
-                            let mut map = self.provider_map.write().unwrap();
+                            let mut map = self.provider_map.write().map_err(|_| {
+                                ApiError::Configuration("Provider cache lock poisoned".to_string())
+                            })?;
                             map.insert(provider_id, fallback);
                             (fallback_stream, fallback_provider)
                         } else {
@@ -489,10 +504,8 @@ impl Client {
                     if Self::should_invalidate_provider(&error) {
                         self.invalidate_provider(&provider_id);
                         if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
-                            if let Some(fallback) = self
-                                .fallback_api_key_entry(&provider_id)
-                                .await
-                                .map_err(ApiError::from)?
+                            if let Some(fallback) =
+                                self.fallback_api_key_entry(&provider_id).await?
                             {
                                 let fallback_result = fallback
                                     .provider
@@ -506,7 +519,11 @@ impl Client {
                                     )
                                     .await;
                                 if fallback_result.is_ok() {
-                                    let mut map = self.provider_map.write().unwrap();
+                                    let mut map = self.provider_map.write().map_err(|_| {
+                                        ApiError::Configuration(
+                                            "Provider cache lock poisoned".to_string(),
+                                        )
+                                    })?;
                                     map.insert(provider_id.clone(), fallback);
                                 }
                                 return fallback_result;
@@ -612,7 +629,7 @@ mod tests {
 
     fn test_client() -> Client {
         let auth_storage = Arc::new(crate::test_utils::InMemoryAuthStorage::new());
-        let config_provider = LlmConfigProvider::new(auth_storage).expect("config provider");
+        let config_provider = LlmConfigProvider::new(auth_storage).unwrap();
         let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
         let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
 

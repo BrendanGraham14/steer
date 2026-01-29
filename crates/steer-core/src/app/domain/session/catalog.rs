@@ -15,6 +15,9 @@ pub enum SessionCatalogError {
 
     #[error("Serialization error: {message}")]
     Serialization { message: String },
+
+    #[error("In-memory catalog lock poisoned: {message}")]
+    LockPoisoned { message: String },
 }
 
 impl SessionCatalogError {
@@ -26,6 +29,12 @@ impl SessionCatalogError {
 
     pub fn serialization(message: impl Into<String>) -> Self {
         Self::Serialization {
+            message: message.into(),
+        }
+    }
+
+    pub fn lock_poisoned(message: impl Into<String>) -> Self {
+        Self::LockPoisoned {
             message: message.into(),
         }
     }

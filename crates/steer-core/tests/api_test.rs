@@ -19,8 +19,25 @@ use steer_tools::result::{ExternalResult, ToolResult};
 use steer_tools::tools::{DISPATCH_AGENT_TOOL_NAME, LS_TOOL_NAME, TODO_READ_TOOL_NAME};
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 use tempfile::TempDir;
+use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+type ApiTestResult<T> = Result<T, ApiTestError>;
+
+#[derive(Debug, Error)]
+enum ApiTestError {
+    #[error(transparent)]
+    Api(#[from] ApiError),
+    #[error("failed to create temp dir: {0}")]
+    TempDir(#[from] std::io::Error),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("missing expected {0}")]
+    Missing(&'static str),
+    #[error("unexpected dispatch_agent target")]
+    UnexpectedDispatchAgentTarget,
+}
 
 fn fresh_tool_use_id() -> String {
     format!("tool_use_{}", Uuid::new_v4())
@@ -55,9 +72,7 @@ async fn default_tool_schemas() -> Vec<Tool> {
     registry.available_schemas(Capabilities::all()).await
 }
 
-async fn run_api_with_tool_response(client: &Client, model: &ModelId) -> Result<(), ApiError> {
-    println!("Testing API with tool response for model: {model:?}");
-
+async fn run_api_with_tool_response(client: &Client, model: &ModelId) -> ApiTestResult<()> {
     let tool_use_id = fresh_tool_use_id();
     let ts1 = Message::current_timestamp();
     let ts2 = ts1 + 1;
@@ -115,12 +130,7 @@ async fn run_api_with_tool_response(client: &Client, model: &ModelId) -> Result<
 
     let response = client
         .complete(model, messages, None, None, None, CancellationToken::new())
-        .await;
-
-    let response = response.map_err(|e| {
-        eprintln!("API call failed for model {model:?}: {e:?}");
-        e
-    })?;
+        .await?;
 
     let final_text = response.extract_text();
     assert!(
@@ -132,16 +142,13 @@ async fn run_api_with_tool_response(client: &Client, model: &ModelId) -> Result<
         "Final response for model {model:?} should mention 'bar.rs', got: '{final_text}'"
     );
 
-    println!("Tool Response test for {model:?} passed successfully!");
     Ok(())
 }
 
 async fn run_api_with_cancelled_tool_execution(
     client: &Client,
     model: &ModelId,
-) -> Result<(), ApiError> {
-    println!("Testing cancelled tool execution for model: {model:?}");
-
+) -> ApiTestResult<()> {
     let tool_call_id = fresh_tool_use_id();
 
     let ts1 = Message::current_timestamp();
@@ -200,12 +207,7 @@ async fn run_api_with_cancelled_tool_execution(
 
     let response = client
         .complete(model, messages, None, None, None, CancellationToken::new())
-        .await;
-
-    let response = response.map_err(|e| {
-        eprintln!("API call failed for model {model:?} with cancelled tool: {e:?}");
-        e
-    })?;
+        .await?;
 
     let response_text = response.extract_text();
     assert!(
@@ -220,13 +222,10 @@ async fn run_api_with_cancelled_tool_execution(
         "Response for model {model:?} should address the Rust question, got: '{response_text}'"
     );
 
-    println!("Cancelled tool execution test for {model:?} passed successfully!");
     Ok(())
 }
 
-async fn run_streaming_basic(client: &Client, model: &ModelId) -> Result<(), ApiError> {
-    println!("Testing streaming API for model: {model:?}");
-
+async fn run_streaming_basic(client: &Client, model: &ModelId) -> ApiTestResult<()> {
     let timestamp = Message::current_timestamp();
     let messages = vec![Message {
         data: MessageData::User {
@@ -239,14 +238,9 @@ async fn run_streaming_basic(client: &Client, model: &ModelId) -> Result<(), Api
         parent_message_id: None,
     }];
 
-    let stream_result = client
+    let mut stream = client
         .stream_complete(model, messages, None, None, None, CancellationToken::new())
-        .await;
-
-    let mut stream = stream_result.map_err(|e| {
-        eprintln!("Streaming API call failed for model {model:?}: {e:?}");
-        e
-    })?;
+        .await?;
 
     let mut text_chunks = Vec::new();
     let mut got_complete = false;
@@ -255,23 +249,18 @@ async fn run_streaming_basic(client: &Client, model: &ModelId) -> Result<(), Api
     while let Some(chunk) = stream.next().await {
         match chunk {
             StreamChunk::TextDelta(text) => {
-                println!("{model:?} delta: {text}");
                 text_chunks.push(text);
             }
-            StreamChunk::ThinkingDelta(text) => {
-                println!("{model:?} thinking: {text}");
-            }
+            StreamChunk::ThinkingDelta(_) => {}
             StreamChunk::MessageComplete(response) => {
-                println!("{model:?} complete");
                 got_complete = true;
                 final_response = Some(response);
             }
             StreamChunk::Error(e) => {
-                eprintln!("{model:?} stream error: {e:?}");
-                return Err(ApiError::StreamError {
+                return Err(ApiTestError::Api(ApiError::StreamError {
                     provider: format!("{model:?}"),
                     details: format!("{e:?}"),
-                });
+                }));
             }
             _ => {}
         }
@@ -295,14 +284,11 @@ async fn run_streaming_basic(client: &Client, model: &ModelId) -> Result<(), Api
         "Response for model {model:?} should contain '4', got: '{final_text}'"
     );
 
-    println!("Streaming API test for {model:?} passed successfully!");
     Ok(())
 }
 
-async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> Result<(), ApiError> {
-    println!("Testing streaming API with tools for model: {model:?}");
-
-    let temp_dir = TempDir::new().unwrap();
+async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> ApiTestResult<()> {
+    let temp_dir = TempDir::new()?;
     let tools = default_tool_schemas().await;
     // Ensure both a nested-schema tool and a zero-arg tool remain present in streamed tool sets.
     assert!(
@@ -331,7 +317,7 @@ async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> Result<()
         parent_message_id: None,
     }];
 
-    let stream_result = client
+    let mut stream = client
         .stream_complete(
             model,
             messages,
@@ -340,12 +326,7 @@ async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> Result<()
             None,
             CancellationToken::new(),
         )
-        .await;
-
-    let mut stream = stream_result.map_err(|e| {
-        eprintln!("Streaming API call failed for model {model:?}: {e:?}");
-        e
-    })?;
+        .await?;
 
     let mut tool_starts = Vec::new();
     let mut tool_deltas = Vec::new();
@@ -355,27 +336,21 @@ async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> Result<()
     while let Some(chunk) = stream.next().await {
         match chunk {
             StreamChunk::ToolUseStart { id, name } => {
-                println!("{model:?} tool start: {name} (id: {id})");
                 tool_starts.push((id, name));
             }
             StreamChunk::ToolUseInputDelta { id, delta } => {
-                println!("{model:?} tool delta: {delta}");
                 tool_deltas.push((id, delta));
             }
-            StreamChunk::TextDelta(text) => {
-                println!("{model:?} text delta: {text}");
-            }
+            StreamChunk::TextDelta(_) => {}
             StreamChunk::MessageComplete(response) => {
-                println!("{model:?} complete");
                 got_complete = true;
                 final_response = Some(response);
             }
             StreamChunk::Error(e) => {
-                eprintln!("{model:?} stream error: {e:?}");
-                return Err(ApiError::StreamError {
+                return Err(ApiTestError::Api(ApiError::StreamError {
                     provider: format!("{model:?}"),
                     details: format!("{e:?}"),
-                });
+                }));
             }
             _ => {}
         }
@@ -390,7 +365,7 @@ async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> Result<()
         "Should have received MessageComplete for model {model:?}"
     );
 
-    let response = final_response.expect("Should have final response");
+    let response = final_response.ok_or(ApiTestError::Missing("final response"))?;
     assert!(
         response.has_tool_calls(),
         "Final response for model {model:?} should contain tool calls"
@@ -401,13 +376,10 @@ async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> Result<()
         "Should have an ls tool call for model {model:?}"
     );
 
-    println!("Streaming API with tools test for {model:?} passed successfully!");
     Ok(())
 }
 
-async fn run_streaming_with_reasoning(client: &Client, model: &ModelId) -> Result<(), ApiError> {
-    println!("Testing streaming API with reasoning for model: {model:?}");
-
+async fn run_streaming_with_reasoning(client: &Client, model: &ModelId) -> ApiTestResult<()> {
     let timestamp = Message::current_timestamp();
     let messages = vec![Message {
         data: MessageData::User {
@@ -421,14 +393,9 @@ async fn run_streaming_with_reasoning(client: &Client, model: &ModelId) -> Resul
         parent_message_id: None,
     }];
 
-    let stream_result = client
+    let mut stream = client
         .stream_complete(model, messages, None, None, None, CancellationToken::new())
-        .await;
-
-    let mut stream = stream_result.map_err(|e| {
-        eprintln!("Streaming API call failed for model {model:?}: {e:?}");
-        e
-    })?;
+        .await?;
 
     let mut thinking_chunks = Vec::new();
     let mut text_chunks = Vec::new();
@@ -437,26 +404,19 @@ async fn run_streaming_with_reasoning(client: &Client, model: &ModelId) -> Resul
     while let Some(chunk) = stream.next().await {
         match chunk {
             StreamChunk::ThinkingDelta(text) => {
-                println!(
-                    "{model:?} thinking: {}",
-                    text.chars().take(50).collect::<String>()
-                );
                 thinking_chunks.push(text);
             }
             StreamChunk::TextDelta(text) => {
-                println!("{model:?} text delta: {text}");
                 text_chunks.push(text);
             }
             StreamChunk::MessageComplete(_) => {
-                println!("{model:?} complete");
                 got_complete = true;
             }
             StreamChunk::Error(e) => {
-                eprintln!("{model:?} stream error: {e:?}");
-                return Err(ApiError::StreamError {
+                return Err(ApiTestError::Api(ApiError::StreamError {
                     provider: format!("{model:?}"),
                     details: format!("{e:?}"),
-                });
+                }));
             }
             _ => {}
         }
@@ -472,20 +432,13 @@ async fn run_streaming_with_reasoning(client: &Client, model: &ModelId) -> Resul
         "Should have received thinking or text content for model {model:?}"
     );
 
-    println!(
-        "Streaming with reasoning test for {model:?} passed! Thinking chunks: {}, Text chunks: {}",
-        thinking_chunks.len(),
-        text_chunks.len()
-    );
     Ok(())
 }
 
 async fn run_api_with_dispatch_agent_tool_call(
     client: &Client,
     model: &ModelId,
-) -> Result<(), ApiError> {
-    println!("Testing dispatch_agent tool call for model: {model:?}");
-
+) -> ApiTestResult<()> {
     let tools = default_tool_schemas().await;
     let timestamp = Message::current_timestamp();
     let messages = vec![Message {
@@ -508,12 +461,7 @@ async fn run_api_with_dispatch_agent_tool_call(
             None,
             CancellationToken::new(),
         )
-        .await;
-
-    let response = response.map_err(|e| {
-        eprintln!("API call failed for model {model:?} dispatch_agent test: {e:?}");
-        e
-    })?;
+        .await?;
 
     assert!(
         response.has_tool_calls(),
@@ -524,10 +472,9 @@ async fn run_api_with_dispatch_agent_tool_call(
         .extract_tool_calls()
         .into_iter()
         .find(|tool_call| tool_call.name == DISPATCH_AGENT_TOOL_NAME)
-        .expect("Expected dispatch_agent tool call");
+        .ok_or(ApiTestError::Missing("dispatch_agent tool call"))?;
 
-    let params = serde_json::from_value::<DispatchAgentParams>(tool_call.parameters.clone())
-        .expect("dispatch_agent params");
+    let params = serde_json::from_value::<DispatchAgentParams>(tool_call.parameters.clone())?;
 
     assert_eq!(params.prompt, "find files");
 
@@ -540,11 +487,10 @@ async fn run_api_with_dispatch_agent_tool_call(
             );
         }
         DispatchAgentTarget::Resume { .. } => {
-            panic!("Expected new dispatch_agent target");
+            return Err(ApiTestError::UnexpectedDispatchAgentTarget);
         }
     }
 
-    println!("dispatch_agent tool call test for {model:?} passed successfully!");
     Ok(())
 }
 
@@ -588,7 +534,8 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
     let client = steer_core::api::openai::OpenAIClient::with_mode(
         api_key,
         steer_core::api::openai::OpenAIMode::Responses,
-    );
+    )
+    .expect("openai client");
 
     let tools = default_tool_schemas().await;
 
@@ -685,7 +632,7 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
 #[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
 #[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_api_with_tool_response(#[case] model: ModelId) {
     let client = test_client();
     run_api_with_tool_response(&client, &model)
@@ -699,7 +646,7 @@ async fn test_api_with_tool_response(#[case] model: ModelId) {
 #[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
 #[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_api_dispatch_agent_tool_call(#[case] model: ModelId) {
     let client = test_client();
     run_api_with_dispatch_agent_tool_call(&client, &model)
@@ -710,7 +657,7 @@ async fn test_api_dispatch_agent_tool_call(#[case] model: ModelId) {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_gemini_system_instructions() {
     dotenv().ok();
     let app_config = test_utils::test_app_config();
@@ -764,7 +711,7 @@ async fn test_gemini_system_instructions() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_gemini_api_tool_result_error() {
     dotenv().ok();
     let app_config = test_utils::test_app_config();
@@ -850,7 +797,7 @@ async fn test_gemini_api_tool_result_error() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_gemini_api_complex_tool_schema() {
     dotenv().ok();
     let app_config = test_utils::test_app_config();
@@ -938,7 +885,7 @@ async fn test_gemini_api_complex_tool_schema() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_gemini_api_tool_result_json() {
     dotenv().ok();
     let app_config = test_utils::test_app_config();
@@ -1025,7 +972,7 @@ async fn test_gemini_api_tool_result_json() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_gemini_api_with_multiple_tool_responses() {
     dotenv().ok();
     let app_config = test_utils::test_app_config();
@@ -1155,7 +1102,7 @@ async fn test_gemini_api_with_multiple_tool_responses() {
 #[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
 #[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_api_with_cancelled_tool_execution(#[case] model: ModelId) {
     let client = test_client();
     run_api_with_cancelled_tool_execution(&client, &model)
@@ -1169,7 +1116,7 @@ async fn test_api_with_cancelled_tool_execution(#[case] model: ModelId) {
 #[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
 #[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_api_streaming_basic(#[case] model: ModelId) {
     let client = test_client();
     run_streaming_basic(&client, &model)
@@ -1183,7 +1130,7 @@ async fn test_api_streaming_basic(#[case] model: ModelId) {
 #[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
 #[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_api_streaming_with_tools(#[case] model: ModelId) {
     let client = test_client();
     run_streaming_with_tools(&client, &model)
@@ -1195,7 +1142,7 @@ async fn test_api_streaming_with_tools(#[case] model: ModelId) {
 #[case::gpt_5_nano_2025_08_07(builtin::gpt_5_nano_2025_08_07())]
 #[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_api_streaming_with_reasoning(#[case] model: ModelId) {
     let client = test_client();
     run_streaming_with_reasoning(&client, &model)
@@ -1204,7 +1151,7 @@ async fn test_api_streaming_with_reasoning(#[case] model: ModelId) {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "requires external API credentials"]
 async fn test_api_streaming_cancellation() {
     dotenv().ok();
     let app_config = test_utils::test_app_config();

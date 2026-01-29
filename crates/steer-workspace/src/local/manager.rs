@@ -42,7 +42,7 @@ impl LocalWorkspaceManager {
         self.environment_id
     }
 
-    fn repo_id_for_path(&self, path: &Path) -> RepoId {
+    fn repo_id_for_path(path: &Path) -> RepoId {
         let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let uuid = Uuid::new_v5(&Uuid::NAMESPACE_URL, canonical.to_string_lossy().as_bytes());
         RepoId::from_uuid(uuid)
@@ -64,7 +64,7 @@ impl WorkspaceManager for LocalWorkspaceManager {
 
                 let (workspace, _repo) = jj::load_jj_workspace(&workspace_root)?;
                 let repo_path = workspace.repo_path().to_path_buf();
-                let repo_id = self.repo_id_for_path(&repo_path);
+                let repo_id = Self::repo_id_for_path(&repo_path);
 
                 let repo_info = if let Some(existing) = self.registry.fetch_repo(repo_id).await? {
                     existing
@@ -117,7 +117,7 @@ impl WorkspaceManager for LocalWorkspaceManager {
                     environment_id: self.environment_id,
                     repo_id: repo_info.repo_id,
                     parent_workspace_id: None,
-                    name: self.layout.default_workspace_name_for_path(&workspace_root),
+                    name: WorkspaceLayout::default_workspace_name_for_path(&workspace_root),
                     path: workspace_root,
                 };
                 self.registry.insert_workspace(&info).await?;
@@ -153,12 +153,12 @@ impl WorkspaceManager for LocalWorkspaceManager {
                 let workspace_id = WorkspaceId::new();
                 let requested_name = request
                     .name
-                    .unwrap_or_else(|| self.layout.default_workspace_name(workspace_id));
-                let jj_name = self.layout.sanitize_name(&requested_name);
+                    .unwrap_or_else(|| WorkspaceLayout::default_workspace_name(workspace_id));
+                let jj_name = WorkspaceLayout::sanitize_name(&requested_name);
 
                 let parent_dir = self.layout.workspace_parent_dir(repo_info.repo_id);
                 std::fs::create_dir_all(&parent_dir)?;
-                let workspace_path = self.layout.ensure_unique_path(&parent_dir, &jj_name);
+                let workspace_path = WorkspaceLayout::ensure_unique_path(&parent_dir, &jj_name);
                 std::fs::create_dir_all(&workspace_path)?;
 
                 {
@@ -205,20 +205,15 @@ impl WorkspaceManager for LocalWorkspaceManager {
                 let workspace_id = WorkspaceId::new();
                 let requested_name = request
                     .name
-                    .unwrap_or_else(|| self.layout.default_workspace_name(workspace_id));
-                let sanitized_name = self.layout.sanitize_name(&requested_name);
+                    .unwrap_or_else(|| WorkspaceLayout::default_workspace_name(workspace_id));
+                let sanitized_name = WorkspaceLayout::sanitize_name(&requested_name);
                 let parent_dir = self.layout.workspace_parent_dir(repo_info.repo_id);
                 std::fs::create_dir_all(&parent_dir)?;
-                let workspace_path = self.layout.ensure_unique_path(&parent_dir, &sanitized_name);
-                let names = git::worktree_names(
-                    &self.layout,
-                    workspace_id,
-                    &sanitized_name,
-                    &workspace_path,
-                );
+                let workspace_path =
+                    WorkspaceLayout::ensure_unique_path(&parent_dir, &sanitized_name);
+                let names = git::worktree_names(workspace_id, &sanitized_name, &workspace_path);
 
                 git::create_worktree(
-                    &self.layout,
                     &repo_info.root_path,
                     &workspace_path,
                     &names.worktree_name,
@@ -415,7 +410,7 @@ impl crate::manager::RepoManager for LocalWorkspaceManager {
                 let workspace_root = vcs_info.root;
                 let (workspace, _repo) = jj::load_jj_workspace(&workspace_root)?;
                 let repo_path = workspace.repo_path().to_path_buf();
-                let repo_id = self.repo_id_for_path(&repo_path);
+                let repo_id = Self::repo_id_for_path(&repo_path);
                 if let Some(existing) = self.registry.fetch_repo(repo_id).await? {
                     return Ok(existing);
                 }

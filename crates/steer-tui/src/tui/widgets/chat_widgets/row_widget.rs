@@ -232,7 +232,7 @@ impl ChatRenderable for RowWidget {
         self.last_theme_name = theme_key;
         self.last_body_fingerprint = body_fp;
         self.cached_lines = Some(lines);
-        self.cached_lines.as_ref().unwrap()
+        self.cached_lines.as_deref().unwrap_or(&[])
     }
 }
 
@@ -265,7 +265,7 @@ mod tests {
         let mut row = RowWidget::new(Box::new(message_widget)).with_accent(accent_style);
 
         let backend = TestBackend::new(30, 5);
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::new(backend).expect("create test terminal");
 
         let area = Rect::new(0, 0, 30, 2);
         terminal
@@ -274,7 +274,7 @@ mod tests {
                 let para = ratatui::widgets::Paragraph::new(lines.to_vec());
                 f.render_widget(para, area);
             })
-            .unwrap();
+            .expect("draw row widget");
 
         let buffer = terminal.backend().buffer();
         let buffer_lines = buffer.content.chunks(buffer.area.width as usize);
