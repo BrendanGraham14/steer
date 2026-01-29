@@ -1,4 +1,13 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn path_to_str(path: &Path) -> Result<&str, std::io::Error> {
+    path.to_str().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("path is not valid UTF-8: {}", path.display()),
+        )
+    })
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use vendored protoc to avoid requiring users to install it
@@ -17,17 +26,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let remote_workspace_proto = proto_dir.join("steer/remote_workspace/v1/remote_workspace.proto");
     let common_proto = proto_dir.join("steer/common/v1/common.proto");
 
+    let proto_dir_str = path_to_str(&proto_dir)?;
+    let agent_proto_str = path_to_str(&agent_proto)?;
+    let remote_workspace_proto_str = path_to_str(&remote_workspace_proto)?;
+    let common_proto_str = path_to_str(&common_proto)?;
+
     let mut config = prost_build::Config::new();
     config.protoc_executable(protoc.clone());
     tonic_build::configure()
         .build_server(false)
         .build_client(false)
         .type_attribute(".", "#[allow(clippy::large_enum_variant)]")
-        .compile_protos_with_config(
-            config,
-            &[common_proto.to_str().unwrap()],
-            &[proto_dir.to_str().unwrap()],
-        )?;
+        .compile_protos_with_config(config, &[common_proto_str], &[proto_dir_str])?;
 
     let mut config = prost_build::Config::new();
     config.protoc_executable(protoc.clone());
@@ -37,11 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute(".", "#[allow(clippy::large_enum_variant)]")
         .compile_protos_with_config(
             config,
-            &[
-                agent_proto.to_str().unwrap(),
-                remote_workspace_proto.to_str().unwrap(),
-            ],
-            &[proto_dir.to_str().unwrap()],
+            &[agent_proto_str, remote_workspace_proto_str],
+            &[proto_dir_str],
         )?;
 
     Ok(())

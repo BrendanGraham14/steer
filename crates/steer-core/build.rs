@@ -5,22 +5,22 @@ use std::path::Path;
 // Include the shared types directly in the build script
 include!("src/config/toml_types.rs");
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=assets/default_catalog.toml");
 
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_dir = env::var("OUT_DIR")?;
     let dest_path = Path::new(&out_dir);
 
     // Load unified catalog
     let toml_content = include_str!("assets/default_catalog.toml");
-    let catalog: Catalog =
-        toml::from_str(toml_content).expect("Failed to parse default_catalog.toml");
+    let catalog: Catalog = toml::from_str(toml_content)?;
 
-    generate_provider_constants(dest_path, &catalog.providers);
-    generate_model_constants(dest_path, &catalog.models);
+    generate_provider_constants(dest_path, &catalog.providers)?;
+    generate_model_constants(dest_path, &catalog.models)?;
+    Ok(())
 }
 
-fn generate_provider_constants(out_dir: &Path, providers: &[ProviderData]) {
+fn generate_provider_constants(out_dir: &Path, providers: &[ProviderData]) -> std::io::Result<()> {
     let mut output = String::new();
     output.push_str("// Generated provider constants from default_catalog.toml\n\n");
 
@@ -39,10 +39,11 @@ fn generate_provider_constants(out_dir: &Path, providers: &[ProviderData]) {
     }
 
     let dest_file = out_dir.join("generated_provider_ids.rs");
-    fs::write(&dest_file, output).expect("Failed to write generated_provider_ids.rs");
+    fs::write(&dest_file, output)?;
+    Ok(())
 }
 
-fn generate_model_constants(out_dir: &Path, models: &[ModelData]) {
+fn generate_model_constants(out_dir: &Path, models: &[ModelData]) -> std::io::Result<()> {
     let mut output = String::new();
     output.push_str("// Generated model constants from default_catalog.toml\n");
     output.push_str("use crate::config::provider::*;\n");
@@ -76,5 +77,6 @@ fn generate_model_constants(out_dir: &Path, models: &[ModelData]) {
         .push_str("\n// Default model\n#[inline]\npub fn default_model() -> ModelId { codex() }\n");
 
     let dest_file = out_dir.join("generated_model_ids.rs");
-    fs::write(&dest_file, output).expect("Failed to write generated_model_ids.rs");
+    fs::write(&dest_file, output)?;
+    Ok(())
 }
