@@ -1,24 +1,18 @@
+# Dev Environment
+This repo includes `flake.nix`. If commands fail due to missing dependencies, rerun them inside the Nix devshell, e.g. `nix develop -c <command>`.
+
 # Commands
-
-**IMPORTANT**: All build, test, and development commands MUST be run inside `nix develop` to ensure the correct toolchain and dependencies are available.
-
-```bash
-nix develop --command just check
-nix develop --command just test
-nix develop --command just build
-
-# For multiple commands
-nix develop --command sh -c "just check && just test"
-```
-
-This ensures the Nix environment is properly loaded without requiring an interactive shell session.
 
 ## When to use which command
 
-- **`just check`** - Fast feedback loop: runs `cargo clippy` and `cargo fmt --check`. Use this during development.
-- **`just test`** - Runs the test suite. Use after making functional changes.
-- **`just build`** - Builds the project. Use when you need to verify compilation.
-- **`just ci`** - Runs a full `nix flake check`, which is comprehensive but slow. **Agents should almost never need this.** It's primarily for CI pipelines and final verification before merging. Prefer `just check` and `just test` for normal development.
+- **`just pre-commit`** - Runs clippy, format check, and tests. Use before committing to verify code is ready.
+- **`just fix`** - Auto-fixes all issues (cargo fix, clippy fix, formatting). Use to resolve lint/format errors.
+- **`just check`** - Runs `cargo check --all-features`. Fast type checking without full compilation.
+- **`just clippy`** - Runs `cargo clippy --all-features` with warnings as errors. Use for lint checking.
+- **`just test`** - Runs `cargo test --all-features`. Use after making functional changes.
+- **`just build`** - Runs `cargo build --all-features`. Use when you need a full build.
+- **`just fmt`** - Runs `cargo fmt --all`. Use to format code.
+- **`just ci`** - Runs `nix flake check`, which is comprehensive but slow. **Agents should almost never need this.** It's primarily for CI pipelines and final verification before merging.
 
 
 # Version Control

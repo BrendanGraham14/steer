@@ -34,6 +34,11 @@ clean:
 fmt:
     cargo fmt --all
 
+fmt-check:
+    cargo fmt --all -- --check
+
+pre-commit: clippy fmt-check test
+
 ci:
     nix flake check
 
