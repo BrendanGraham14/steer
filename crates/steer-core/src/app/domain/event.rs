@@ -119,12 +119,72 @@ pub enum SessionEvent {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "result_type", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CompactResult {
     Success(String),
     Cancelled,
     InsufficientMessages,
+}
+
+impl Serialize for CompactResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        match self {
+            CompactResult::Success(summary) => {
+                let mut state = serializer.serialize_struct("CompactResult", 2)?;
+                state.serialize_field("result_type", "success")?;
+                state.serialize_field("summary", summary)?;
+                state.end()
+            }
+            CompactResult::Cancelled => {
+                let mut state = serializer.serialize_struct("CompactResult", 1)?;
+                state.serialize_field("result_type", "cancelled")?;
+                state.end()
+            }
+            CompactResult::InsufficientMessages => {
+                let mut state = serializer.serialize_struct("CompactResult", 1)?;
+                state.serialize_field("result_type", "insufficient_messages")?;
+                state.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for CompactResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct CompactResultPayload {
+            result_type: String,
+            #[serde(default)]
+            summary: Option<String>,
+            #[serde(default)]
+            success: Option<String>,
+        }
+
+        let payload = CompactResultPayload::deserialize(deserializer)?;
+        match payload.result_type.as_str() {
+            "success" => {
+                let summary = payload
+                    .summary
+                    .or(payload.success)
+                    .ok_or_else(|| serde::de::Error::missing_field("summary"))?;
+                Ok(CompactResult::Success(summary))
+            }
+            "cancelled" => Ok(CompactResult::Cancelled),
+            "insufficient_messages" => Ok(CompactResult::InsufficientMessages),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["success", "cancelled", "insufficient_messages"],
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

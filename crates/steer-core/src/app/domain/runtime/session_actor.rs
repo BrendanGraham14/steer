@@ -321,7 +321,19 @@ impl SessionActor {
     async fn handle_effect(&mut self, effect: Effect) -> Result<(), SessionError> {
         match effect {
             Effect::EmitEvent { event, .. } => {
-                let seq = self.event_store.append(self.session_id, &event).await?;
+                let seq = match self.event_store.append(self.session_id, &event).await {
+                    Ok(seq) => seq,
+                    Err(e) => {
+                        tracing::error!(
+                            target: "core.event_store",
+                            session_id = %self.session_id,
+                            event = ?event,
+                            error = %e,
+                            "Failed to append session event"
+                        );
+                        return Err(SessionError::EventStore(e));
+                    }
+                };
 
                 let envelope = SessionEventEnvelope { seq, event };
                 let _ = self.event_broadcast.send(envelope);
@@ -794,5 +806,174 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
             format!("Assistant: {text}")
         }
         MessageData::Tool { .. } => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::error::ApiError;
+    use crate::api::provider::{CompletionResponse, Provider};
+    use crate::app::SystemContext;
+    use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+    use crate::app::domain::action::Action;
+    use crate::app::domain::event::SessionEvent;
+    use crate::app::domain::session::event_store::InMemoryEventStore;
+    use crate::app::validation::ValidatorRegistry;
+    use crate::auth::ProviderRegistry;
+    use crate::config::model::{ModelId, ModelParameters};
+    use crate::config::provider::ProviderId;
+    use crate::model_registry::ModelRegistry;
+    use crate::tools::BackendRegistry;
+    use async_trait::async_trait;
+    use steer_tools::ToolSchema;
+    use tokio::time::{Duration, timeout};
+    use tokio_util::sync::CancellationToken;
+
+    #[derive(Clone)]
+    struct StubProvider;
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: "summary".to_string(),
+                }],
+            })
+        }
+    }
+
+    async fn create_test_deps() -> (Arc<dyn EventStore>, Arc<ApiClient>, Arc<ToolExecutor>) {
+        let event_store = Arc::new(InMemoryEventStore::new()) as Arc<dyn EventStore>;
+        let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
+        let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider().unwrap(),
+            provider_registry,
+            model_registry,
+        ));
+
+        let tool_executor = Arc::new(ToolExecutor::with_components(
+            Arc::new(BackendRegistry::new()),
+            Arc::new(ValidatorRegistry::new()),
+        ));
+
+        (event_store, api_client, tool_executor)
+    }
+
+    fn seed_messages(state: &mut AppState) {
+        let first = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "hello".to_string(),
+                }],
+            },
+            id: "u1".to_string(),
+            parent_message_id: None,
+            timestamp: 1,
+        };
+        state.message_graph.add_message(first);
+
+        let second = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "hi".to_string(),
+                }],
+            },
+            id: "a1".to_string(),
+            parent_message_id: Some("u1".to_string()),
+            timestamp: 2,
+        };
+        state.message_graph.add_message(second);
+
+        let third = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "summarize".to_string(),
+                }],
+            },
+            id: "u2".to_string(),
+            parent_message_id: Some("a1".to_string()),
+            timestamp: 3,
+        };
+        state.message_graph.add_message(third);
+    }
+
+    async fn wait_for_operation_completed(
+        event_store: Arc<dyn EventStore>,
+        session_id: SessionId,
+        op_id: OpId,
+    ) -> bool {
+        let result = timeout(Duration::from_secs(2), async {
+            loop {
+                let events = event_store
+                    .load_events(session_id)
+                    .await
+                    .expect("load events");
+                if events.iter().any(|(_, event)| {
+                    matches!(
+                        event,
+                        SessionEvent::OperationCompleted { op_id: completed } if *completed == op_id
+                    )
+                }) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+
+        result.is_ok()
+    }
+
+    #[tokio::test]
+    async fn compaction_emits_operation_completed_event() {
+        let session_id = SessionId::new();
+        let mut state = AppState::new(session_id);
+        seed_messages(&mut state);
+
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+        let provider_id = ProviderId("stub".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
+        api_client.insert_test_provider(provider_id, Arc::new(StubProvider));
+
+        let handle = spawn_session_actor(
+            session_id,
+            state,
+            event_store.clone(),
+            api_client,
+            tool_executor,
+        );
+
+        let op_id = OpId::new();
+        handle
+            .dispatch(Action::RequestCompaction {
+                session_id,
+                op_id,
+                model: model_id,
+            })
+            .await
+            .expect("dispatch compaction");
+
+        let completed = wait_for_operation_completed(event_store, session_id, op_id).await;
+        handle.shutdown();
+
+        assert!(
+            completed,
+            "expected OperationCompleted to be emitted for compaction"
+        );
     }
 }

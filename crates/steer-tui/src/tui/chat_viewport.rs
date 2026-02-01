@@ -765,7 +765,7 @@ pub fn format_command_response(resp: &CommandResponse) -> String {
     match resp {
         CommandResponse::Text(text) => text.clone(),
         CommandResponse::Compact(result) => match result {
-            CompactResult::Success(summary) => summary.clone(),
+            CompactResult::Success(_) => "Compaction complete.".to_string(),
             CompactResult::Cancelled => "Compact cancelled.".to_string(),
             CompactResult::InsufficientMessages => "Not enough messages to compact.".to_string(),
         },

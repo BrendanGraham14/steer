@@ -29,17 +29,20 @@ impl ChatRenderable for CommandResponseWidget {
             let mut lines = vec![];
             let wrap_width = width.saturating_sub(2) as usize;
 
-            // Command prompt on its own line
-            lines.push(Line::from(vec![
-                Span::styled(self.command.clone(), theme.style(Component::CommandPrompt)),
-                Span::raw(":"),
-            ]));
-
             // Format response based on type
             match &self.response {
                 CommandResponse::Core(core_response) => {
                     match core_response {
                         CoreCommandResponse::Text(text) => {
+                            // Command prompt on its own line
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    self.command.clone(),
+                                    theme.style(Component::CommandPrompt),
+                                ),
+                                Span::raw(":"),
+                            ]));
+
                             // Simple text wrapping
                             for line in text.lines() {
                                 let wrapped = textwrap::wrap(line, wrap_width);
@@ -56,11 +59,11 @@ impl ChatRenderable for CommandResponseWidget {
                             }
                         }
                         CoreCommandResponse::Compact(result) => match result {
-                            CompactResult::Success(summary) => {
+                            CompactResult::Success(_) => {
                                 lines.push(Line::from(vec![
                                     Span::styled("✓ ", theme.style(Component::CommandSuccess)),
                                     Span::styled(
-                                        summary.clone(),
+                                        "Compaction complete.",
                                         theme.style(Component::CommandText),
                                     ),
                                 ]));
@@ -84,6 +87,15 @@ impl ChatRenderable for CommandResponseWidget {
                 CommandResponse::Tui(tui_response) => {
                     match tui_response {
                         TuiCommandResponse::Text(text) => {
+                            // Command prompt on its own line
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    self.command.clone(),
+                                    theme.style(Component::CommandPrompt),
+                                ),
+                                Span::raw(":"),
+                            ]));
+
                             // Simple text wrapping
                             for line in text.lines() {
                                 let wrapped = textwrap::wrap(line, wrap_width);
@@ -101,6 +113,15 @@ impl ChatRenderable for CommandResponseWidget {
                         }
 
                         TuiCommandResponse::Theme { name } => {
+                            // Command prompt on its own line
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    self.command.clone(),
+                                    theme.style(Component::CommandPrompt),
+                                ),
+                                Span::raw(":"),
+                            ]));
+
                             lines.push(Line::from(vec![
                                 Span::styled(
                                     "✓ Theme changed to ",
@@ -114,6 +135,15 @@ impl ChatRenderable for CommandResponseWidget {
                         }
 
                         TuiCommandResponse::ListThemes(themes) => {
+                            // Command prompt on its own line
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    self.command.clone(),
+                                    theme.style(Component::CommandPrompt),
+                                ),
+                                Span::raw(":"),
+                            ]));
+
                             if themes.is_empty() {
                                 lines.push(Line::from(Span::styled(
                                     "No themes found.",
@@ -137,6 +167,15 @@ impl ChatRenderable for CommandResponseWidget {
                         }
 
                         TuiCommandResponse::ListMcpServers(servers) => {
+                            // Command prompt on its own line
+                            lines.push(Line::from(vec![
+                                Span::styled(
+                                    self.command.clone(),
+                                    theme.style(Component::CommandPrompt),
+                                ),
+                                Span::raw(":"),
+                            ]));
+
                             use steer_grpc::client_api::McpConnectionState;
 
                             if servers.is_empty() {

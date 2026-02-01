@@ -220,15 +220,17 @@ mod tests {
     use steer_core::api::provider::{CompletionResponse, Provider};
     use steer_core::app::conversation::AssistantContent;
     use steer_core::app::domain::action::Action;
+    use steer_core::app::domain::event::SessionEvent;
+    use steer_core::app::domain::session::EventStore;
+    use steer_core::app::domain::session::SqliteEventStore;
     use steer_core::app::domain::types::OpId;
     use steer_core::config::model::ModelId;
-
     use steer_proto::agent::v1::{
         CompactSessionRequest, ExecuteBashCommandRequest, SendMessageRequest,
         SubscribeSessionEventsRequest, agent_service_client::AgentServiceClient,
     };
     use tempfile::TempDir;
-    use tokio::time::{Duration, timeout};
+    use tokio::time::{Duration, Instant, timeout};
     use tokio_util::sync::CancellationToken;
     use tonic::Code;
 
@@ -339,6 +341,98 @@ mod tests {
         })
     }
 
+    async fn setup_local_grpc_with_stub_provider_and_store(
+        default_model: ModelId,
+        workspace_root: std::path::PathBuf,
+        session_db_path: Option<std::path::PathBuf>,
+    ) -> Result<LocalGrpcSetup> {
+        let (event_store, catalog): (
+            Arc<dyn steer_core::app::domain::session::EventStore>,
+            Arc<dyn SessionCatalog>,
+        ) = if let Some(db_path) = session_db_path {
+            let sqlite_store = Arc::new(
+                steer_core::app::domain::session::SqliteEventStore::new(&db_path)
+                    .await
+                    .map_err(|e| GrpcError::InvalidSessionState {
+                        reason: format!("Failed to create event store: {e}"),
+                    })?,
+            );
+            (sqlite_store.clone(), sqlite_store)
+        } else {
+            let in_memory_store = Arc::new(InMemoryEventStore::new());
+            (in_memory_store.clone(), in_memory_store)
+        };
+
+        let catalog_config = CatalogConfig::default();
+        let model_registry = Arc::new(
+            steer_core::model_registry::ModelRegistry::load(&catalog_config.catalog_paths)
+                .map_err(GrpcError::CoreError)?,
+        );
+        let provider_registry = Arc::new(
+            steer_core::auth::ProviderRegistry::load(&catalog_config.catalog_paths)
+                .map_err(GrpcError::CoreError)?,
+        );
+
+        let auth_storage = Arc::new(steer_core::test_utils::InMemoryAuthStorage::new());
+        let llm_config_provider = steer_core::config::LlmConfigProvider::new(auth_storage)
+            .map_err(GrpcError::CoreError)?;
+
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            llm_config_provider.clone(),
+            provider_registry.clone(),
+            model_registry.clone(),
+        ));
+        api_client.insert_test_provider(default_model.provider.clone(), Arc::new(StubProvider));
+
+        let workspace = steer_core::workspace::create_workspace(
+            &steer_core::workspace::WorkspaceConfig::Local {
+                path: workspace_root.clone(),
+            },
+        )
+        .await
+        .map_err(|e| GrpcError::InvalidSessionState {
+            reason: format!("Failed to create workspace: {e}"),
+        })?;
+
+        let environment_root = workspace_root.join(".steer-env");
+        let workspace_manager = Arc::new(
+            LocalWorkspaceManager::new(environment_root.clone())
+                .await
+                .map_err(|e| GrpcError::InvalidSessionState {
+                    reason: format!("Failed to create workspace manager: {e}"),
+                })?,
+        );
+        let repo_manager: Arc<dyn RepoManager> = workspace_manager.clone();
+
+        let tool_executor = ToolSystemBuilder::new(
+            workspace,
+            event_store.clone(),
+            api_client.clone(),
+            model_registry.clone(),
+        )
+        .with_workspace_manager(workspace_manager)
+        .with_repo_manager(repo_manager)
+        .build();
+
+        let runtime_service = RuntimeService::spawn(event_store, api_client, tool_executor);
+
+        let (channel, server_handle) = create_local_channel(
+            &runtime_service,
+            catalog,
+            model_registry,
+            provider_registry,
+            llm_config_provider,
+            environment_root,
+        )
+        .await?;
+
+        Ok(LocalGrpcSetup {
+            channel,
+            server_handle,
+            runtime_service,
+        })
+    }
+
     fn test_workspace_root() -> TempDir {
         TempDir::new().expect("workspace tempdir")
     }
@@ -367,6 +461,58 @@ mod tests {
             ) {
                 break;
             }
+        }
+    }
+
+    fn proto_event_kind(event: &steer_proto::agent::v1::SessionEvent) -> &'static str {
+        use steer_proto::agent::v1::session_event::Event;
+
+        match event.event {
+            Some(Event::AssistantMessageAdded(_)) => "AssistantMessageAdded",
+            Some(Event::UserMessageAdded(_)) => "UserMessageAdded",
+            Some(Event::ToolMessageAdded(_)) => "ToolMessageAdded",
+            Some(Event::MessageUpdated(_)) => "MessageUpdated",
+            Some(Event::ToolCallStarted(_)) => "ToolCallStarted",
+            Some(Event::ToolCallCompleted(_)) => "ToolCallCompleted",
+            Some(Event::ToolCallFailed(_)) => "ToolCallFailed",
+            Some(Event::ProcessingStarted(_)) => "ProcessingStarted",
+            Some(Event::ProcessingCompleted(_)) => "ProcessingCompleted",
+            Some(Event::RequestToolApproval(_)) => "RequestToolApproval",
+            Some(Event::OperationCancelled(_)) => "OperationCancelled",
+            Some(Event::Error(_)) => "Error",
+            Some(Event::WorkspaceChanged(_)) => "WorkspaceChanged",
+            Some(Event::ConversationCompacted(_)) => "ConversationCompacted",
+            Some(Event::StreamDelta(_)) => "StreamDelta",
+            Some(Event::CompactResult(_)) => "CompactResult",
+            Some(Event::McpServerStateChanged(_)) => "McpServerStateChanged",
+            Some(Event::SessionConfigUpdated(_)) => "SessionConfigUpdated",
+            Some(Event::QueueUpdated(_)) => "QueueUpdated",
+            None => "None",
+        }
+    }
+
+    fn core_event_kind(event: &SessionEvent) -> &'static str {
+        match event {
+            SessionEvent::SessionCreated { .. } => "SessionCreated",
+            SessionEvent::SessionConfigUpdated { .. } => "SessionConfigUpdated",
+            SessionEvent::AssistantMessageAdded { .. } => "AssistantMessageAdded",
+            SessionEvent::UserMessageAdded { .. } => "UserMessageAdded",
+            SessionEvent::ToolMessageAdded { .. } => "ToolMessageAdded",
+            SessionEvent::MessageUpdated { .. } => "MessageUpdated",
+            SessionEvent::ToolCallStarted { .. } => "ToolCallStarted",
+            SessionEvent::ToolCallCompleted { .. } => "ToolCallCompleted",
+            SessionEvent::ToolCallFailed { .. } => "ToolCallFailed",
+            SessionEvent::ApprovalRequested { .. } => "ApprovalRequested",
+            SessionEvent::ApprovalDecided { .. } => "ApprovalDecided",
+            SessionEvent::OperationStarted { .. } => "OperationStarted",
+            SessionEvent::OperationCompleted { .. } => "OperationCompleted",
+            SessionEvent::OperationCancelled { .. } => "OperationCancelled",
+            SessionEvent::CompactResult { .. } => "CompactResult",
+            SessionEvent::ConversationCompacted { .. } => "ConversationCompacted",
+            SessionEvent::WorkspaceChanged => "WorkspaceChanged",
+            SessionEvent::QueueUpdated { .. } => "QueueUpdated",
+            SessionEvent::Error { .. } => "Error",
+            SessionEvent::McpServerStateChanged { .. } => "McpServerStateChanged",
         }
     }
 
@@ -528,6 +674,135 @@ mod tests {
         let record = compaction_record.expect("record");
         assert!(!record.id.is_empty());
         assert_eq!(record.model, model.id);
+    }
+
+    #[tokio::test]
+    async fn test_compaction_emits_processing_completed_with_sqlite_store() {
+        let workspace_root = test_workspace_root();
+        let db_path = workspace_root.path().join("sessions.db");
+        let model = steer_core::config::model::builtin::claude_sonnet_4_5();
+        let setup = setup_local_grpc_with_stub_provider_and_store(
+            model.clone(),
+            workspace_root.path().to_path_buf(),
+            Some(db_path.clone()),
+        )
+        .await
+        .expect("local grpc setup");
+
+        let session_id = setup
+            .runtime_service
+            .handle()
+            .create_session(steer_core::test_utils::read_only_session_config(
+                steer_core::config::model::builtin::claude_sonnet_4_5(),
+            ))
+            .await
+            .expect("create session");
+
+        let mut event_client = AgentServiceClient::new(setup.channel.clone());
+        let mut action_client = AgentServiceClient::new(setup.channel.clone());
+
+        let request = tonic::Request::new(SubscribeSessionEventsRequest {
+            session_id: session_id.to_string(),
+            since_sequence: None,
+        });
+
+        let mut stream = event_client
+            .subscribe_session_events(request)
+            .await
+            .expect("subscribe")
+            .into_inner();
+
+        let sqlite_store = SqliteEventStore::new(&db_path)
+            .await
+            .expect("open sqlite store");
+        let before_len = sqlite_store
+            .load_events(session_id)
+            .await
+            .expect("load events")
+            .len();
+
+        let model_spec = crate::grpc::conversions::model_to_proto(model.clone());
+
+        let first_response = action_client
+            .send_message(tonic::Request::new(SendMessageRequest {
+                session_id: session_id.to_string(),
+                message: "first".to_string(),
+                model: Some(model_spec.clone()),
+            }))
+            .await
+            .expect("send_message");
+        let first_op = first_response.into_inner().operation.expect("operation");
+        wait_for_processing_completed(&mut stream, &first_op.id).await;
+
+        let second_response = action_client
+            .send_message(tonic::Request::new(SendMessageRequest {
+                session_id: session_id.to_string(),
+                message: "second".to_string(),
+                model: Some(model_spec.clone()),
+            }))
+            .await
+            .expect("send_message");
+        let second_op = second_response.into_inner().operation.expect("operation");
+        wait_for_processing_completed(&mut stream, &second_op.id).await;
+
+        action_client
+            .compact_session(tonic::Request::new(CompactSessionRequest {
+                session_id: session_id.to_string(),
+                model: Some(model_spec),
+            }))
+            .await
+            .expect("compact_session");
+
+        let mut seen = Vec::new();
+        let mut compaction_op_id = None;
+        let mut completed = false;
+        let deadline = Instant::now() + Duration::from_secs(5);
+
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let next = timeout(remaining, stream.message()).await;
+            let Ok(Ok(Some(event))) = next else { break };
+
+            seen.push(proto_event_kind(&event));
+
+            if let Some(steer_proto::agent::v1::session_event::Event::ProcessingStarted(ref e)) =
+                event.event
+            {
+                compaction_op_id = Some(e.op_id.clone());
+            }
+
+            if let Some(steer_proto::agent::v1::session_event::Event::ProcessingCompleted(e)) =
+                event.event
+            {
+                if compaction_op_id.as_deref() == Some(e.op_id.as_str()) {
+                    completed = true;
+                    break;
+                }
+            }
+        }
+
+        if !completed {
+            let persisted = sqlite_store
+                .load_events(session_id)
+                .await
+                .expect("load events");
+            let persisted_kinds: Vec<&'static str> = persisted
+                .iter()
+                .map(|(_, event)| core_event_kind(event))
+                .collect();
+
+            let after_len = persisted.len();
+            let new_events = persisted_kinds
+                .iter()
+                .skip(before_len)
+                .cloned()
+                .collect::<Vec<_>>();
+
+            panic!(
+                "missing ProcessingCompleted for compaction; seen={seen:?} \
+persisted_new={new_events:?} (before_len={before_len}, after_len={after_len})"
+            );
+        }
     }
 
     #[tokio::test]
