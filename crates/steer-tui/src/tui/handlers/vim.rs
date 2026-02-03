@@ -42,6 +42,7 @@ impl Tui {
                     } else {
                         // Toggle view mode otherwise
                         self.chat_viewport.state_mut().toggle_view_mode();
+                        self.chat_viewport.state_mut().scroll_to_bottom();
                     }
                 }
                 KeyCode::Char('u') => {

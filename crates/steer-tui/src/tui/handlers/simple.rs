@@ -179,6 +179,7 @@ impl Tui {
             // Toggle view mode with Ctrl+R
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.chat_viewport.state_mut().toggle_view_mode();
+                self.chat_viewport.state_mut().scroll_to_bottom();
             }
             _ => {
                 // Try common text manipulation first

@@ -1815,6 +1815,7 @@ pub async fn run_tui(
 
     if !messages.is_empty() {
         tui.restore_messages(messages.clone());
+        tui.chat_viewport.state_mut().scroll_to_bottom();
     }
 
     // Query server for providers' auth status to decide if we should launch setup
@@ -1896,6 +1897,7 @@ mod tests {
 
     use serde_json::json;
 
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use steer_grpc::client_api::{AssistantContent, Message, MessageData};
     use tempfile::tempdir;
 
@@ -1906,6 +1908,35 @@ mod tests {
         fn drop(&mut self) {
             cleanup();
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires TTY - run with `cargo test -- --ignored` in a terminal"]
+    async fn test_ctrl_r_scrolls_to_bottom_in_simple_mode() {
+        let _guard = TerminalCleanupGuard;
+        let workspace_root = tempdir().expect("tempdir");
+        let (client, _server_handle) =
+            local_client_and_server(None, Some(workspace_root.path().to_path_buf())).await;
+        let model = builtin::claude_sonnet_4_5();
+        let session_id = "test_session_id".to_string();
+        let mut tui = Tui::new(client, model, session_id, None)
+            .await
+            .expect("create tui");
+
+        tui.preferences.ui.editing_mode = EditingMode::Simple;
+        tui.input_mode = InputMode::Simple;
+
+        let key = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+        tui.handle_simple_mode(key).await.expect("handle ctrl+r");
+
+        assert_eq!(
+            tui.chat_viewport.state().view_mode,
+            crate::tui::widgets::ViewMode::Detailed
+        );
+        assert_eq!(
+            tui.chat_viewport.state_mut().take_scroll_target(),
+            Some(crate::tui::widgets::ScrollTarget::Bottom)
+        );
     }
 
     #[tokio::test]
