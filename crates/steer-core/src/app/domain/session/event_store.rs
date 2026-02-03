@@ -497,7 +497,7 @@ mod tests {
 
         let event = SessionEvent::SessionConfigUpdated {
             config: Box::new(updated.clone()),
-            primary_agent_id: "planner".to_string(),
+            primary_agent_id: "plan".to_string(),
         };
         store.append(session_id, &event).await.unwrap();
 

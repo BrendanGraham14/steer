@@ -13,13 +13,13 @@ use crate::tools::DISPATCH_AGENT_TOOL_NAME;
 use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
 
 pub const NORMAL_PRIMARY_AGENT_ID: &str = "normal";
-pub const PLANNER_PRIMARY_AGENT_ID: &str = "planner";
+pub const PLANNER_PRIMARY_AGENT_ID: &str = "plan";
 pub const YOLO_PRIMARY_AGENT_ID: &str = "yolo";
 pub const DEFAULT_PRIMARY_AGENT_ID: &str = NORMAL_PRIMARY_AGENT_ID;
 
 static PLANNER_SYSTEM_PROMPT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
-        r#"You are in planner mode. Produce a concise, step-by-step plan only.
+        r#"You are in plan mode. Produce a concise, step-by-step plan only.
 
 Rules:
 - Use read-only tools to gather the context you need before planning.
@@ -206,8 +206,8 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
         },
         PrimaryAgentSpec {
             id: PLANNER_PRIMARY_AGENT_ID.to_string(),
-            name: "Planner".to_string(),
-            description: "Planning-only agent with read-only tools.".to_string(),
+            name: "Plan".to_string(),
+            description: "Plan-only agent with read-only tools.".to_string(),
             model: None,
             system_prompt: Some(PLANNER_SYSTEM_PROMPT.clone()),
             tool_visibility: planner_tool_visibility,
@@ -334,8 +334,8 @@ mod tests {
     }
 
     #[test]
-    fn planner_spec_limits_tools_and_dispatch_agent() {
-        let spec = primary_agent_spec(PLANNER_PRIMARY_AGENT_ID).expect("planner spec");
+    fn plan_spec_limits_tools_and_dispatch_agent() {
+        let spec = primary_agent_spec(PLANNER_PRIMARY_AGENT_ID).expect("plan spec");
 
         match &spec.tool_visibility {
             ToolVisibility::Whitelist(allowed) => {

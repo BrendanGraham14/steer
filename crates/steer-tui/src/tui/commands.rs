@@ -115,7 +115,7 @@ impl CoreCommandType {
     pub fn description(&self) -> &'static str {
         match self {
             CoreCommandType::Model => "Show or change the current model",
-            CoreCommandType::Agent => "Switch primary agent mode (normal/planner/yolo)",
+            CoreCommandType::Agent => "Switch primary agent mode (normal/plan/yolo)",
             CoreCommandType::Compact => "Summarize the current conversation",
         }
     }
@@ -342,7 +342,7 @@ mod tests {
             AppCommand::Core(CoreCommand::Compact)
         ));
         assert!(matches!(
-            AppCommand::parse("/agent planner").unwrap(),
+            AppCommand::parse("/agent plan").unwrap(),
             AppCommand::Core(CoreCommand::Agent { .. })
         ));
         assert!(matches!(

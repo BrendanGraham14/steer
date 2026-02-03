@@ -2078,7 +2078,7 @@ mod tests {
             &mut state,
             Action::SwitchPrimaryAgent {
                 session_id,
-                agent_id: "planner".to_string(),
+                agent_id: "plan".to_string(),
             },
         );
 
@@ -2093,7 +2093,7 @@ mod tests {
             }
             other => panic!("Unexpected tool visibility: {other:?}"),
         }
-        assert_eq!(state.primary_agent_id.as_deref(), Some("planner"));
+        assert_eq!(state.primary_agent_id.as_deref(), Some("plan"));
         assert!(effects.iter().any(|e| matches!(
             e,
             Effect::EmitEvent {
@@ -2203,7 +2203,7 @@ mod tests {
             &mut state,
             Action::SwitchPrimaryAgent {
                 session_id,
-                agent_id: "planner".to_string(),
+                agent_id: "plan".to_string(),
             },
         );
 
@@ -2236,7 +2236,7 @@ mod tests {
             &mut state,
             Action::SwitchPrimaryAgent {
                 session_id,
-                agent_id: "planner".to_string(),
+                agent_id: "plan".to_string(),
             },
         );
 
