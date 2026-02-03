@@ -91,22 +91,8 @@ impl EventProcessor for SystemEventProcessor {
                 primary_agent_id,
                 config,
             } => {
-                let label = if config.policy_overrides.is_empty() {
-                    primary_agent_id
-                } else {
-                    format!("{primary_agent_id} (custom)")
-                };
-                let chat_item = crate::tui::model::ChatItem {
-                    parent_chat_item_id: None,
-                    data: ChatItemData::SystemNotice {
-                        id: generate_row_id(),
-                        level: NoticeLevel::Info,
-                        text: format!("Primary agent switched to: {label}"),
-                        ts: time::OffsetDateTime::now_utc(),
-                    },
-                };
-                ctx.chat_store.push(chat_item);
-                *ctx.messages_updated = true;
+                let label = crate::tui::format_agent_label(&primary_agent_id);
+                *ctx.current_agent_label = Some(label);
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,

@@ -62,10 +62,12 @@ impl UiLayout {
         &self,
         f: &mut Frame,
         current_model: &ModelId,
+        current_agent: Option<&str>,
         theme: &Theme,
         update_badge: crate::tui::widgets::status_bar::UpdateBadge,
     ) {
-        let status_bar = StatusBar::new(current_model, theme).with_update_badge(update_badge);
+        let status_bar =
+            StatusBar::new(current_model, current_agent, theme).with_update_badge(update_badge);
         f.render_widget(status_bar, self.status);
     }
 }

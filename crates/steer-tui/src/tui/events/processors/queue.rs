@@ -62,6 +62,7 @@ mod tests {
         spinner_state: usize,
         current_tool_approval: Option<PendingToolApproval>,
         current_model: ModelId,
+        current_agent_label: Option<String>,
         messages_updated: bool,
         in_flight_operations: std::collections::HashSet<steer_grpc::client_api::OpId>,
         queued_head: Option<QueuedWorkItem>,
@@ -84,6 +85,7 @@ mod tests {
         let spinner_state = 0;
         let current_tool_approval = None;
         let current_model = builtin::claude_sonnet_4_5();
+        let current_agent_label = None;
         let messages_updated = false;
         let in_flight_operations = std::collections::HashSet::new();
 
@@ -97,6 +99,7 @@ mod tests {
             spinner_state,
             current_tool_approval,
             current_model,
+            current_agent_label,
             messages_updated,
             in_flight_operations,
             queued_head: None,
@@ -129,6 +132,7 @@ mod tests {
             spinner_state: &mut ctx.spinner_state,
             current_tool_approval: &mut ctx.current_tool_approval,
             current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut ctx.in_flight_operations,
             queued_head: &mut ctx.queued_head,

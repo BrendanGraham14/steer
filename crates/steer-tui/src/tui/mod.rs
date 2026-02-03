@@ -20,7 +20,7 @@ use ratatui::{Frame, Terminal};
 use steer_grpc::AgentClient;
 use steer_grpc::client_api::{
     AssistantContent, ClientEvent, EditingMode, LlmStatus, Message, MessageData, ModelId, OpId,
-    Preferences, ProviderId, UserContent, WorkspaceStatus, builtin,
+    Preferences, ProviderId, UserContent, WorkspaceStatus, builtin, default_primary_agent_id,
 };
 
 use crate::tui::events::processor::PendingToolApproval;
@@ -49,6 +49,15 @@ fn has_any_auth_source(source: Option<&steer_grpc::client_api::AuthSource>) -> b
                 | steer_grpc::client_api::AuthSource::Plugin { .. }
         )
     )
+}
+
+pub(crate) fn format_agent_label(primary_agent_id: &str) -> String {
+    let agent_id = if primary_agent_id.is_empty() {
+        default_primary_agent_id()
+    } else {
+        primary_agent_id
+    };
+    agent_id.to_string()
 }
 
 use crate::tui::events::pipeline::EventPipeline;
@@ -180,6 +189,8 @@ pub struct Tui {
     current_tool_approval: Option<PendingToolApproval>,
     /// Current model in use
     current_model: ModelId,
+    /// Current primary agent label for status bar
+    current_agent_label: Option<String>,
     /// Event processing pipeline
     event_pipeline: EventPipeline,
     /// Chat data store
@@ -307,7 +318,7 @@ impl Tui {
             EditingMode::Vim => InputMode::VimNormal,
         };
 
-        let tui = Self {
+        let mut tui = Self {
             terminal,
             terminal_size,
             input_mode,
@@ -321,6 +332,7 @@ impl Tui {
             spinner_state: 0,
             current_tool_approval: None,
             current_model,
+            current_agent_label: None,
             event_pipeline: Self::create_event_pipeline(),
             chat_store: ChatStore::new(),
             tool_registry: ToolCallRegistry::new(),
@@ -340,6 +352,8 @@ impl Tui {
             update_status: UpdateStatus::Checking,
             edit_selection_state: EditSelectionOverlayState::default(),
         };
+
+        tui.refresh_agent_label().await;
 
         // Disarm guard; Tui instance will handle cleanup
         guard.disarm();
@@ -474,6 +488,33 @@ impl Tui {
         output
     }
 
+    async fn refresh_agent_label(&mut self) {
+        match self.client.get_session(&self.session_id).await {
+            Ok(Some(session)) => {
+                if let Some(config) = session.config.as_ref() {
+                    let agent_id = config
+                        .primary_agent_id
+                        .clone()
+                        .unwrap_or_else(|| default_primary_agent_id().to_string());
+                    self.current_agent_label = Some(format_agent_label(&agent_id));
+                }
+            }
+            Ok(None) => {
+                warn!(
+                    target: "tui.session",
+                    "No session data available to populate agent label"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    target: "tui.session",
+                    "Failed to load session config for agent label: {}",
+                    e
+                );
+            }
+        }
+    }
+
     async fn start_new_session(&mut self) -> Result<()> {
         use std::collections::HashMap;
         use steer_grpc::client_api::{
@@ -507,11 +548,8 @@ impl Tui {
         self.progress_message = None;
         self.current_tool_approval = None;
         self.editing_message_id = None;
-
-        self.push_notice(
-            NoticeLevel::Info,
-            format!("Started new session: {new_session_id}"),
-        );
+        self.current_agent_label = None;
+        self.refresh_agent_label().await;
 
         self.load_file_cache().await;
 
@@ -985,7 +1023,13 @@ impl Tui {
                 }
                 _ => crate::tui::widgets::status_bar::UpdateBadge::None,
             };
-            layout.render_status_bar(f, &current_model_owned, &self.theme, update_badge);
+            layout.render_status_bar(
+                f,
+                &current_model_owned,
+                self.current_agent_label.as_deref(),
+                &self.theme,
+                update_badge,
+            );
 
             // Get fuzzy finder results before the render call
             let fuzzy_finder_data = if input_mode == InputMode::FuzzyFinder {
@@ -1189,6 +1233,7 @@ impl Tui {
             spinner_state: &mut self.spinner_state,
             current_tool_approval: &mut self.current_tool_approval,
             current_model: &mut self.current_model,
+            current_agent_label: &mut self.current_agent_label,
             messages_updated: &mut messages_updated,
             in_flight_operations: &mut self.in_flight_operations,
             queued_head: &mut self.queued_head,
@@ -1543,11 +1588,6 @@ impl Tui {
                     if let Some(agent_id) = target {
                         if let Err(e) = self.client.switch_primary_agent(agent_id.clone()).await {
                             self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
-                        } else {
-                            self.push_notice(
-                                NoticeLevel::Info,
-                                format!("Switching primary agent to: {agent_id}"),
-                            );
                         }
                     } else {
                         self.push_notice(NoticeLevel::Error, "Usage: /agent <mode>".to_string());
@@ -1558,28 +1598,11 @@ impl Tui {
                         match self.client.resolve_model(&model_name).await {
                             Ok(model_id) => {
                                 self.current_model = model_id;
-                                self.push_notice(
-                                    NoticeLevel::Info,
-                                    format!(
-                                        "Model set to: {}/{}",
-                                        self.current_model.provider.storage_key(),
-                                        self.current_model.id
-                                    ),
-                                );
                             }
                             Err(e) => {
                                 self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                             }
                         }
-                    } else {
-                        self.push_notice(
-                            NoticeLevel::Info,
-                            format!(
-                                "Current model: {}/{}",
-                                self.current_model.provider.storage_key(),
-                                self.current_model.id
-                            ),
-                        );
                     }
                 }
             },

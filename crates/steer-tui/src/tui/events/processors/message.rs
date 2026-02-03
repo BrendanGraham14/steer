@@ -371,6 +371,7 @@ mod tests {
         spinner_state: usize,
         current_tool_approval: Option<PendingToolApproval>,
         current_model: ModelId,
+        current_agent_label: Option<String>,
         messages_updated: bool,
         queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
         queued_count: usize,
@@ -392,6 +393,7 @@ mod tests {
         let spinner_state = 0;
         let current_tool_approval = None;
         let current_model = builtin::claude_sonnet_4_5();
+        let current_agent_label = None;
         let messages_updated = false;
         let queued_head = None;
         let queued_count = 0;
@@ -406,6 +408,7 @@ mod tests {
             spinner_state,
             current_tool_approval,
             current_model,
+            current_agent_label,
             messages_updated,
             queued_head,
             queued_count,
@@ -483,6 +486,7 @@ mod tests {
             spinner_state: &mut ctx.spinner_state,
             current_tool_approval: &mut ctx.current_tool_approval,
             current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut in_flight_operations,
             queued_head: &mut ctx.queued_head,

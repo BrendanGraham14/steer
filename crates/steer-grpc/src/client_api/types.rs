@@ -32,6 +32,7 @@ pub use steer_core::app::domain::delta::ToolCallDelta;
 pub use steer_core::app::domain::event::CompactResult;
 
 pub use steer_core::agents::default_agent_spec_id;
+pub use steer_core::primary_agents::default_primary_agent_id;
 
 pub use steer_core::config::model::builtin;
 

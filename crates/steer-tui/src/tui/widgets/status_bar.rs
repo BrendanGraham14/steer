@@ -20,15 +20,21 @@ pub enum UpdateBadge<'a> {
 /// A status bar widget that displays the current model and other status information
 pub struct StatusBar<'a> {
     current_model: &'a ModelId,
+    current_agent: Option<&'a str>,
     theme: &'a Theme,
     update: UpdateBadge<'a>,
 }
 
 impl<'a> StatusBar<'a> {
     /// Create a new status bar with the given model and theme
-    pub fn new(current_model: &'a ModelId, theme: &'a Theme) -> Self {
+    pub fn new(
+        current_model: &'a ModelId,
+        current_agent: Option<&'a str>,
+        theme: &'a Theme,
+    ) -> Self {
         Self {
             current_model,
+            current_agent,
             theme,
             update: UpdateBadge::None,
         }
@@ -44,14 +50,20 @@ impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let style = self.theme.style(Component::StatusBar);
 
-        // Left: update badge (if any)
-        let left_line = match self.update {
-            UpdateBadge::Available { latest } => Line::from(vec![Span::styled(
+        // Left: update badge (if any) + current agent
+        let mut left_spans = Vec::new();
+        if let UpdateBadge::Available { latest } = self.update {
+            left_spans.push(Span::styled(
                 format!(" v{latest} available "),
                 self.theme.style(Component::NoticeWarn),
-            )]),
-            UpdateBadge::None => Line::from(" "),
+            ));
+        }
+        let agent_text = match self.current_agent {
+            Some(agent) => format!(" {agent} "),
+            None => " -- ".to_string(),
         };
+        left_spans.push(Span::raw(agent_text));
+        let left_line = Line::from(left_spans);
         let left_para = Paragraph::new(left_line)
             .style(style)
             .alignment(Alignment::Left);

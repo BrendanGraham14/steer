@@ -28,6 +28,7 @@ pub struct ProcessingContext<'a> {
     pub spinner_state: &'a mut usize,
     pub current_tool_approval: &'a mut Option<PendingToolApproval>,
     pub current_model: &'a mut ModelId,
+    pub current_agent_label: &'a mut Option<String>,
     pub messages_updated: &'a mut bool,
     pub in_flight_operations: &'a mut std::collections::HashSet<OpId>,
     pub queued_head: &'a mut Option<steer_grpc::client_api::QueuedWorkItem>,
