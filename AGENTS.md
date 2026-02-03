@@ -3,6 +3,19 @@ This repo includes `flake.nix`. If commands fail due to missing dependencies, re
 
 # Commands
 
+We use the Nix devshell for a consistent toolchain and dependencies. If a command fails due to missing deps, retry it inside `nix develop`.
+
+```bash
+nix develop --command just check
+nix develop --command just test
+nix develop --command just build
+
+# For multiple commands
+nix develop --command sh -c "just check && just test"
+```
+
+This keeps the environment consistent without requiring an interactive shell session.
+
 ## When to use which command
 
 - **`just pre-commit`** - Runs clippy, format check, and tests. Use before committing to verify code is ready.
