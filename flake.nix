@@ -33,7 +33,7 @@
         # Read rust version from rust-toolchain.toml
         rustToolchainToml = builtins.fromTOML (builtins.readFile ./rust-toolchain.toml);
         rustVersion = rustToolchainToml.toolchain.channel;
-        
+
         rustToolchain = pkgs.rust-bin.stable.${rustVersion}.default.override {
           extensions = [
             "rust-src"
@@ -118,6 +118,7 @@
           cargo-outdated
           cargo-audit
           cargo-nextest
+          sccache
           just
           bacon
           nushell
@@ -171,6 +172,7 @@
             # Set up environment variables
             RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
             RUST_BACKTRACE = 1;
+            RUSTC_WRAPPER = "sccache";
 
             # For OpenSSL - append to existing PKG_CONFIG_PATH if it exists
             PKG_CONFIG_PATH = pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" [ pkgs.openssl ];
