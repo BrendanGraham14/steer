@@ -37,6 +37,7 @@ const CALLBACK_PORT: u16 = 1455;
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const OPENAI_BETA: &str = "responses=experimental";
 const GPT_5_2_CODEX_MODEL_ID: &str = "gpt-5.2-codex";
+const GPT_5_3_CODEX_MODEL_ID: &str = "gpt-5.3-codex";
 const CODEX_SYSTEM_PROMPT: &str = r#"You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.
 
 ## General
@@ -827,7 +828,10 @@ impl ModelVisibilityPolicy for OpenAiModelVisibility {
             return true;
         }
 
-        if model_id.model_id == GPT_5_2_CODEX_MODEL_ID {
+        if matches!(
+            model_id.model_id.as_str(),
+            GPT_5_2_CODEX_MODEL_ID | GPT_5_3_CODEX_MODEL_ID
+        ) {
             return matches!(auth_source, AuthSource::Plugin { .. });
         }
 
@@ -903,6 +907,7 @@ impl AuthPlugin for OpenAiAuthPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use steer_auth_plugin::{AuthMethod, AuthSource};
 
     #[test]
     fn test_auth_url_building() {
@@ -966,6 +971,44 @@ mod tests {
         let token = make_jwt(payload);
         let exp = resolve_expires_at(None, &token).unwrap();
         assert_eq!(exp, UNIX_EPOCH + Duration::from_secs(1_700_000_000u64));
+    }
+
+    #[test]
+    fn test_openai_codex_models_require_plugin_auth() {
+        let visibility = OpenAiModelVisibility;
+        let codex_5_2 = ModelId {
+            provider_id: ProviderId(PROVIDER_ID.to_string()),
+            model_id: GPT_5_2_CODEX_MODEL_ID.to_string(),
+        };
+        let codex_5_3 = ModelId {
+            provider_id: ProviderId(PROVIDER_ID.to_string()),
+            model_id: GPT_5_3_CODEX_MODEL_ID.to_string(),
+        };
+
+        assert!(visibility.allow_model(
+            &codex_5_2,
+            &AuthSource::Plugin {
+                method: AuthMethod::OAuth,
+            }
+        ));
+        assert!(visibility.allow_model(
+            &codex_5_3,
+            &AuthSource::Plugin {
+                method: AuthMethod::OAuth,
+            }
+        ));
+        assert!(!visibility.allow_model(
+            &codex_5_2,
+            &AuthSource::ApiKey {
+                origin: steer_auth_plugin::ApiKeyOrigin::Env,
+            }
+        ));
+        assert!(!visibility.allow_model(
+            &codex_5_3,
+            &AuthSource::ApiKey {
+                origin: steer_auth_plugin::ApiKeyOrigin::Stored,
+            }
+        ));
     }
 
     fn make_jwt(payload: serde_json::Value) -> String {

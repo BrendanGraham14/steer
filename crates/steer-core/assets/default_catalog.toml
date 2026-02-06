@@ -45,12 +45,20 @@ thinking_config.budget_tokens = 16_000
 [[models]]
 provider = "anthropic"
 id = "claude-opus-4-5"
-aliases = ["opus"]
-recommended = true
+aliases = ["opus-4-5"]
+recommended = false
 [models.parameters]
 thinking_config.enabled = true
 thinking_config.budget_tokens = 16_000
 
+[[models]]
+provider = "anthropic"
+id = "claude-opus-4-6"
+aliases = ["opus", "opus-4-6"]
+recommended = true
+[models.parameters]
+thinking_config.enabled = true
+thinking_config.budget_tokens = 16_000
 
 [[models]]
 provider = "openai"
@@ -82,9 +90,18 @@ thinking_config.effort = "x-high"
 
 [[models]]
 provider = "openai"
-id = "gpt-5.2-codex"
-aliases = ["gpt5.2-codex", "gpt52-codex", "codex"]
+id = "gpt-5.3-codex"
+aliases = ["gpt5.3-codex", "gpt53-codex", "codex"]
 recommended = true
+[models.parameters]
+thinking_config.enabled = true
+thinking_config.effort = "x-high"
+
+[[models]]
+provider = "openai"
+id = "gpt-5.2-codex"
+aliases = ["gpt5.2-codex", "gpt52-codex"]
+recommended = false
 [models.parameters]
 thinking_config.enabled = true
 thinking_config.effort = "x-high"

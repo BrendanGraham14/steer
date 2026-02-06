@@ -82,7 +82,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.2-codex"
+id = "gpt-5.3-codex"
 recommended = false
 
 [[models]]
@@ -113,7 +113,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.2-codex"
+id = "gpt-5.3-codex"
 recommended = false
 
 [[models]]
@@ -129,7 +129,7 @@ recommended = true
         .expect("resolve model");
     assert_eq!(
         resolved,
-        ModelId::new(ProviderId::from("openai"), "gpt-5.2-codex")
+        ModelId::new(ProviderId::from("openai"), "gpt-5.3-codex")
     );
 
     shutdown(setup).await;
@@ -146,7 +146,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.2-codex"
+id = "gpt-5.3-codex"
 recommended = false
 
 [[models]]
