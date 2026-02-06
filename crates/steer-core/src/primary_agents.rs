@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
+use crate::agents::DEFAULT_AGENT_SPEC_ID;
 use crate::config::model::ModelId;
 use crate::prompts::system_prompt_for_model;
 use crate::session::state::{
@@ -176,6 +177,17 @@ fn is_known_primary_agent_prompt(prompt: &str) -> bool {
         .any(|spec| spec.system_prompt.as_deref() == Some(prompt))
 }
 
+fn approval_policy_with_dispatch_explore_preapproval() -> ToolApprovalPolicy {
+    let mut policy = ToolApprovalPolicy::default();
+    policy.preapproved.per_tool.insert(
+        DISPATCH_AGENT_TOOL_NAME.to_string(),
+        ToolRule::DispatchAgent {
+            agent_patterns: vec![DEFAULT_AGENT_SPEC_ID.to_string()],
+        },
+    );
+    policy
+}
+
 fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
     let planner_tool_visibility = ToolVisibility::Whitelist(
         READ_ONLY_TOOL_NAMES
@@ -183,14 +195,6 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
             .map(|name| (*name).to_string())
             .chain(std::iter::once(DISPATCH_AGENT_TOOL_NAME.to_string()))
             .collect::<HashSet<_>>(),
-    );
-
-    let mut planner_approval_policy = ToolApprovalPolicy::default();
-    planner_approval_policy.preapproved.per_tool.insert(
-        DISPATCH_AGENT_TOOL_NAME.to_string(),
-        ToolRule::DispatchAgent {
-            agent_patterns: vec!["explore".to_string()],
-        },
     );
 
     vec![
@@ -202,7 +206,7 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
             model: None,
             system_prompt: None,
             tool_visibility: ToolVisibility::All,
-            approval_policy: ToolApprovalPolicy::default(),
+            approval_policy: approval_policy_with_dispatch_explore_preapproval(),
         },
         PrimaryAgentSpec {
             id: PLANNER_PRIMARY_AGENT_ID.to_string(),
@@ -211,7 +215,7 @@ fn default_primary_agent_specs() -> Vec<PrimaryAgentSpec> {
             model: None,
             system_prompt: Some(PLANNER_SYSTEM_PROMPT.clone()),
             tool_visibility: planner_tool_visibility,
-            approval_policy: planner_approval_policy,
+            approval_policy: approval_policy_with_dispatch_explore_preapproval(),
         },
         PrimaryAgentSpec {
             id: YOLO_PRIMARY_AGENT_ID.to_string(),
@@ -234,12 +238,13 @@ mod tests {
     use crate::config::model::builtin;
     use crate::session::state::{
         ApprovalRulesOverrides, SessionPolicyOverrides, SessionToolConfig,
-        ToolApprovalPolicyOverrides, ToolRule, ToolRuleOverrides, WorkspaceConfig,
+        ToolApprovalPolicyOverrides, ToolDecision, ToolRule, ToolRuleOverrides, WorkspaceConfig,
     };
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
     use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use steer_tools::tools::{TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME};
 
     fn base_config() -> SessionConfig {
         SessionConfig {
@@ -334,6 +339,25 @@ mod tests {
     }
 
     #[test]
+    fn normal_spec_preapproves_dispatch_agent_for_explore() {
+        let spec = primary_agent_spec(NORMAL_PRIMARY_AGENT_ID).expect("normal spec");
+
+        let rule = spec
+            .approval_policy
+            .preapproved
+            .per_tool
+            .get(DISPATCH_AGENT_TOOL_NAME)
+            .expect("dispatch agent rule");
+
+        match rule {
+            ToolRule::DispatchAgent { agent_patterns } => {
+                assert_eq!(agent_patterns.as_slice(), [DEFAULT_AGENT_SPEC_ID]);
+            }
+            ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
+        }
+    }
+
+    #[test]
     fn plan_spec_limits_tools_and_dispatch_agent() {
         let spec = primary_agent_spec(PLANNER_PRIMARY_AGENT_ID).expect("plan spec");
 
@@ -357,9 +381,28 @@ mod tests {
 
         match rule {
             ToolRule::DispatchAgent { agent_patterns } => {
-                assert_eq!(agent_patterns.as_slice(), ["explore"]);
+                assert_eq!(agent_patterns.as_slice(), [DEFAULT_AGENT_SPEC_ID]);
             }
             ToolRule::Bash { .. } => panic!("Unexpected bash rule"),
+        }
+    }
+
+    #[test]
+    fn all_primary_agents_allow_todos_by_default() {
+        for agent_id in [
+            NORMAL_PRIMARY_AGENT_ID,
+            PLANNER_PRIMARY_AGENT_ID,
+            YOLO_PRIMARY_AGENT_ID,
+        ] {
+            let spec = primary_agent_spec(agent_id).expect("primary agent spec");
+            assert_eq!(
+                spec.approval_policy.tool_decision(TODO_READ_TOOL_NAME),
+                ToolDecision::Allow
+            );
+            assert_eq!(
+                spec.approval_policy.tool_decision(TODO_WRITE_TOOL_NAME),
+                ToolDecision::Allow
+            );
         }
     }
 }
