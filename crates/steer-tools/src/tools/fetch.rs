@@ -26,6 +26,12 @@ impl ToolSpec for FetchToolSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum FetchError {
+    #[error("invalid url: {message}")]
+    InvalidUrl { message: String },
+
+    #[error("url scheme '{scheme}' is not supported")]
+    UnsupportedScheme { scheme: String },
+
     #[error("request failed: {message}")]
     RequestFailed { message: String },
 
