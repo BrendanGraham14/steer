@@ -20,6 +20,8 @@ pub enum StreamChunk {
     ToolUseStart { id: String, name: String },
     ToolUseInputDelta { id: String, delta: String },
     ContentBlockStop { index: usize },
+    /// Signal to clear any in-progress streamed content for this message before restarting.
+    Reset,
     MessageComplete(CompletionResponse),
     Error(StreamError),
 }

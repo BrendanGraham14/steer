@@ -48,6 +48,10 @@ pub enum ClientEvent {
         tool_call_id: ToolCallId,
         delta: ToolCallDelta,
     },
+    StreamReset {
+        op_id: OpId,
+        message_id: MessageId,
+    },
 
     CompactResult {
         result: CompactResult,

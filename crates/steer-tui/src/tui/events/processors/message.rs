@@ -36,6 +36,7 @@ impl EventProcessor for MessageEventProcessor {
                 | ClientEvent::MessageDelta { .. }
                 | ClientEvent::ThinkingDelta { .. }
                 | ClientEvent::ToolCallDelta { .. }
+                | ClientEvent::StreamReset { .. }
         )
     }
 
@@ -76,6 +77,10 @@ impl EventProcessor for MessageEventProcessor {
                 ..
             } => {
                 Self::handle_tool_call_delta(&message_id, tool_call_id.as_str(), delta, ctx);
+                ProcessingResult::Handled
+            }
+            ClientEvent::StreamReset { message_id, .. } => {
+                Self::handle_stream_reset(&message_id, ctx);
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,
@@ -151,6 +156,29 @@ impl MessageEventProcessor {
             Self::insert_placeholder_message(id, ctx);
             if !Self::apply_tool_call_delta(id, tool_call_id, &delta, ctx) {
                 tracing::warn!(target: "tui.message", "ToolCallDelta received for unknown ID: {}", id);
+            }
+        }
+    }
+
+    fn handle_stream_reset(id: &MessageId, ctx: &mut ProcessingContext) {
+        for item in ctx.chat_store.iter_mut() {
+            if let ChatItemData::Message(message) = &mut item.data
+                && message.id() == id.as_str()
+            {
+                if let MessageData::Assistant {
+                    content: blocks, ..
+                } = &mut message.data
+                {
+                    blocks.clear();
+                    *ctx.messages_updated = true;
+                } else {
+                    tracing::warn!(
+                        target: "tui.message",
+                        "StreamReset for non-assistant message: {}",
+                        id
+                    );
+                }
+                return;
             }
         }
     }
@@ -381,6 +409,72 @@ mod tests {
             llm_usage: LlmUsageState::default(),
             _workspace_root: workspace_root,
         }
+    }
+
+    #[tokio::test]
+    async fn test_stream_reset_clears_placeholder_message_content() {
+        let mut processor = MessageEventProcessor::new();
+        let mut ctx = create_test_context().await;
+
+        let mut in_flight_operations = std::collections::HashSet::new();
+        let notification_manager =
+            std::sync::Arc::new(crate::notifications::NotificationManager::new(
+                &steer_grpc::client_api::Preferences::default(),
+            ));
+        let mut processing_ctx = ProcessingContext {
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            client: &ctx.client,
+            notification_manager: &notification_manager,
+            input_panel_state: &mut ctx.input_panel_state,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
+            messages_updated: &mut ctx.messages_updated,
+            in_flight_operations: &mut in_flight_operations,
+            queued_head: &mut ctx.queued_head,
+            queued_count: &mut ctx.queued_count,
+        };
+
+        let message_id = MessageId::from_string("msg_stream_reset");
+
+        let result = processor
+            .process(
+                ClientEvent::MessageDelta {
+                    id: message_id.clone(),
+                    delta: "partial output".to_string(),
+                },
+                &mut processing_ctx,
+            )
+            .await;
+        assert!(matches!(result, ProcessingResult::Handled));
+
+        let result = processor
+            .process(
+                ClientEvent::StreamReset {
+                    op_id: steer_grpc::client_api::OpId::from(uuid::Uuid::new_v4()),
+                    message_id: message_id.clone(),
+                },
+                &mut processing_ctx,
+            )
+            .await;
+        assert!(matches!(result, ProcessingResult::Handled));
+
+        let stored = processing_ctx
+            .chat_store
+            .get_by_id(&message_id.as_str().to_string())
+            .expect("message should exist");
+        let ChatItemData::Message(message) = &stored.data else {
+            panic!("expected message item")
+        };
+        let MessageData::Assistant { content } = &message.data else {
+            panic!("expected assistant message")
+        };
+        assert!(content.is_empty(), "reset should clear streamed content");
     }
 
     #[tokio::test]

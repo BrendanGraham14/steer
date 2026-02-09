@@ -191,6 +191,7 @@ message StreamDeltaEvent {
     TextDelta text = 4;
     ThinkingDelta thinking = 5;
     ToolCallDelta tool_call = 6;
+    ResetDelta reset = 8;
   }
 }
 
@@ -209,6 +210,8 @@ message ToolCallDelta {
     string argument_chunk = 3;
   }
 }
+
+message ResetDelta {}
 
 message ConversationCompactedEvent {
   CompactionRecord record = 1;

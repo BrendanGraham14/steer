@@ -290,6 +290,7 @@ mod event_conversion_tests {
         AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
     };
     use steer_core::app::domain::delta::StreamDelta;
+    use steer_proto::agent::v1 as proto;
     use steer_core::app::domain::event::{CompactResult, CompactTrigger, SessionEvent};
     use steer_core::config::model::builtin;
     use uuid::Uuid;
@@ -680,6 +681,39 @@ mod event_conversion_tests {
                 assert_eq!(chunk, "{\"x\":");
             }
             other => panic!("Expected ToolCallDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_stream_reset_roundtrip() {
+        let op_id = OpId::from(Uuid::new_v4());
+        let message_id = MessageId::from_string("msg_reset");
+
+        let reset_delta = StreamDelta::Reset {
+            op_id,
+            message_id: message_id.clone(),
+        };
+
+        let proto_event = stream_delta_to_proto(reset_delta, 0, 0).unwrap();
+        let event = proto_event.event.expect("session event should be present");
+        let proto::session_event::Event::StreamDelta(stream_delta) = event else {
+            panic!("expected stream delta event")
+        };
+        assert!(matches!(
+            stream_delta.delta_type,
+            Some(proto::stream_delta_event::DeltaType::Reset(_))
+        ));
+
+        let client_event = proto_to_client_event(proto_event).unwrap().unwrap();
+        match client_event {
+            ClientEvent::StreamReset {
+                op_id: received_op,
+                message_id: received_msg,
+            } => {
+                assert_eq!(received_op, op_id);
+                assert_eq!(received_msg, message_id);
+            }
+            other => panic!("Expected StreamReset, got {other:?}"),
         }
     }
 }

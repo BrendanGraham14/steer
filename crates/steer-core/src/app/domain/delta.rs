@@ -21,6 +21,11 @@ pub enum StreamDelta {
         tool_call_id: ToolCallId,
         delta: ToolCallDelta,
     },
+
+    Reset {
+        op_id: OpId,
+        message_id: MessageId,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +39,8 @@ impl StreamDelta {
         match self {
             StreamDelta::TextChunk { op_id, .. }
             | StreamDelta::ThinkingChunk { op_id, .. }
-            | StreamDelta::ToolCallChunk { op_id, .. } => *op_id,
+            | StreamDelta::ToolCallChunk { op_id, .. }
+            | StreamDelta::Reset { op_id, .. } => *op_id,
         }
     }
 
@@ -42,7 +48,8 @@ impl StreamDelta {
         match self {
             StreamDelta::TextChunk { message_id, .. }
             | StreamDelta::ThinkingChunk { message_id, .. }
-            | StreamDelta::ToolCallChunk { message_id, .. } => Some(message_id),
+            | StreamDelta::ToolCallChunk { message_id, .. }
+            | StreamDelta::Reset { message_id, .. } => Some(message_id),
         }
     }
 

@@ -130,6 +130,16 @@ impl EffectInterpreter {
                         let _ = delta_stream.tx.send(delta).await;
                     }
                 }
+                StreamChunk::Reset => {
+                    if let Some(delta_stream) = &delta_stream {
+                        let (op_id, message_id) = &delta_stream.context;
+                        let delta = StreamDelta::Reset {
+                            op_id: *op_id,
+                            message_id: message_id.clone(),
+                        };
+                        let _ = delta_stream.tx.send(delta).await;
+                    }
+                }
                 StreamChunk::MessageComplete(response) => {
                     final_response = Some(response);
                 }
