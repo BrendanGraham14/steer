@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use crate::agents::{
     McpAccessPolicy, agent_spec, agent_specs, agent_specs_prompt, default_agent_spec_id,
 };
-use steer_tools::ToolSpec;
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::runtime::RuntimeService;
 use crate::app::domain::types::SessionId;
@@ -21,6 +20,7 @@ use crate::workspace::{
     CreateWorkspaceRequest, EnvironmentId, RepoRef, VcsKind, VcsStatus, Workspace,
     WorkspaceCreateStrategy, WorkspaceRef, create_workspace_from_session_config,
 };
+use steer_tools::ToolSpec;
 use steer_tools::result::{AgentResult, AgentWorkspaceInfo, AgentWorkspaceRevision};
 use steer_tools::tools::dispatch_agent::{
     DispatchAgentError, DispatchAgentParams, DispatchAgentTarget, DispatchAgentToolSpec,
@@ -146,17 +146,17 @@ impl StaticTool for DispatchAgentTool {
         let mut repo_id = None;
         let mut repo_ref = None;
 
-        if let Some(manager) = ctx.services.workspace_manager() {
-            if let Ok(info) = manager.resolve_workspace(&base_path).await {
-                workspace_id = Some(info.workspace_id);
-                workspace_name.clone_from(&info.name);
-                repo_id = Some(info.repo_id);
-                workspace_ref = Some(WorkspaceRef {
-                    environment_id: info.environment_id,
-                    workspace_id: info.workspace_id,
-                    repo_id: info.repo_id,
-                });
-            }
+        if let Some(manager) = ctx.services.workspace_manager()
+            && let Ok(info) = manager.resolve_workspace(&base_path).await
+        {
+            workspace_id = Some(info.workspace_id);
+            workspace_name.clone_from(&info.name);
+            repo_id = Some(info.repo_id);
+            workspace_ref = Some(WorkspaceRef {
+                environment_id: info.environment_id,
+                workspace_id: info.workspace_id,
+                repo_id: info.repo_id,
+            });
         }
 
         if let Some(manager) = ctx.services.repo_manager() {
@@ -347,9 +347,7 @@ Notes:
             allow_mcp_tools,
         };
 
-        let spawn_result = spawner
-            .spawn(config, ctx.cancellation_token.clone())
-            .await;
+        let spawn_result = spawner.spawn(config, ctx.cancellation_token.clone()).await;
 
         let mut workspace_info = None;
 
@@ -357,14 +355,14 @@ Notes:
             let revision = match manager.get_workspace_status(workspace_id).await {
                 Ok(status) => match status.vcs {
                     Some(vcs) => match vcs.status {
-                        VcsStatus::Jj(jj_status) => jj_status.working_copy.map(|wc| {
-                            AgentWorkspaceRevision {
+                        VcsStatus::Jj(jj_status) => {
+                            jj_status.working_copy.map(|wc| AgentWorkspaceRevision {
                                 vcs_kind: "jj".to_string(),
                                 revision_id: wc.commit_id,
                                 summary: wc.description,
                                 change_id: Some(wc.change_id),
-                            }
-                        }),
+                            })
+                        }
                         VcsStatus::Git(_) => None,
                     },
                     None => None,
@@ -421,7 +419,10 @@ fn build_runtime_tool_executor(
     if let Some(manager) = parent_services.repo_manager() {
         services = services.with_repo_manager(manager.clone());
     }
-    if parent_services.capabilities().contains(Capabilities::NETWORK) {
+    if parent_services
+        .capabilities()
+        .contains(Capabilities::NETWORK)
+    {
         services = services.with_network();
     }
 
@@ -473,9 +474,7 @@ async fn resume_agent_session(
         })
         .ok_or_else(|| {
             StaticToolError::execution(DispatchAgentError::SpawnFailed {
-                message: format!(
-                    "Session {session_id} is missing a SessionCreated event"
-                ),
+                message: format!("Session {session_id} is missing a SessionCreated event"),
             })
         })?;
 
@@ -529,21 +528,21 @@ async fn resume_agent_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::{AgentSpec, AgentSpecError, McpAccessPolicy, register_agent_spec};
     use crate::api::Client as ApiClient;
     use crate::api::{ApiError, CompletionResponse, Provider};
     use crate::app::conversation::{AssistantContent, Message, MessageData};
     use crate::app::domain::session::EventStore;
     use crate::app::domain::session::event_store::InMemoryEventStore;
     use crate::app::domain::types::ToolCallId;
-    use crate::agents::{AgentSpec, AgentSpecError, McpAccessPolicy, register_agent_spec};
     use crate::config::model::builtin;
     use crate::model_registry::ModelRegistry;
     use crate::session::state::{
         ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides, ToolApprovalPolicyOverrides,
         ToolFilter, ToolVisibility, UnapprovedBehavior,
     };
-    use crate::tools::services::{AgentSpawner, SubAgentError, SubAgentResult, ToolServices};
     use crate::tools::McpTransport;
+    use crate::tools::services::{AgentSpawner, SubAgentError, SubAgentResult, ToolServices};
     use async_trait::async_trait;
     use std::collections::{HashMap, HashSet};
     use std::sync::Mutex as StdMutex;
@@ -745,13 +744,12 @@ mod tests {
             provider_registry,
             model_registry,
         ));
-        let workspace = crate::workspace::create_workspace(
-            &steer_workspace::WorkspaceConfig::Local {
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         let parent_session_id = SessionId::new();
         let session_id = SessionId::new();
@@ -771,11 +769,7 @@ mod tests {
             .await
             .unwrap();
 
-        let services = Arc::new(ToolServices::new(
-            workspace,
-            event_store,
-            api_client,
-        ));
+        let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
@@ -804,13 +798,12 @@ mod tests {
             model.provider.clone(),
             Arc::new(StubProvider::new("stub-response")),
         );
-        let workspace = crate::workspace::create_workspace(
-            &steer_workspace::WorkspaceConfig::Local {
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         let parent_session_id = SessionId::new();
         let session_id = SessionId::new();
@@ -830,11 +823,7 @@ mod tests {
             .await
             .unwrap();
 
-        let services = Arc::new(ToolServices::new(
-            workspace,
-            event_store,
-            api_client,
-        ));
+        let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
@@ -848,7 +837,10 @@ mod tests {
             .unwrap();
 
         assert!(result.content.contains("stub-response"));
-        assert_eq!(result.session_id.as_deref(), Some(session_id.to_string().as_str()));
+        assert_eq!(
+            result.session_id.as_deref(),
+            Some(session_id.to_string().as_str())
+        );
     }
 
     #[tokio::test]
@@ -863,13 +855,12 @@ mod tests {
         ));
         let model = builtin::claude_sonnet_4_5();
         api_client.insert_test_provider(model.provider.clone(), Arc::new(CancelAwareProvider));
-        let workspace = crate::workspace::create_workspace(
-            &steer_workspace::WorkspaceConfig::Local {
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         let parent_session_id = SessionId::new();
         let session_id = SessionId::new();
@@ -889,11 +880,7 @@ mod tests {
             .await
             .unwrap();
 
-        let services = Arc::new(ToolServices::new(
-            workspace,
-            event_store,
-            api_client,
-        ));
+        let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
         let cancel_token = CancellationToken::new();
         let ctx = StaticToolContext {
@@ -924,13 +911,12 @@ mod tests {
             provider_registry,
             model_registry,
         ));
-        let workspace = crate::workspace::create_workspace(
-            &steer_workspace::WorkspaceConfig::Local {
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         let session_id = SessionId::new();
         let spawner = StubAgentSpawner {
@@ -959,7 +945,10 @@ mod tests {
         };
 
         let result = DispatchAgentTool.execute(params, &ctx).await.unwrap();
-        assert_eq!(result.session_id.as_deref(), Some(session_id.to_string().as_str()));
+        assert_eq!(
+            result.session_id.as_deref(),
+            Some(session_id.to_string().as_str())
+        );
     }
 
     #[tokio::test]
@@ -972,32 +961,37 @@ mod tests {
             provider_registry,
             model_registry,
         ));
-        let workspace = crate::workspace::create_workspace(
-            &steer_workspace::WorkspaceConfig::Local {
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         let parent_session_id = SessionId::new();
         let mut session_config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
-        session_config.tool_config.backends.push(BackendConfig::Mcp {
-            server_name: "allowed-server".to_string(),
-            transport: McpTransport::Tcp {
-                host: "127.0.0.1".to_string(),
-                port: 1111,
-            },
-            tool_filter: ToolFilter::All,
-        });
-        session_config.tool_config.backends.push(BackendConfig::Mcp {
-            server_name: "blocked-server".to_string(),
-            transport: McpTransport::Tcp {
-                host: "127.0.0.1".to_string(),
-                port: 2222,
-            },
-            tool_filter: ToolFilter::All,
-        });
+        session_config
+            .tool_config
+            .backends
+            .push(BackendConfig::Mcp {
+                server_name: "allowed-server".to_string(),
+                transport: McpTransport::Tcp {
+                    host: "127.0.0.1".to_string(),
+                    port: 1111,
+                },
+                tool_filter: ToolFilter::All,
+            });
+        session_config
+            .tool_config
+            .backends
+            .push(BackendConfig::Mcp {
+                server_name: "blocked-server".to_string(),
+                transport: McpTransport::Tcp {
+                    host: "127.0.0.1".to_string(),
+                    port: 2222,
+                },
+                tool_filter: ToolFilter::All,
+            });
 
         event_store.create_session(parent_session_id).await.unwrap();
         event_store
@@ -1079,13 +1073,12 @@ mod tests {
             provider_registry,
             model_registry,
         ));
-        let workspace = crate::workspace::create_workspace(
-            &steer_workspace::WorkspaceConfig::Local {
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         let parent_session_id = SessionId::new();
         let parent_model = builtin::claude_sonnet_4_5();
@@ -1162,13 +1155,12 @@ mod tests {
             provider_registry,
             model_registry,
         ));
-        let workspace = crate::workspace::create_workspace(
-            &steer_workspace::WorkspaceConfig::Local {
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         let parent_session_id = SessionId::new();
         let parent_model = builtin::claude_sonnet_4_5();
@@ -1246,13 +1238,12 @@ mod tests {
             provider_registry,
             model_registry,
         ));
-        let workspace = crate::workspace::create_workspace(
-            &steer_workspace::WorkspaceConfig::Local {
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
                 path: std::env::current_dir().unwrap(),
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         let parent_session_id = SessionId::new();
         let session_id = SessionId::new();

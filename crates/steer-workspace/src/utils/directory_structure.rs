@@ -59,28 +59,27 @@ impl DirectoryStructureUtils {
                 continue;
             }
 
-            if let Ok(relative_path) = entry.path().strip_prefix(root_path) {
-                if let Some(path_str) = relative_path.to_str() {
-                    if !path_str.is_empty() {
-                        // Track immediate child directories that walker saw
-                        if entry.depth() == 1 && entry.file_type().is_some_and(|ft| ft.is_dir()) {
-                            if let Some(dir_name) = relative_path.file_name() {
-                                walker_seen_dirs.insert(dir_name.to_string_lossy().to_string());
-                            }
-                        }
+            if let Ok(relative_path) = entry.path().strip_prefix(root_path)
+                && let Some(path_str) = relative_path.to_str()
+                && !path_str.is_empty()
+            {
+                // Track immediate child directories that walker saw
+                if entry.depth() == 1
+                    && entry.file_type().is_some_and(|ft| ft.is_dir())
+                    && let Some(dir_name) = relative_path.file_name()
+                {
+                    walker_seen_dirs.insert(dir_name.to_string_lossy().to_string());
+                }
 
                 if item_count >= limit {
                     truncated += 1;
                     continue;
                 }
 
-                        if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-                            paths.push(format!("{path_str}/"));
-                        } else {
-                            paths.push(path_str.to_string());
-                        }
-                        item_count += 1;
-                    }
+                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                    paths.push(format!("{path_str}/"));
+                } else {
+                    paths.push(path_str.to_string());
                 }
                 item_count += 1;
             }

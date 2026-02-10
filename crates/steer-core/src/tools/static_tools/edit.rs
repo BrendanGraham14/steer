@@ -1,10 +1,10 @@
-use async_trait::async_trait;
+use super::workspace_op_error;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use async_trait::async_trait;
 use steer_tools::result::{EditResult, MultiEditResult};
 use steer_tools::tools::edit::multi_edit::{MultiEditError, MultiEditParams, MultiEditToolSpec};
 use steer_tools::tools::edit::{EditError, EditParams, EditToolSpec};
-use super::workspace_op_error;
 use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
 
 pub struct EditTool;

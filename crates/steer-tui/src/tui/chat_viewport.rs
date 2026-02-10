@@ -294,15 +294,14 @@ impl ChatViewport {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
         for item in raw {
-            if let ChatItemData::Message(message) = &item.data {
-                if let MessageData::Tool {
+            if let ChatItemData::Message(message) = &item.data
+                && let MessageData::Tool {
                     tool_use_id,
                     result,
                     ..
                 } = &message.data
-                {
-                    tool_results.insert(tool_use_id.clone(), result.clone());
-                }
+            {
+                tool_results.insert(tool_use_id.clone(), result.clone());
             }
         }
 
@@ -382,7 +381,7 @@ impl ChatViewport {
                                 id: match &item.data {
                                     ChatItemData::SystemNotice { id, .. } => id.clone(),
                                     ChatItemData::CoreCmdResponse { id, .. } => id.clone(),
-                                    ChatItemData::InFlightOperation { id, .. } => id.to_string(),
+                                    ChatItemData::InFlightOperation { id, .. } => id.clone(),
                                     ChatItemData::SlashInput { id, .. } => id.clone(),
                                     ChatItemData::TuiCommandResponse { id, .. } => id.clone(),
                                     _ => unreachable!(),

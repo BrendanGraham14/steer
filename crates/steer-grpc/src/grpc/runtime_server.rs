@@ -460,8 +460,8 @@ impl agent_service_server::AgentService for RuntimeAgentService {
 
         let policy_overrides = proto_to_session_policy_overrides(req.policy_overrides);
 
-        let workspace_id = None;
-        let workspace_ref = None;
+        let mut workspace_id = None;
+        let mut workspace_ref = None;
         let mut repo_ref = None;
         let parent_session_id = None;
         let mut workspace_name = None;
@@ -490,6 +490,20 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     warn!("Failed to resolve repo for session: {}", err);
                 }
             }
+        }
+
+        if workspace_id.is_none()
+            && workspace_ref.is_none()
+            && let steer_core::session::state::WorkspaceConfig::Local { path } = &workspace_config
+            && let Ok(info) = self.workspace_manager.resolve_workspace(path).await
+        {
+            workspace_id = Some(info.workspace_id);
+            workspace_ref = Some(steer_workspace::WorkspaceRef {
+                environment_id: info.environment_id,
+                workspace_id: info.workspace_id,
+                repo_id: info.repo_id,
+            });
+            workspace_name.clone_from(&info.name);
         }
 
         let session_config = SessionConfig {
@@ -1111,10 +1125,10 @@ impl agent_service_server::AgentService for RuntimeAgentService {
         let mut all_models = Vec::new();
 
         for model in self.model_registry.recommended() {
-            if let Some(ref provider_id) = req.provider_id {
-                if model.provider.storage_key() != *provider_id {
-                    continue;
-                }
+            if let Some(ref provider_id) = req.provider_id
+                && model.provider.storage_key() != *provider_id
+            {
+                continue;
             }
 
             let provider_id = model.provider.clone();

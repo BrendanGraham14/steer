@@ -582,18 +582,15 @@ impl Client {
                             let mut started_now = false;
                             let mut flushed_now = false;
 
-                            if let Some(id) = &tc.id {
-                                if !id.is_empty() {
+                            if let Some(id) = &tc.id
+                                && !id.is_empty() {
                                     entry.id.clone_from(id);
                                 }
-                            }
-                            if let Some(func) = &tc.function {
-                                if let Some(name) = &func.name {
-                                    if !name.is_empty() {
+                            if let Some(func) = &tc.function
+                                && let Some(name) = &func.name
+                                    && !name.is_empty() {
                                         entry.name.clone_from(name);
                                     }
-                                }
-                            }
 
                             if let std::collections::hash_map::Entry::Vacant(e) = tool_call_positions.entry(tc.index) {
                                 let pos = content.len();
@@ -621,8 +618,8 @@ impl Client {
                                 };
                             }
 
-                            if let Some(func) = &tc.function {
-                                if let Some(args) = &func.arguments {
+                            if let Some(func) = &tc.function
+                                && let Some(args) = &func.arguments {
                                     entry.args.push_str(args);
                                     if tool_calls_started.contains(&tc.index) {
                                         if started_now {
@@ -641,7 +638,6 @@ impl Client {
                                         }
                                     }
                                 }
-                            }
 
                             if started_now && !flushed_now && !entry.args.is_empty() {
                                 yield StreamChunk::ToolUseInputDelta {

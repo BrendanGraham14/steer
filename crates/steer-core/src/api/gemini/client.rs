@@ -34,12 +34,6 @@ struct GeminiFileData {
     file_uri: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)] // Added Serialize and Clone
-struct GeminiCodeExecutionResult {
-    outcome: String, // e.g., "OK", "ERROR"
-                     // Potentially add output field later if needed
-}
-
 pub struct GeminiClient {
     api_key: String,
     client: HttpClient,
@@ -826,14 +820,13 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
         }
 
         // Fix integer format if necessary
-        if simplified_prop.get("type") == Some(&serde_json::Value::String("integer".to_string())) {
-            if let Some(format_val) = simplified_prop.get_mut("format") {
-                if format_val.as_str() == Some("uint64") {
-                    *format_val = serde_json::Value::String("int64".to_string());
-                    // Optionally remove minimum if Gemini doesn't support it with int64
-                    // simplified_prop.remove("minimum");
-                }
-            }
+        if simplified_prop.get("type") == Some(&serde_json::Value::String("integer".to_string()))
+            && let Some(format_val) = simplified_prop.get_mut("format")
+            && format_val.as_str() == Some("uint64")
+        {
+            *format_val = serde_json::Value::String("int64".to_string());
+            // Optionally remove minimum if Gemini doesn't support it with int64
+            // simplified_prop.remove("minimum");
         }
 
         // For string types, Gemini only supports 'enum' and 'date-time' formats
@@ -843,12 +836,11 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
                 .and_then(|f| f.as_str())
                 .is_some_and(|format_str| format_str != "enum" && format_str != "date-time");
 
-            if should_remove_format {
-                if let Some(format_val) = simplified_prop.remove("format") {
-                    if let Some(format_str) = format_val.as_str() {
-                        debug!(target: "gemini::simplify_property_schema", "Removed unsupported format '{}' from string property '{}' in tool '{}'", format_str, key, tool_name);
-                    }
-                }
+            if should_remove_format
+                && let Some(format_val) = simplified_prop.remove("format")
+                && let Some(format_str) = format_val.as_str()
+            {
+                debug!(target: "gemini::simplify_property_schema", "Removed unsupported format '{}' from string property '{}' in tool '{}'", format_str, key, tool_name);
             }
 
             // Also remove other string validation fields that might not be supported
@@ -864,31 +856,30 @@ fn simplify_property_schema(key: &str, tool_name: &str, property_value: &Value) 
         }
 
         // Recursively simplify 'items' if this is an array type
-        if simplified_prop.get("type") == Some(&serde_json::Value::String("array".to_string())) {
-            if let Some(items_val) = simplified_prop.get_mut("items") {
-                *items_val =
-                    simplify_property_schema(&format!("{key}.items"), tool_name, items_val);
-            }
+        if simplified_prop.get("type") == Some(&serde_json::Value::String("array".to_string()))
+            && let Some(items_val) = simplified_prop.get_mut("items")
+        {
+            *items_val = simplify_property_schema(&format!("{key}.items"), tool_name, items_val);
         }
 
         // Recursively simplify nested 'properties' if this is an object type
-        if simplified_prop.get("type") == Some(&serde_json::Value::String("object".to_string())) {
-            if let Some(Value::Object(props)) = simplified_prop.get_mut("properties") {
-                let simplified_nested_props: serde_json::Map<String, Value> = props
-                    .iter()
-                    .map(|(nested_key, nested_value)| {
-                        (
-                            nested_key.clone(),
-                            simplify_property_schema(
-                                &format!("{key}.{nested_key}"),
-                                tool_name,
-                                nested_value,
-                            ),
-                        )
-                    })
-                    .collect();
-                *props = simplified_nested_props;
-            }
+        if simplified_prop.get("type") == Some(&serde_json::Value::String("object".to_string()))
+            && let Some(Value::Object(props)) = simplified_prop.get_mut("properties")
+        {
+            let simplified_nested_props: serde_json::Map<String, Value> = props
+                .iter()
+                .map(|(nested_key, nested_value)| {
+                    (
+                        nested_key.clone(),
+                        simplify_property_schema(
+                            &format!("{key}.{nested_key}"),
+                            tool_name,
+                            nested_value,
+                        ),
+                    )
+                })
+                .collect();
+            *props = simplified_nested_props;
         }
 
         serde_json::Value::Object(simplified_prop)
@@ -945,19 +936,19 @@ fn convert_tools(tools: Vec<ToolSchema>) -> Vec<GeminiTool> {
 
 fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiError> {
     // Log prompt feedback if present
-    if let Some(feedback) = &response.prompt_feedback {
-        if let Some(reason) = &feedback.block_reason {
-            let details = format!(
-                "Prompt blocked due to {:?}. Safety ratings: {:?}",
-                reason, feedback.safety_ratings
-            );
-            warn!(target: "gemini::convert_response", "{}", details);
-            // Return the specific RequestBlocked error
-            return Err(ApiError::RequestBlocked {
-                provider: "google".to_string(), // Assuming "google" is the provider name
-                details,
-            });
-        }
+    if let Some(feedback) = &response.prompt_feedback
+        && let Some(reason) = &feedback.block_reason
+    {
+        let details = format!(
+            "Prompt blocked due to {:?}. Safety ratings: {:?}",
+            reason, feedback.safety_ratings
+        );
+        warn!(target: "gemini::convert_response", "{}", details);
+        // Return the specific RequestBlocked error
+        return Err(ApiError::RequestBlocked {
+            provider: "google".to_string(), // Assuming "google" is the provider name
+            details,
+        });
     }
 
     // Check candidates *after* checking for prompt blocking

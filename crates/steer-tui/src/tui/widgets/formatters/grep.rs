@@ -39,14 +39,15 @@ impl ToolFormatter for GrepFormatter {
         }
 
         // Add path if not current directory
-        if let Some(path) = &params.path {
-            if path != "." && !path.is_empty() {
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    format!("path={}", truncate_middle(path, 30)),
-                    Style::default(),
-                ));
-            }
+        if let Some(path) = &params.path
+            && path != "."
+            && !path.is_empty()
+        {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                format!("path={}", truncate_middle(path, 30)),
+                Style::default(),
+            ));
         }
 
         // Add count info from results
@@ -111,13 +112,14 @@ impl ToolFormatter for GrepFormatter {
             )));
         }
 
-        if let Some(path) = &params.path {
-            if path != "." && !path.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    format!("Path: {path}"),
-                    Style::default(),
-                )));
-            }
+        if let Some(path) = &params.path
+            && path != "."
+            && !path.is_empty()
+        {
+            lines.push(Line::from(Span::styled(
+                format!("Path: {path}"),
+                Style::default(),
+            )));
         }
 
         // Show output if we have results

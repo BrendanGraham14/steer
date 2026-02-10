@@ -35,52 +35,52 @@ fn format_todo_list(todos: &[TodoItem], theme: &Theme) -> Vec<Line<'static>> {
         TodoStatus::Pending,
         TodoStatus::Completed,
     ] {
-        if let Some(todos) = by_status.get(status) {
-            if !todos.is_empty() {
-                // Add empty line between sections (but not before the first one)
-                if !first_section {
-                    lines.push(Line::from(""));
-                }
-                first_section = false;
+        if let Some(todos) = by_status.get(status)
+            && !todos.is_empty()
+        {
+            // Add empty line between sections (but not before the first one)
+            if !first_section {
+                lines.push(Line::from(""));
+            }
+            first_section = false;
 
-                let status_style = match *status {
-                    TodoStatus::InProgress => theme.style(Component::TodoInProgress),
-                    TodoStatus::Pending => theme.style(Component::TodoPending),
-                    TodoStatus::Completed => theme.style(Component::TodoCompleted),
+            let status_style = match *status {
+                TodoStatus::InProgress => theme.style(Component::TodoInProgress),
+                TodoStatus::Pending => theme.style(Component::TodoPending),
+                TodoStatus::Completed => theme.style(Component::TodoCompleted),
+            };
+
+            lines.push(Line::from(Span::styled(
+                format!("{} ({}):", status, todos.len()),
+                status_style,
+            )));
+
+            // Sort todos by priority (high -> low)
+            let mut sorted_todos = todos.clone();
+            sorted_todos.sort_by_key(|todo| match todo.priority {
+                TodoPriority::High => 0,
+                TodoPriority::Medium => 1,
+                TodoPriority::Low => 2,
+            });
+
+            for todo in sorted_todos {
+                let priority_prefix = match todo.priority {
+                    TodoPriority::High => "[H] ",
+                    TodoPriority::Medium => "[M] ",
+                    TodoPriority::Low => "[L] ",
                 };
 
-                lines.push(Line::from(Span::styled(
-                    format!("{} ({}):", status, todos.len()),
-                    status_style,
-                )));
+                let priority_style = match todo.priority {
+                    TodoPriority::High => theme.style(Component::TodoHigh),
+                    TodoPriority::Medium => theme.style(Component::TodoMedium),
+                    TodoPriority::Low => theme.style(Component::TodoLow),
+                };
 
-                // Sort todos by priority (high -> low)
-                let mut sorted_todos = todos.clone();
-                sorted_todos.sort_by_key(|todo| match todo.priority {
-                    TodoPriority::High => 0,
-                    TodoPriority::Medium => 1,
-                    TodoPriority::Low => 2,
-                });
-
-                for todo in sorted_todos {
-                    let priority_prefix = match todo.priority {
-                        TodoPriority::High => "[H] ",
-                        TodoPriority::Medium => "[M] ",
-                        TodoPriority::Low => "[L] ",
-                    };
-
-                    let priority_style = match todo.priority {
-                        TodoPriority::High => theme.style(Component::TodoHigh),
-                        TodoPriority::Medium => theme.style(Component::TodoMedium),
-                        TodoPriority::Low => theme.style(Component::TodoLow),
-                    };
-
-                    lines.push(Line::from(vec![
-                        Span::styled("  ", Style::default()),
-                        Span::styled(priority_prefix, priority_style),
-                        Span::raw(todo.content.clone()),
-                    ]));
-                }
+                lines.push(Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(priority_prefix, priority_style),
+                    Span::raw(todo.content.clone()),
+                ]));
             }
         }
     }

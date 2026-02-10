@@ -28,7 +28,7 @@ impl ToolFormatter for ExternalFormatter {
 
         // Param preview
         let preview = json_preview(params, 30);
-        spans.push(Span::styled(preview.to_string(), theme.dim_text()));
+        spans.push(Span::styled(preview.clone(), theme.dim_text()));
 
         if let Some(result) = result {
             match result {

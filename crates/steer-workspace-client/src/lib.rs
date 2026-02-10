@@ -319,10 +319,10 @@ impl Workspace for RemoteWorkspace {
         let mut cache = self.environment_cache.write().await;
 
         // Check if we have valid cached data
-        if let Some(cached) = cache.as_ref() {
-            if !cached.is_expired() {
-                return Ok(cached.info.clone());
-            }
+        if let Some(cached) = cache.as_ref()
+            && !cached.is_expired()
+        {
+            return Ok(cached.info.clone());
         }
 
         // Collect fresh environment info from remote
@@ -597,5 +597,4 @@ mod tests {
         assert_eq!(env_info.memory_file_content, None);
         assert_eq!(env_info.memory_file_name, None);
     }
-
 }

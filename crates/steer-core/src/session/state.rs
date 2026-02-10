@@ -1,6 +1,6 @@
 use crate::config::model::ModelId;
-use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
 use crate::error::Result;
+use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -352,10 +352,11 @@ pub enum ToolRuleOverrides {
 }
 
 /// Tool visibility configuration - controls which tools are shown to the AI agent
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "tools", rename_all = "snake_case")]
 pub enum ToolVisibility {
     /// Show all registered tools to the AI
+    #[default]
     All,
 
     /// Only show read-only tools to the AI
@@ -366,12 +367,6 @@ pub enum ToolVisibility {
 
     /// Hide specific tools from the AI (blacklist)
     Blacklist(HashSet<String>),
-}
-
-impl Default for ToolVisibility {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -580,19 +575,15 @@ impl RemoteAuth {
 /// Tool filtering configuration for backends
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ToolFilter {
     /// Include all available tools
+    #[default]
     All,
     /// Include only the specified tools
     Include(Vec<String>),
     /// Include all tools except the specified ones
     Exclude(Vec<String>),
-}
-
-impl Default for ToolFilter {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 /// Configuration for MCP server backends

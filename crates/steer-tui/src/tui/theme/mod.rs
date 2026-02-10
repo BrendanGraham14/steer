@@ -98,16 +98,16 @@ impl<'de> Deserialize<'de> for RgbColor {
         let s = String::deserialize(deserializer)?;
 
         // Try hex color first
-        if let Some(hex) = s.strip_prefix('#') {
-            if hex.len() == 6 {
-                let r = u8::from_str_radix(&hex[0..2], 16)
-                    .map_err(|_| serde::de::Error::custom(format!("Invalid hex color: {s}")))?;
-                let g = u8::from_str_radix(&hex[2..4], 16)
-                    .map_err(|_| serde::de::Error::custom(format!("Invalid hex color: {s}")))?;
-                let b = u8::from_str_radix(&hex[4..6], 16)
-                    .map_err(|_| serde::de::Error::custom(format!("Invalid hex color: {s}")))?;
-                return Ok(RgbColor(r, g, b));
-            }
+        if let Some(hex) = s.strip_prefix('#')
+            && hex.len() == 6
+        {
+            let r = u8::from_str_radix(&hex[0..2], 16)
+                .map_err(|_| serde::de::Error::custom(format!("Invalid hex color: {s}")))?;
+            let g = u8::from_str_radix(&hex[2..4], 16)
+                .map_err(|_| serde::de::Error::custom(format!("Invalid hex color: {s}")))?;
+            let b = u8::from_str_radix(&hex[4..6], 16)
+                .map_err(|_| serde::de::Error::custom(format!("Invalid hex color: {s}")))?;
+            return Ok(RgbColor(r, g, b));
         }
 
         // Try named colors
@@ -382,16 +382,16 @@ fn load_syntect_theme(config: &SyntaxConfig) -> Result<syntect::highlighting::Th
 
 fn parse_direct_color(color_str: &str) -> Result<Color, ThemeError> {
     // Try hex color first
-    if let Some(hex) = color_str.strip_prefix('#') {
-        if hex.len() == 6 {
-            let r = u8::from_str_radix(&hex[0..2], 16)
-                .map_err(|_| ThemeError::InvalidColor(color_str.to_string()))?;
-            let g = u8::from_str_radix(&hex[2..4], 16)
-                .map_err(|_| ThemeError::InvalidColor(color_str.to_string()))?;
-            let b = u8::from_str_radix(&hex[4..6], 16)
-                .map_err(|_| ThemeError::InvalidColor(color_str.to_string()))?;
-            return Ok(Color::Rgb(r, g, b));
-        }
+    if let Some(hex) = color_str.strip_prefix('#')
+        && hex.len() == 6
+    {
+        let r = u8::from_str_radix(&hex[0..2], 16)
+            .map_err(|_| ThemeError::InvalidColor(color_str.to_string()))?;
+        let g = u8::from_str_radix(&hex[2..4], 16)
+            .map_err(|_| ThemeError::InvalidColor(color_str.to_string()))?;
+        let b = u8::from_str_radix(&hex[4..6], 16)
+            .map_err(|_| ThemeError::InvalidColor(color_str.to_string()))?;
+        return Ok(Color::Rgb(r, g, b));
     }
 
     // Try named colors

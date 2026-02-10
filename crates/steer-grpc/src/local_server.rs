@@ -795,7 +795,7 @@ mod tests {
             let new_events = persisted_kinds
                 .iter()
                 .skip(before_len)
-                .cloned()
+                .copied()
                 .collect::<Vec<_>>();
 
             panic!(

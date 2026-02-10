@@ -61,22 +61,22 @@ impl GitStatusUtils {
         let mut recent_commits = Vec::new();
         if let Ok(head_id) = repo.head_id() {
             let oid = head_id.detach();
-            if let Ok(object) = repo.find_object(oid) {
-                if let Ok(commit) = object.try_into_commit() {
-                    // Just show the HEAD commit for now, as rev_walk API changed
-                    let summary_bytes = commit.message_raw_sloppy();
-                    let summary = summary_bytes
-                        .lines()
-                        .next()
-                        .and_then(|line| std::str::from_utf8(line).ok())
-                        .unwrap_or("<no summary>");
-                    let short_id = oid.to_hex().to_string();
-                    let short_id = &short_id[..7.min(short_id.len())];
-                    recent_commits.push(crate::GitCommitSummary {
-                        id: short_id.to_string(),
-                        summary: summary.to_string(),
-                    });
-                }
+            if let Ok(object) = repo.find_object(oid)
+                && let Ok(commit) = object.try_into_commit()
+            {
+                // Just show the HEAD commit for now, as rev_walk API changed
+                let summary_bytes = commit.message_raw_sloppy();
+                let summary = summary_bytes
+                    .lines()
+                    .next()
+                    .and_then(|line| std::str::from_utf8(line).ok())
+                    .unwrap_or("<no summary>");
+                let short_id = oid.to_hex().to_string();
+                let short_id = &short_id[..7.min(short_id.len())];
+                recent_commits.push(crate::GitCommitSummary {
+                    id: short_id.to_string(),
+                    summary: summary.to_string(),
+                });
             }
         }
 

@@ -10,7 +10,9 @@ use crate::app::domain::session::EventStore;
 use crate::app::domain::types::SessionId;
 use crate::config::model::ModelId;
 use crate::session::state::BackendConfig;
-use crate::workspace::{RepoManager, RepoRef, Workspace, WorkspaceId, WorkspaceManager, WorkspaceRef};
+use crate::workspace::{
+    RepoManager, RepoRef, Workspace, WorkspaceId, WorkspaceManager, WorkspaceRef,
+};
 
 use super::capability::Capabilities;
 use steer_tools::ToolSchema;

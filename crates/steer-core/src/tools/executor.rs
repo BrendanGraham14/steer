@@ -211,27 +211,27 @@ impl ToolExecutor {
         Span::current().record("tool.name", tool_name);
         Span::current().record("tool.id", tool_id);
 
-        if let Some(validator) = self.validators.get_validator(tool_name) {
-            if let Some(ref llm_config_provider) = self.llm_config_provider {
-                let validation_context = ValidationContext {
-                    cancellation_token: token.clone(),
-                    llm_config_provider: llm_config_provider.clone(),
-                };
+        if let Some(validator) = self.validators.get_validator(tool_name)
+            && let Some(ref llm_config_provider) = self.llm_config_provider
+        {
+            let validation_context = ValidationContext {
+                cancellation_token: token.clone(),
+                llm_config_provider: llm_config_provider.clone(),
+            };
 
-                let validation_result = validator
-                    .validate(tool_call, &validation_context)
-                    .await
-                    .map_err(|e| {
-                        steer_tools::ToolError::InternalError(format!("Validation failed: {e}"))
-                    })?;
+            let validation_result = validator
+                .validate(tool_call, &validation_context)
+                .await
+                .map_err(|e| {
+                    steer_tools::ToolError::InternalError(format!("Validation failed: {e}"))
+                })?;
 
-                if !validation_result.allowed {
-                    return Err(steer_tools::ToolError::InternalError(
-                        validation_result
-                            .reason
-                            .unwrap_or_else(|| "Tool execution was denied".to_string()),
-                    ));
-                }
+            if !validation_result.allowed {
+                return Err(steer_tools::ToolError::InternalError(
+                    validation_result
+                        .reason
+                        .unwrap_or_else(|| "Tool execution was denied".to_string()),
+                ));
             }
         }
 

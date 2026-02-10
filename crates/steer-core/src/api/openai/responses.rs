@@ -486,23 +486,20 @@ impl Client {
         // in convert_output above.
 
         // Check for reasoning tokens in usage to verify reasoning happened
-        if let Some(usage) = response.usage {
-            if let Some(details) = usage.output_tokens_details {
-                if let Some(reasoning_tokens) = details.reasoning_tokens {
-                    if reasoning_tokens > 0
-                        && !content
-                            .iter()
-                            .any(|c| matches!(c, AssistantContent::Thought { .. }))
-                    {
-                        // Reasoning happened but wasn't included in the output
-                        debug!(
-                            target: "openai::responses",
-                            "Model used {} reasoning tokens but no reasoning output provided",
-                            reasoning_tokens
-                        );
-                    }
-                }
-            }
+        if let Some(usage) = response.usage
+            && let Some(details) = usage.output_tokens_details
+            && let Some(reasoning_tokens) = details.reasoning_tokens
+            && reasoning_tokens > 0
+            && !content
+                .iter()
+                .any(|c| matches!(c, AssistantContent::Thought { .. }))
+        {
+            // Reasoning happened but wasn't included in the output
+            debug!(
+                target: "openai::responses",
+                "Model used {} reasoning tokens but no reasoning output provided",
+                reasoning_tokens
+            );
         }
 
         CompletionResponse { content }
@@ -1435,13 +1432,13 @@ fn register_tool_call(
         tool_state.content,
         tool_state.tool_call_keys,
     );
-    if let Some(name) = name_to_emit {
-        if tool_state.tool_calls_started.insert(call_id.to_string()) {
-            return Some(StreamChunk::ToolUseStart {
-                id: call_id.to_string(),
-                name,
-            });
-        }
+    if let Some(name) = name_to_emit
+        && tool_state.tool_calls_started.insert(call_id.to_string())
+    {
+        return Some(StreamChunk::ToolUseStart {
+            id: call_id.to_string(),
+            name,
+        });
     }
     None
 }

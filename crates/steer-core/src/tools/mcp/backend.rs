@@ -230,11 +230,7 @@ impl McpBackend {
             "Discovered {} tools from MCP server '{}': {}",
             tools.len(),
             server_name,
-            tools
-                .keys()
-                .map(|k| k.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
+            tools.keys().cloned().collect::<Vec<_>>().join(", ")
         );
 
         let backend = Self {
@@ -357,7 +353,7 @@ impl ToolBackend for McpBackend {
             .map(|annotated| {
                 // Access the raw content from the Annotated wrapper
                 match annotated.raw {
-                    rmcp::model::RawContent::Text(text_content) => text_content.text.to_string(),
+                    rmcp::model::RawContent::Text(text_content) => text_content.text.clone(),
                     rmcp::model::RawContent::Image { .. } => "[Image content]".to_string(),
                     rmcp::model::RawContent::Resource { .. } => "[Resource content]".to_string(),
                     rmcp::model::RawContent::Audio { .. } => "[Audio content]".to_string(),

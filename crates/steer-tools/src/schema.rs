@@ -1,9 +1,8 @@
-
+use crate::error::ToolExecutionError;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::error::Error as StdError;
-use schemars::JsonSchema;
-use crate::error::ToolExecutionError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]

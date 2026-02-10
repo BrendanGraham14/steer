@@ -45,15 +45,16 @@ impl<W: Widget> Widget for ClippedRender<'_, W> {
         for y in 0..area.height {
             for x in 0..area.width {
                 let src_y = y + self.vertical_offset;
-                if src_y < full_height {
-                    if let Some(src_cell) = temp_buf.cell((x, src_y)) {
-                        let dst_x = area.x + x;
-                        let dst_y = area.y + y;
-                        if dst_x < buf.area.width && dst_y < buf.area.height {
-                            if let Some(dst_cell) = buf.cell_mut((dst_x, dst_y)) {
-                                *dst_cell = src_cell.clone();
-                            }
-                        }
+                if src_y < full_height
+                    && let Some(src_cell) = temp_buf.cell((x, src_y))
+                {
+                    let dst_x = area.x + x;
+                    let dst_y = area.y + y;
+                    if dst_x < buf.area.width
+                        && dst_y < buf.area.height
+                        && let Some(dst_cell) = buf.cell_mut((dst_x, dst_y))
+                    {
+                        *dst_cell = src_cell.clone();
                     }
                 }
             }

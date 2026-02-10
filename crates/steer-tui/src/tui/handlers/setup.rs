@@ -28,10 +28,10 @@ impl SetupHandler {
             .auth_providers
             .insert(provider_id.clone(), AuthStatus::InProgress);
 
-        if let Some(AuthProgress::OAuthStarted { auth_url }) = setup_state.auth_progress.as_ref() {
-            if let Err(e) = open::that(auth_url) {
-                setup_state.error_message = Some(format!("Failed to open browser: {e}"));
-            }
+        if let Some(AuthProgress::OAuthStarted { auth_url }) = setup_state.auth_progress.as_ref()
+            && let Err(e) = open::that(auth_url)
+        {
+            setup_state.error_message = Some(format!("Failed to open browser: {e}"));
         }
 
         Ok(())
@@ -202,54 +202,56 @@ impl SetupHandler {
                             .as_ref()
                             .map(|s| s.auth_input.clone())
                             .filter(|input| !input.is_empty()),
-                    ) {
-                        let progress = tui
-                            .client
-                            .send_auth_input(flow_id.clone(), input)
-                            .await
-                            .map_err(|e| crate::error::Error::Auth(e.to_string()))?;
+                    )
+                {
+                    let progress = tui
+                        .client
+                        .send_auth_input(flow_id.clone(), input)
+                        .await
+                        .map_err(|e| crate::error::Error::Auth(e.to_string()))?;
 
                     let mut completed = false;
                     let mut error_message = None;
 
-                        match &progress {
-                            AuthProgress::Complete => {
-                                completed = true;
-                            }
-                            AuthProgress::Error { message } => {
-                                error_message = Some(message.clone());
-                            }
-                            _ => {}
+                    match &progress {
+                        AuthProgress::Complete => {
+                            completed = true;
                         }
-
-                        {
-                            let Some(setup_state) = tui.setup_state.as_mut() else {
-                                return Ok(None);
-                            };
-                            setup_state.auth_progress = Some(progress.clone());
-                            setup_state.auth_input.clear();
-
-                            if let Some(message) = &error_message {
-                                setup_state.error_message = Some(message.clone());
-                                setup_state.auth_flow_id = None;
-                                setup_state.auth_progress = None;
-                            }
+                        AuthProgress::Error { message } => {
+                            error_message = Some(message.clone());
                         }
+                        _ => {}
+                    }
 
-                        if completed {
-                            let status = Self::refresh_auth_status(tui, &provider_id).await?;
-                            let Some(setup_state) = tui.setup_state.as_mut() else {
-                                return Ok(None);
-                            };
-                            setup_state
-                                .auth_providers
-                                .insert(provider_id.clone(), status);
-                            setup_state.error_message =
-                                Some("Authentication successful!".to_string());
+                    {
+                        let Some(setup_state) = tui.setup_state.as_mut() else {
+                            return Ok(None);
+                        };
+                        setup_state.auth_progress = Some(progress.clone());
+                        setup_state.auth_input.clear();
+
+                        if let Some(message) = &error_message {
+                            setup_state.error_message = Some(message.clone());
                             setup_state.auth_flow_id = None;
                             setup_state.auth_progress = None;
                         }
                     }
+
+                    if completed {
+                        let status = Self::refresh_auth_status(tui, &provider_id).await?;
+                        let Some(setup_state) = tui.setup_state.as_mut() else {
+                            return Ok(None);
+                        };
+                        setup_state
+                            .auth_providers
+                            .insert(provider_id.clone(), status);
+                        setup_state.error_message = Some("Authentication successful!".to_string());
+                        setup_state.auth_flow_id = None;
+                        setup_state.auth_progress = None;
+                        setup_state.current_step = SetupStep::ProviderSelection;
+                        setup_state.selected_provider = None;
+                    }
+                }
                 Ok(None)
             }
             KeyCode::Char(c) => {
@@ -293,12 +295,12 @@ impl SetupHandler {
                 state.auth_input.clear();
                 state.error_message = None; // Clear any error messages
                 // Reset auth status if it was in progress
-                if let Some(provider) = &state.selected_provider {
-                    if state.auth_providers.get(provider) == Some(&AuthStatus::InProgress) {
-                        state
-                            .auth_providers
-                            .insert(provider.clone(), AuthStatus::NotConfigured);
-                    }
+                if let Some(provider) = &state.selected_provider
+                    && state.auth_providers.get(provider) == Some(&AuthStatus::InProgress)
+                {
+                    state
+                        .auth_providers
+                        .insert(provider.clone(), AuthStatus::NotConfigured);
                 }
                 state.previous_step();
                 Ok(None)

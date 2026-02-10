@@ -106,17 +106,17 @@ impl ModelRegistry {
                         model_id.id.as_str(),
                     )));
                 }
-                if let Some(existing) = registry.aliases.get(alias) {
-                    if existing != &model_id {
-                        return Err(Error::Configuration(format!(
-                            "Duplicate alias '{}' used by {}/{} and {}/{}",
-                            alias,
-                            existing.provider.storage_key(),
-                            existing.id.as_str(),
-                            model_id.provider.storage_key(),
-                            model_id.id.as_str(),
-                        )));
-                    }
+                if let Some(existing) = registry.aliases.get(alias)
+                    && existing != &model_id
+                {
+                    return Err(Error::Configuration(format!(
+                        "Duplicate alias '{}' used by {}/{} and {}/{}",
+                        alias,
+                        existing.provider.storage_key(),
+                        existing.id.as_str(),
+                        model_id.provider.storage_key(),
+                        model_id.id.as_str(),
+                    )));
                 }
                 registry.aliases.insert(alias.to_string(), model_id.clone());
             }
@@ -212,10 +212,10 @@ impl ModelRegistry {
             }
 
             // 2) Try alias scoped to the provider
-            if let Some(alias_id) = self.aliases.get(part) {
-                if alias_id.provider == provider {
-                    return Ok(alias_id.clone());
-                }
+            if let Some(alias_id) = self.aliases.get(part)
+                && alias_id.provider == provider
+            {
+                return Ok(alias_id.clone());
             }
 
             Err(Error::Configuration(format!(

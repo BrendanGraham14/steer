@@ -624,23 +624,23 @@ impl Provider for XAIClient {
             let mut content_blocks = Vec::new();
 
             // Add reasoning content (thinking) first if present
-            if let Some(reasoning) = &choice.message.reasoning_content {
-                if !reasoning.trim().is_empty() {
-                    content_blocks.push(AssistantContent::Thought {
-                        thought: crate::app::conversation::ThoughtContent::Simple {
-                            text: reasoning.clone(),
-                        },
-                    });
-                }
+            if let Some(reasoning) = &choice.message.reasoning_content
+                && !reasoning.trim().is_empty()
+            {
+                content_blocks.push(AssistantContent::Thought {
+                    thought: crate::app::conversation::ThoughtContent::Simple {
+                        text: reasoning.clone(),
+                    },
+                });
             }
 
             // Add regular content
-            if let Some(content) = &choice.message.content {
-                if !content.trim().is_empty() {
-                    content_blocks.push(AssistantContent::Text {
-                        text: content.clone(),
-                    });
-                }
+            if let Some(content) = &choice.message.content
+                && !content.trim().is_empty()
+            {
+                content_blocks.push(AssistantContent::Text {
+                    text: content.clone(),
+                });
             }
 
             // Add tool calls
@@ -911,18 +911,15 @@ impl XAIClient {
                             let mut started_now = false;
                             let mut flushed_now = false;
 
-                            if let Some(id) = &tc.id {
-                                if !id.is_empty() {
+                            if let Some(id) = &tc.id
+                                && !id.is_empty() {
                                     entry.id.clone_from(id);
                                 }
-                            }
-                            if let Some(func) = &tc.function {
-                                if let Some(name) = &func.name {
-                                    if !name.is_empty() {
+                            if let Some(func) = &tc.function
+                                && let Some(name) = &func.name
+                                    && !name.is_empty() {
                                         entry.name.clone_from(name);
                                     }
-                                }
-                            }
 
                             if let std::collections::hash_map::Entry::Vacant(e) = tool_call_positions.entry(tc.index) {
                                 let pos = content.len();
@@ -950,8 +947,8 @@ impl XAIClient {
                                 };
                             }
 
-                            if let Some(func) = &tc.function {
-                                if let Some(args) = &func.arguments {
+                            if let Some(func) = &tc.function
+                                && let Some(args) = &func.arguments {
                                     entry.args.push_str(args);
                                     if tool_calls_started.contains(&tc.index) {
                                         if started_now {
@@ -970,7 +967,6 @@ impl XAIClient {
                                         }
                                     }
                                 }
-                            }
 
                             if started_now && !flushed_now && !entry.args.is_empty() {
                                 yield StreamChunk::ToolUseInputDelta {

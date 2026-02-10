@@ -85,11 +85,11 @@ impl ChatRenderable for RowWidget {
                 s.content.hash(&mut hasher);
             }
         }
-        if body_lines.len() > 1 {
-            if let Some(last) = body_lines.last() {
-                for s in &last.spans {
-                    s.content.hash(&mut hasher);
-                }
+        if body_lines.len() > 1
+            && let Some(last) = body_lines.last()
+        {
+            for s in &last.spans {
+                s.content.hash(&mut hasher);
             }
         }
         let body_fp = hasher.finish();
@@ -98,10 +98,9 @@ impl ChatRenderable for RowWidget {
             && self.last_mode == mode
             && self.last_theme_name == theme_key
             && self.last_body_fingerprint == body_fp
+            && let Some(ref lines) = self.cached_lines
         {
-            if let Some(ref lines) = self.cached_lines {
-                return lines;
-            }
+            return lines;
         }
 
         let accent_width = if has_accent { ACCENT_WIDTH as usize } else { 0 };

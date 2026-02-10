@@ -198,23 +198,23 @@ impl TuiCommand {
 
     pub fn as_command_str(&self) -> String {
         match self {
-            TuiCommand::New => TuiCommandType::New.command_name().to_string(),
-            TuiCommand::ReloadFiles => TuiCommandType::ReloadFiles.command_name().to_string(),
-            TuiCommand::Theme(None) => TuiCommandType::Theme.command_name().to_string(),
+            TuiCommand::New => TuiCommandType::New.command_name().clone(),
+            TuiCommand::ReloadFiles => TuiCommandType::ReloadFiles.command_name().clone(),
+            TuiCommand::Theme(None) => TuiCommandType::Theme.command_name().clone(),
             TuiCommand::Theme(Some(name)) => {
                 format!("{} {}", TuiCommandType::Theme.command_name(), name)
             }
-            TuiCommand::Auth => TuiCommandType::Auth.command_name().to_string(),
-            TuiCommand::Help(None) => TuiCommandType::Help.command_name().to_string(),
+            TuiCommand::Auth => TuiCommandType::Auth.command_name().clone(),
+            TuiCommand::Help(None) => TuiCommandType::Help.command_name().clone(),
             TuiCommand::Help(Some(cmd)) => {
                 format!("{} {}", TuiCommandType::Help.command_name(), cmd)
             }
-            TuiCommand::EditingMode(None) => TuiCommandType::EditingMode.command_name().to_string(),
+            TuiCommand::EditingMode(None) => TuiCommandType::EditingMode.command_name().clone(),
             TuiCommand::EditingMode(Some(mode)) => {
                 format!("{} {}", TuiCommandType::EditingMode.command_name(), mode)
             }
-            TuiCommand::Mcp => TuiCommandType::Mcp.command_name().to_string(),
-            TuiCommand::Workspace(None) => TuiCommandType::Workspace.command_name().to_string(),
+            TuiCommand::Mcp => TuiCommandType::Mcp.command_name().clone(),
+            TuiCommand::Workspace(None) => TuiCommandType::Workspace.command_name().clone(),
             TuiCommand::Workspace(Some(workspace_id)) => {
                 format!(
                     "{} {}",

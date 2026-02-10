@@ -207,60 +207,23 @@ impl MessageEventProcessor {
                         thought: ThoughtContent::Simple { text },
                     }) = blocks.last_mut()
                     {
-                        if let Some(AssistantContent::Text { text }) = blocks.last_mut() {
-                            text.push_str(delta);
-                        } else {
-                            blocks.push(AssistantContent::Text {
+                        text.push_str(delta);
+                    } else {
+                        blocks.push(AssistantContent::Thought {
+                            thought: ThoughtContent::Simple {
                                 text: delta.to_string(),
-                            });
-                        }
-                        *ctx.messages_updated = true;
-                        return true;
+                            },
+                        });
                     }
-                    tracing::warn!(
-                        target: "tui.message",
-                        "MessageDelta for non-assistant message: {}",
-                        id
-                    );
+                    *ctx.messages_updated = true;
                     return true;
                 }
-            }
-        }
-        false
-    }
-
-    fn append_thinking_delta(id: &MessageId, delta: &str, ctx: &mut ProcessingContext) -> bool {
-        for item in ctx.chat_store.iter_mut() {
-            if let ChatItemData::Message(message) = &mut item.data {
-                if message.id() == id.as_str() {
-                    if let MessageData::Assistant {
-                        content: blocks, ..
-                    } = &mut message.data
-                    {
-                        match blocks.last_mut() {
-                            Some(AssistantContent::Thought {
-                                thought: ThoughtContent::Simple { text },
-                            }) => {
-                                text.push_str(delta);
-                            }
-                            _ => {
-                                blocks.push(AssistantContent::Thought {
-                                    thought: ThoughtContent::Simple {
-                                        text: delta.to_string(),
-                                    },
-                                });
-                            }
-                        }
-                        *ctx.messages_updated = true;
-                        return true;
-                    }
-                    tracing::warn!(
-                        target: "tui.message",
-                        "ThinkingDelta for non-assistant message: {}",
-                        id
-                    );
-                    return true;
-                }
+                tracing::warn!(
+                    target: "tui.message",
+                    "ThinkingDelta for non-assistant message: {}",
+                    id
+                );
+                return true;
             }
         }
         false
@@ -273,57 +236,53 @@ impl MessageEventProcessor {
         ctx: &mut ProcessingContext,
     ) -> bool {
         for item in ctx.chat_store.iter_mut() {
-            if let ChatItemData::Message(message) = &mut item.data {
-                if message.id() == id.as_str() {
-                    if let MessageData::Assistant {
-                        content: blocks, ..
-                    } = &mut message.data
-                    {
-                        let tool_call = if let Some(existing) =
-                            blocks.iter_mut().find_map(|block| {
-                                if let AssistantContent::ToolCall { tool_call, .. } = block {
-                                    if tool_call.id == tool_call_id {
-                                        return Some(tool_call);
-                                    }
-                                }
-                                None
-                            }) {
-                            existing
-                        } else {
-                            blocks.push(AssistantContent::ToolCall {
-                                tool_call: ToolCall {
-                                    id: tool_call_id.to_string(),
-                                    name: "unknown".to_string(),
-                                    parameters: serde_json::Value::String(String::new()),
-                                },
-                                thought_signature: None,
-                            });
-                            match blocks.last_mut() {
-                                Some(AssistantContent::ToolCall { tool_call, .. }) => tool_call,
-                                _ => return false,
-                            }
-                        };
+            if let ChatItemData::Message(message) = &mut item.data
+                && message.id() == id.as_str()
+            {
+                if let MessageData::Assistant {
+                    content: blocks, ..
+                } = &mut message.data
+                {
+                    let tool_call = if let Some(existing) = blocks.iter_mut().find_map(|block| {
+                        if let AssistantContent::ToolCall { tool_call, .. } = block
+                            && tool_call.id == tool_call_id
+                        {
+                            return Some(tool_call);
+                        }
+                        None
+                    }) {
+                        existing
+                    } else {
+                        blocks.push(AssistantContent::ToolCall {
+                            tool_call: ToolCall {
+                                id: tool_call_id.to_string(),
+                                name: "unknown".to_string(),
+                                parameters: serde_json::Value::String(String::new()),
+                            },
+                            thought_signature: None,
+                        });
+                        match blocks.last_mut() {
+                            Some(AssistantContent::ToolCall { tool_call, .. }) => tool_call,
+                            _ => return false,
+                        }
+                    };
 
-                        match delta {
-                            ToolCallDelta::Name(name) => {
-                                tool_call.name.clone_from(name);
-                            }
-                            ToolCallDelta::ArgumentChunk(chunk) => {
-                                match tool_call.parameters.as_str() {
-                                    Some(existing) => {
-                                        let mut updated = existing.to_string();
-                                        updated.push_str(chunk);
-                                        tool_call.parameters = serde_json::Value::String(updated);
-                                    }
-                                    None => {
-                                        tool_call.parameters =
-                                            serde_json::Value::String(chunk.clone());
-                                    }
+                    match delta {
+                        ToolCallDelta::Name(name) => {
+                            tool_call.name.clone_from(name);
+                        }
+                        ToolCallDelta::ArgumentChunk(chunk) => {
+                            match tool_call.parameters.as_str() {
+                                Some(existing) => {
+                                    let mut updated = existing.to_string();
+                                    updated.push_str(chunk);
+                                    tool_call.parameters = serde_json::Value::String(updated);
+                                }
+                                None => {
+                                    tool_call.parameters = serde_json::Value::String(chunk.clone());
                                 }
                             }
                         }
-                        *ctx.messages_updated = true;
-                        return true;
                     }
                     *ctx.messages_updated = true;
                     return true;

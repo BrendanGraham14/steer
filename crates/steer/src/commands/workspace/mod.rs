@@ -20,9 +20,7 @@ pub struct WorkspaceCommand {
 impl Command for WorkspaceCommand {
     async fn execute(&self) -> Result<()> {
         match &self.command {
-            WorkspaceCommands::List {
-                environment_id,
-            } => {
+            WorkspaceCommands::List { environment_id } => {
                 let cmd = ListWorkspaceCommand {
                     environment_id: environment_id.clone(),
                     remote: self.remote.clone(),

@@ -822,7 +822,7 @@ impl Tui {
                         }
                     }
                 }
-                Event::Key(_) | Event::FocusGained | Event::FocusLost => {}
+                Event::Key(_) => {}
             }
 
             if should_exit {
@@ -1319,30 +1319,27 @@ impl Tui {
             .strip_prefix('/')
             .unwrap_or(command_input.trim());
 
-        if let Some(cmd_info) = self.command_registry.get(cmd_name) {
-            if let crate::tui::commands::registry::CommandScope::Custom(custom_cmd) =
+        if let Some(cmd_info) = self.command_registry.get(cmd_name)
+            && let crate::tui::commands::registry::CommandScope::Custom(custom_cmd) =
                 &cmd_info.scope
-            {
-                // Create a TuiCommand::Custom and process it
-                let app_cmd = TuiAppCommand::Tui(TuiCommand::Custom(custom_cmd.clone()));
-                // Process through the normal flow
-                match app_cmd {
-                    TuiAppCommand::Tui(TuiCommand::Custom(custom_cmd)) => {
-                        // Handle custom command based on its type
-                        match custom_cmd {
-                            crate::tui::custom_commands::CustomCommand::Prompt {
-                                prompt, ..
-                            } => {
-                                self.client
-                                    .send_message(prompt, self.current_model.clone())
-                                    .await?;
-                            }
+        {
+            // Create a TuiCommand::Custom and process it
+            let app_cmd = TuiAppCommand::Tui(TuiCommand::Custom(custom_cmd.clone()));
+            // Process through the normal flow
+            match app_cmd {
+                TuiAppCommand::Tui(TuiCommand::Custom(custom_cmd)) => {
+                    // Handle custom command based on its type
+                    match custom_cmd {
+                        crate::tui::custom_commands::CustomCommand::Prompt { prompt, .. } => {
+                            self.client
+                                .send_message(prompt, self.current_model.clone())
+                                .await?;
                         }
                     }
-                    _ => unreachable!(),
                 }
-                return Ok(());
+                _ => unreachable!(),
             }
+            return Ok(());
         }
 
         // Otherwise try to parse as built-in command
@@ -1632,33 +1629,32 @@ impl Tui {
     /// Enter edit mode for a specific message
     fn enter_edit_mode(&mut self, message_id: &str) {
         // Find the message in the store
-        if let Some(item) = self.chat_store.get_by_id(&message_id.to_string()) {
-            if let crate::tui::model::ChatItemData::Message(message) = &item.data {
-                if let MessageData::User { content, .. } = &message.data {
-                    // Extract text content from user blocks
-                    let text = content
-                        .iter()
-                        .filter_map(|block| match block {
-                            UserContent::Text { text } => Some(text.as_str()),
-                            UserContent::CommandExecution { .. } => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+        if let Some(item) = self.chat_store.get_by_id(&message_id.to_string())
+            && let crate::tui::model::ChatItemData::Message(message) = &item.data
+            && let MessageData::User { content, .. } = &message.data
+        {
+            // Extract text content from user blocks
+            let text = content
+                .iter()
+                .filter_map(|block| match block {
+                    UserContent::Text { text } => Some(text.as_str()),
+                    UserContent::CommandExecution { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
 
-                    // Set up textarea with the message content
-                    self.input_panel_state
-                        .set_content_from_lines(text.lines().collect::<Vec<_>>());
-                    // Switch to appropriate mode based on editing preference
-                    self.input_mode = match self.preferences.ui.editing_mode {
-                        EditingMode::Simple => InputMode::Simple,
-                        EditingMode::Vim => InputMode::VimInsert,
-                    };
+            // Set up textarea with the message content
+            self.input_panel_state
+                .set_content_from_lines(text.lines().collect::<Vec<_>>());
+            // Switch to appropriate mode based on editing preference
+            self.input_mode = match self.preferences.ui.editing_mode {
+                EditingMode::Simple => InputMode::Simple,
+                EditingMode::Vim => InputMode::VimInsert,
+            };
 
-                    // Store the message ID we're editing
-                    self.editing_message_id = Some(message_id.to_string());
-                    self.chat_viewport.mark_dirty();
-                }
-            }
+            // Store the message ID we're editing
+            self.editing_message_id = Some(message_id.to_string());
+            self.chat_viewport.mark_dirty();
         }
     }
 

@@ -297,8 +297,7 @@ impl WorkspaceRegistry {
         let environment_id =
             EnvironmentId::from_uuid(uuid::Uuid::parse_str(&environment_id_str).map_err(|e| {
                 WorkspaceManagerError::Other(format!("Invalid environment_id: {e}"))
-            })?,
-        );
+            })?);
         let repo_id = match repo_id_str {
             Some(value) => RepoId::from_uuid(
                 uuid::Uuid::parse_str(&value)

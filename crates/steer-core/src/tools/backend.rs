@@ -130,8 +130,7 @@ impl BackendRegistry {
     pub async fn register(&mut self, name: String, backend: Arc<dyn ToolBackend>) {
         // Map each tool this backend supports
         for tool_name in backend.supported_tools().await {
-            self.tool_mapping
-                .insert(tool_name.to_string(), backend.clone());
+            self.tool_mapping.insert(tool_name.clone(), backend.clone());
         }
         self.backends.push((name, backend));
     }

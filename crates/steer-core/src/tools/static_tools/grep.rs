@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 
+use super::workspace_op_error;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::GrepResult;
 use steer_tools::tools::grep::{GrepError, GrepParams, GrepToolSpec};
-use super::workspace_op_error;
 use steer_workspace::{GrepRequest, WorkspaceOpContext};
 
 pub struct GrepTool;

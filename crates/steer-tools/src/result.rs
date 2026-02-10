@@ -220,7 +220,6 @@ impl From<ToolError> for ToolResult {
     }
 }
 
-
 impl ToolResult {
     /// Format the result for LLM consumption
     pub fn llm_format(&self) -> String {

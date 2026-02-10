@@ -40,17 +40,16 @@ impl ToolFormatter for BashFormatter {
             ];
 
             // Add exit code if error
-            if let Some(ToolResult::Error(error)) = result {
-                if let Some(exit_code) = error
+            if let Some(ToolResult::Error(error)) = result
+                && let Some(exit_code) = error
                     .to_string()
                     .strip_prefix("Exit code: ")
                     .and_then(|s| s.parse::<i32>().ok())
-                {
-                    spans.push(Span::styled(
-                        format!(" (exit {exit_code})"),
-                        theme.style(Component::ErrorText),
-                    ));
-                }
+            {
+                spans.push(Span::styled(
+                    format!(" (exit {exit_code})"),
+                    theme.style(Component::ErrorText),
+                ));
             }
 
             lines.push(Line::from(spans));
@@ -84,17 +83,16 @@ impl ToolFormatter for BashFormatter {
             }
 
             // Add exit code on a new line if error
-            if let Some(ToolResult::Error(error)) = result {
-                if let Some(exit_code) = error
+            if let Some(ToolResult::Error(error)) = result
+                && let Some(exit_code) = error
                     .to_string()
                     .strip_prefix("Exit code: ")
                     .and_then(|s| s.parse::<i32>().ok())
-                {
-                    lines.push(Line::from(Span::styled(
-                        format!("(exit {exit_code})"),
-                        theme.style(Component::ErrorText),
-                    )));
-                }
+            {
+                lines.push(Line::from(Span::styled(
+                    format!("(exit {exit_code})"),
+                    theme.style(Component::ErrorText),
+                )));
             }
         }
 

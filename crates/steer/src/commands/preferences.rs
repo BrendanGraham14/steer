@@ -102,7 +102,7 @@ impl PreferencesCommand {
             ));
         };
 
-        Ok((command.to_string(), args.to_vec()))
+        Ok((command.clone(), args.to_vec()))
     }
 
     async fn reset(&self) -> std::result::Result<(), Error> {

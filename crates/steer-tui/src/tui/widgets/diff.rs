@@ -131,19 +131,19 @@ impl<'a> DiffWidget<'a> {
             last_shown = Some(idx);
 
             // Check if we've hit the line limit
-            if let Some(max) = self.max_lines {
-                if lines.len() >= max {
-                    let remaining = changes.len() - idx - 1;
-                    if remaining > 0 {
-                        lines.push(Line::from(Span::styled(
-                            format!("... ({remaining} more lines)"),
-                            self.theme
-                                .style(Component::DimText)
-                                .add_modifier(Modifier::ITALIC),
-                        )));
-                    }
-                    break;
+            if let Some(max) = self.max_lines
+                && lines.len() >= max
+            {
+                let remaining = changes.len() - idx - 1;
+                if remaining > 0 {
+                    lines.push(Line::from(Span::styled(
+                        format!("... ({remaining} more lines)"),
+                        self.theme
+                            .style(Component::DimText)
+                            .add_modifier(Modifier::ITALIC),
+                    )));
                 }
+                break;
             }
         }
 
@@ -290,10 +290,10 @@ impl<'a> DiffWidget<'a> {
             }
 
             // Check line limit
-            if let Some(max) = self.max_lines {
-                if lines.len() >= max {
-                    break;
-                }
+            if let Some(max) = self.max_lines
+                && lines.len() >= max
+            {
+                break;
             }
         }
 

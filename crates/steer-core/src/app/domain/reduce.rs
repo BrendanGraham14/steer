@@ -856,24 +856,25 @@ fn process_next_queued_approval(
         .is_none_or(|op| op.pending_tool_calls.is_empty());
     let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
 
-    if all_tools_complete && no_pending_approvals {
-        if let Some(op) = &state.current_operation {
-            let op_id = op.op_id;
-            if let Some(model) = state.operation_models.get(&op_id).cloned() {
-                effects.push(Effect::CallModel {
-                    session_id,
-                    op_id,
-                    model,
-                    messages: state
-                        .message_graph
-                        .get_thread_messages()
-                        .into_iter()
-                        .cloned()
-                        .collect(),
-                    system_context: state.cached_system_context.clone(),
-                    tools: state.tools.clone(),
-                });
-            }
+    if all_tools_complete
+        && no_pending_approvals
+        && let Some(op) = &state.current_operation
+    {
+        let op_id = op.op_id;
+        if let Some(model) = state.operation_models.get(&op_id).cloned() {
+            effects.push(Effect::CallModel {
+                session_id,
+                op_id,
+                model,
+                messages: state
+                    .message_graph
+                    .get_thread_messages()
+                    .into_iter()
+                    .cloned()
+                    .collect(),
+                system_context: state.cached_system_context.clone(),
+                tools: state.tools.clone(),
+            });
         }
     }
 
@@ -888,21 +889,20 @@ fn get_tool_decision(state: &AppState, tool_call: &steer_tools::ToolCall) -> Too
     if tool_call.name == DISPATCH_AGENT_TOOL_NAME
         && let Ok(params) =
             serde_json::from_value::<DispatchAgentParams>(tool_call.parameters.clone())
+        && let Some(config) = state.session_config.as_ref()
     {
-        if let Some(config) = state.session_config.as_ref() {
-            let policy = &config.tool_config.approval_policy;
-            match params.target {
-                DispatchAgentTarget::Resume { .. } => {
+        let policy = &config.tool_config.approval_policy;
+        match params.target {
+            DispatchAgentTarget::Resume { .. } => {
+                return ToolDecision::Allow;
+            }
+            DispatchAgentTarget::New { agent, .. } => {
+                let agent_id = agent
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .map_or_else(|| default_agent_spec_id().to_string(), str::to_string);
+                if policy.is_dispatch_agent_pattern_preapproved(&agent_id) {
                     return ToolDecision::Allow;
-                }
-                DispatchAgentTarget::New { agent, .. } => {
-                    let agent_id = agent
-                        .as_deref()
-                        .filter(|value| !value.trim().is_empty())
-                        .map_or_else(|| default_agent_spec_id().to_string(), str::to_string);
-                    if policy.is_dispatch_agent_pattern_preapproved(&agent_id) {
-                        return ToolDecision::Allow;
-                    }
                 }
             }
         }
@@ -912,10 +912,9 @@ fn get_tool_decision(state: &AppState, tool_call: &steer_tools::ToolCall) -> Too
         && let Ok(params) = serde_json::from_value::<steer_tools::tools::bash::BashParams>(
             tool_call.parameters.clone(),
         )
+        && state.is_bash_pattern_approved(&params.command)
     {
-        if state.is_bash_pattern_approved(&params.command) {
-            return ToolDecision::Allow;
-        }
+        return ToolDecision::Allow;
     }
 
     state
@@ -1752,17 +1751,17 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
         SessionEvent::ApprovalDecided {
             decision, remember, ..
         } => {
-            if *decision == ApprovalDecision::Approved {
-                if let Some(memory) = remember {
-                    match memory {
-                        ApprovalMemory::Tool(name) => {
-                            state.approved_tools.insert(name.clone());
-                        }
-                        ApprovalMemory::BashPattern(pattern) => {
-                            state.approved_bash_patterns.insert(pattern.clone());
-                        }
-                        ApprovalMemory::PendingTool => {}
+            if *decision == ApprovalDecision::Approved
+                && let Some(memory) = remember
+            {
+                match memory {
+                    ApprovalMemory::Tool(name) => {
+                        state.approved_tools.insert(name.clone());
                     }
+                    ApprovalMemory::BashPattern(pattern) => {
+                        state.approved_bash_patterns.insert(pattern.clone());
+                    }
+                    ApprovalMemory::PendingTool => {}
                 }
             }
             state.pending_approval = None;

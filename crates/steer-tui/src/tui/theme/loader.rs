@@ -123,16 +123,14 @@ impl ThemeLoader {
         for search_path in &self.search_paths {
             if let Ok(entries) = fs::read_dir(search_path) {
                 for entry in entries.flatten() {
-                    if let Ok(metadata) = entry.metadata() {
-                        if metadata.is_file() {
-                            if let Some(name) = entry.file_name().to_str() {
-                                if name.ends_with(".toml") {
-                                    let theme_name = name.trim_end_matches(".toml");
-                                    if !themes.contains(&theme_name.to_string()) {
-                                        themes.push(theme_name.to_string());
-                                    }
-                                }
-                            }
+                    if let Ok(metadata) = entry.metadata()
+                        && metadata.is_file()
+                        && let Some(name) = entry.file_name().to_str()
+                        && name.ends_with(".toml")
+                    {
+                        let theme_name = name.trim_end_matches(".toml");
+                        if !themes.contains(&theme_name.to_string()) {
+                            themes.push(theme_name.to_string());
                         }
                     }
                 }

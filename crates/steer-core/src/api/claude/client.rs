@@ -77,14 +77,10 @@ pub struct AnthropicClient {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 enum ThinkingType {
+    #[default]
     Enabled,
-}
-
-impl Default for ThinkingType {
-    fn default() -> Self {
-        Self::Enabled
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -1021,15 +1021,15 @@ impl Workspace for LocalWorkspace {
             ));
         }
 
-        if let Some(parent) = abs_path.parent() {
-            if !parent.exists() {
-                tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    WorkspaceError::Io(format!(
-                        "Failed to create parent directory {}: {e}",
-                        parent.display()
-                    ))
-                })?;
-            }
+        if let Some(parent) = abs_path.parent()
+            && !parent.exists()
+        {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                WorkspaceError::Io(format!(
+                    "Failed to create parent directory {}: {e}",
+                    parent.display()
+                ))
+            })?;
         }
 
         let file_existed = abs_path.exists();

@@ -1,12 +1,10 @@
 use steer_workspace::WorkspaceError;
 pub use steer_workspace::{
     CreateWorkspaceRequest, DeleteWorkspaceRequest, EnvironmentId, EnvironmentInfo,
-    ListWorkspacesRequest,
-    LocalWorkspaceManager, LlmStatus, RemoteAuth, RepoId, RepoInfo, RepoManager, RepoRef, VcsInfo,
-    VcsKind, VcsStatus, Workspace,
-    WorkspaceConfig, WorkspaceCreateStrategy, WorkspaceId,
-    WorkspaceInfo, WorkspaceManager,
-    WorkspaceMetadata, WorkspaceRef, WorkspaceStatus, WorkspaceType,
+    ListWorkspacesRequest, LlmStatus, LocalWorkspaceManager, RemoteAuth, RepoId, RepoInfo,
+    RepoManager, RepoRef, VcsInfo, VcsKind, VcsStatus, Workspace, WorkspaceConfig,
+    WorkspaceCreateStrategy, WorkspaceId, WorkspaceInfo, WorkspaceManager, WorkspaceMetadata,
+    WorkspaceRef, WorkspaceStatus, WorkspaceType,
 };
 
 use crate::error::Result;

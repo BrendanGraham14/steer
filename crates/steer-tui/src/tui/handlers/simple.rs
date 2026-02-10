@@ -113,7 +113,7 @@ impl Tui {
                         .into_iter()
                         .map(|cmd| {
                             crate::tui::widgets::fuzzy_finder::PickerItem::new(
-                                cmd.name.to_string(),
+                                cmd.name.clone(),
                                 format!("/{} ", cmd.name),
                             )
                         })

@@ -75,7 +75,10 @@ impl ToolFormatter for DispatchAgentFormatter {
 
         lines.push(Line::from(vec![
             Span::styled(format!("agent={agent_id} "), theme.subtle_text()),
-            Span::styled(format!("workspace={workspace_summary} "), theme.subtle_text()),
+            Span::styled(
+                format!("workspace={workspace_summary} "),
+                theme.subtle_text(),
+            ),
             session_label.as_ref().map_or_else(
                 || Span::raw(""),
                 |id| Span::styled(format!("session={id} "), theme.subtle_text()),

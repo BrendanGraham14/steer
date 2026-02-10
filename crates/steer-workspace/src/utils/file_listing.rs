@@ -36,16 +36,15 @@ impl FileListingUtils {
             }
 
             // Get the relative path from the root
-            if let Ok(relative_path) = entry.path().strip_prefix(root_path) {
-                if let Some(path_str) = relative_path.to_str() {
-                    if !path_str.is_empty() {
-                        // Add trailing slash for directories
-                        if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-                            files.push(format!("{path_str}/"));
-                        } else {
-                            files.push(path_str.to_string());
-                        }
-                    }
+            if let Ok(relative_path) = entry.path().strip_prefix(root_path)
+                && let Some(path_str) = relative_path.to_str()
+                && !path_str.is_empty()
+            {
+                // Add trailing slash for directories
+                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                    files.push(format!("{path_str}/"));
+                } else {
+                    files.push(path_str.to_string());
                 }
             }
         }

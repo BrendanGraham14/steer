@@ -253,24 +253,23 @@ impl Client {
             )
             .await;
 
-        if let Err(ref err) = result {
-            if Self::should_invalidate_provider(err) {
-                self.invalidate_provider(&provider_id);
+        if let Err(ref err) = result
+            && Self::should_invalidate_provider(err)
+        {
+            self.invalidate_provider(&provider_id);
 
-                if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
-                    if let Some(fallback) = self.fallback_api_key_entry(&provider_id).await? {
-                        let fallback_result = fallback
-                            .provider
-                            .complete(model_id, messages, system, tools, effective_params, token)
-                            .await;
-                        if fallback_result.is_ok() {
-                            let mut map = self.provider_map.write().map_err(|_| {
-                                ApiError::Configuration("Provider cache lock poisoned".to_string())
-                            })?;
-                            map.insert(provider_id, fallback);
-                        }
-                        return fallback_result;
-                    }
+            if matches!(entry.auth_source, AuthSource::Plugin { .. })
+                && let Some(fallback) = self.fallback_api_key_entry(&provider_id).await?
+            {
+                let fallback_result = fallback
+                    .provider
+                    .complete(model_id, messages, system, tools, effective_params, token)
+                    .await;
+                if fallback_result.is_ok() {
+                    let mut map = self.provider_map.write().map_err(|_| {
+                        ApiError::Configuration("Provider cache lock poisoned".to_string())
+                    })?;
+                    map.insert(provider_id, fallback);
                 }
             }
         }
@@ -503,30 +502,28 @@ impl Client {
 
                     if Self::should_invalidate_provider(&error) {
                         self.invalidate_provider(&provider_id);
-                        if matches!(entry.auth_source, AuthSource::Plugin { .. }) {
-                            if let Some(fallback) =
+                        if matches!(entry.auth_source, AuthSource::Plugin { .. })
+                            && let Some(fallback) =
                                 self.fallback_api_key_entry(&provider_id).await?
-                            {
-                                let fallback_result = fallback
-                                    .provider
-                                    .complete(
-                                        model_id,
-                                        messages.to_vec(),
-                                        system_prompt.clone(),
-                                        tools.clone(),
-                                        effective_params,
-                                        token.clone(),
+                        {
+                            let fallback_result = fallback
+                                .provider
+                                .complete(
+                                    model_id,
+                                    messages.to_vec(),
+                                    system_prompt.clone(),
+                                    tools.clone(),
+                                    effective_params,
+                                    token.clone(),
+                                )
+                                .await;
+                            if fallback_result.is_ok() {
+                                let mut map = self.provider_map.write().map_err(|_| {
+                                    ApiError::Configuration(
+                                        "Provider cache lock poisoned".to_string(),
                                     )
-                                    .await;
-                                if fallback_result.is_ok() {
-                                    let mut map = self.provider_map.write().map_err(|_| {
-                                        ApiError::Configuration(
-                                            "Provider cache lock poisoned".to_string(),
-                                        )
-                                    })?;
-                                    map.insert(provider_id.clone(), fallback);
-                                }
-                                return fallback_result;
+                                })?;
+                                map.insert(provider_id.clone(), fallback);
                             }
                         }
                         return Err(error);

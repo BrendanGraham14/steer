@@ -94,7 +94,7 @@ impl ToolFormatter for GlobFormatter {
                         let files = &glob_result.matches;
 
                         for file in files.iter().take(MAX_FILES) {
-                            lines.push(Line::from(Span::raw(file.to_string())));
+                            lines.push(Line::from(Span::raw(file.clone())));
                         }
 
                         if files.len() > MAX_FILES {

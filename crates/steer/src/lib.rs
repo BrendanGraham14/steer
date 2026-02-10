@@ -14,9 +14,9 @@ use steer_core::app::domain::session::SqliteEventStore;
 use steer_core::app::domain::types::SessionId;
 use steer_core::config::model::ModelId;
 use steer_core::runners::{OneShotRunner, RunOnceResult};
-use steer_core::utils::paths::AppPaths;
 use steer_core::session::state::SessionConfig;
 use steer_core::tools::ToolSystemBuilder;
+use steer_core::utils::paths::AppPaths;
 use steer_core::workspace::LocalWorkspaceManager;
 use steer_core::workspace::RepoManager;
 

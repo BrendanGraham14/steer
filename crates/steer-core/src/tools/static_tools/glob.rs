@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 
+use super::workspace_op_error;
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::GlobResult;
 use steer_tools::tools::glob::{GlobError, GlobParams, GlobToolSpec};
-use super::workspace_op_error;
 use steer_workspace::{GlobRequest, WorkspaceOpContext};
 
 pub struct GlobTool;

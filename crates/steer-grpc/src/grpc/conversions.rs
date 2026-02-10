@@ -887,13 +887,13 @@ pub(crate) fn repo_info_to_proto(info: &steer_workspace::RepoInfo) -> proto::Rep
     }
 }
 
-pub(crate) fn workspace_info_to_proto(info: &steer_workspace::WorkspaceInfo) -> proto::WorkspaceInfo {
+pub(crate) fn workspace_info_to_proto(
+    info: &steer_workspace::WorkspaceInfo,
+) -> proto::WorkspaceInfo {
     proto::WorkspaceInfo {
         workspace_id: info.workspace_id.as_uuid().to_string(),
         environment_id: info.environment_id.as_uuid().to_string(),
-        parent_workspace_id: info
-            .parent_workspace_id
-            .map(|id| id.as_uuid().to_string()),
+        parent_workspace_id: info.parent_workspace_id.map(|id| id.as_uuid().to_string()),
         name: info.name.clone(),
         path: info.path.to_string_lossy().to_string(),
         repo_id: info.repo_id.as_uuid().to_string(),
@@ -1018,7 +1018,7 @@ fn proto_to_vcs_info(
             return Err(ConversionError::InvalidEnumValue {
                 value: info.kind,
                 enum_name: "VcsKind".to_string(),
-            })
+            });
         }
     };
 
@@ -1105,7 +1105,7 @@ fn proto_to_git_status(
                     return Err(ConversionError::InvalidEnumValue {
                         value: entry.summary,
                         enum_name: "GitStatusSummary".to_string(),
-                    })
+                    });
                 }
             };
             Ok(steer_workspace::GitStatusEntry {
@@ -1147,7 +1147,7 @@ fn proto_to_jj_status(
                     return Err(ConversionError::InvalidEnumValue {
                         value: change.change_type,
                         enum_name: "JjChangeType".to_string(),
-                    })
+                    });
                 }
             };
             Ok(steer_workspace::JjChange {
@@ -1157,11 +1157,13 @@ fn proto_to_jj_status(
         })
         .collect::<Result<Vec<_>, ConversionError>>()?;
 
-    let working_copy = status.working_copy.map(|summary| steer_workspace::JjCommitSummary {
-        change_id: summary.change_id,
-        commit_id: summary.commit_id,
-        description: summary.description,
-    });
+    let working_copy = status
+        .working_copy
+        .map(|summary| steer_workspace::JjCommitSummary {
+            change_id: summary.change_id,
+            commit_id: summary.commit_id,
+            description: summary.description,
+        });
 
     let parents = status
         .parents
@@ -1276,11 +1278,15 @@ fn vcs_info_to_proto(info: &steer_workspace::VcsInfo) -> remote_proto::VcsInfo {
                 })
                 .collect();
 
-            let working_copy = status.working_copy.as_ref().map(|summary| remote_proto::JjCommitSummary {
-                change_id: summary.change_id.clone(),
-                commit_id: summary.commit_id.clone(),
-                description: summary.description.clone(),
-            });
+            let working_copy =
+                status
+                    .working_copy
+                    .as_ref()
+                    .map(|summary| remote_proto::JjCommitSummary {
+                        change_id: summary.change_id.clone(),
+                        commit_id: summary.commit_id.clone(),
+                        description: summary.description.clone(),
+                    });
 
             let parents = status
                 .parents

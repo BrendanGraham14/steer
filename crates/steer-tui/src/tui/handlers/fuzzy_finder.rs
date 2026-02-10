@@ -294,23 +294,23 @@ impl Tui {
         if mode == FuzzyFinderMode::Commands {
             // Extract search query from content
             let content = self.input_panel_state.content();
-            if let Some(trigger_pos) = self.input_panel_state.fuzzy_finder.trigger_position() {
-                if trigger_pos + 1 < content.len() {
-                    let query = &content[trigger_pos + 1..];
-                    // Search commands
-                    let results: Vec<_> = self
-                        .command_registry
-                        .search(query)
-                        .into_iter()
-                        .map(|cmd| {
-                            crate::tui::widgets::fuzzy_finder::PickerItem::new(
-                                cmd.name.to_string(),
-                                format!("/{} ", cmd.name),
-                            )
-                        })
-                        .collect();
-                    self.input_panel_state.fuzzy_finder.update_results(results);
-                }
+            if let Some(trigger_pos) = self.input_panel_state.fuzzy_finder.trigger_position()
+                && trigger_pos + 1 < content.len()
+            {
+                let query = &content[trigger_pos + 1..];
+                // Search commands
+                let results: Vec<_> = self
+                    .command_registry
+                    .search(query)
+                    .into_iter()
+                    .map(|cmd| {
+                        crate::tui::widgets::fuzzy_finder::PickerItem::new(
+                            cmd.name.clone(),
+                            format!("/{} ", cmd.name),
+                        )
+                    })
+                    .collect();
+                self.input_panel_state.fuzzy_finder.update_results(results);
             }
         } else if mode == FuzzyFinderMode::Models || mode == FuzzyFinderMode::Themes {
             // For models and themes, use the typed content *after the command prefix* as search query

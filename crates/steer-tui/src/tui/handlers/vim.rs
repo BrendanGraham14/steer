@@ -277,16 +277,16 @@ impl Tui {
             KeyCode::Char('~') => {
                 let pos = self.input_panel_state.textarea.cursor();
                 let lines = self.input_panel_state.textarea.lines();
-                if let Some(line) = lines.get(pos.0) {
-                    if let Some(ch) = line.chars().nth(pos.1) {
-                        self.input_panel_state.textarea.delete_next_char();
-                        let toggled = if ch.is_uppercase() {
-                            ch.to_lowercase().to_string()
-                        } else {
-                            ch.to_uppercase().to_string()
-                        };
-                        self.input_panel_state.textarea.insert_str(&toggled);
-                    }
+                if let Some(line) = lines.get(pos.0)
+                    && let Some(ch) = line.chars().nth(pos.1)
+                {
+                    self.input_panel_state.textarea.delete_next_char();
+                    let toggled = if ch.is_uppercase() {
+                        ch.to_lowercase().to_string()
+                    } else {
+                        ch.to_uppercase().to_string()
+                    };
+                    self.input_panel_state.textarea.insert_str(&toggled);
                 }
             }
             KeyCode::Char('J') => {
@@ -376,7 +376,7 @@ impl Tui {
                     .into_iter()
                     .map(|cmd| {
                         crate::tui::widgets::fuzzy_finder::PickerItem::new(
-                            cmd.name.to_string(),
+                            cmd.name.clone(),
                             format!("/{} ", cmd.name),
                         )
                     })
@@ -539,7 +539,7 @@ impl Tui {
                         .into_iter()
                         .map(|cmd| {
                             crate::tui::widgets::fuzzy_finder::PickerItem::new(
-                                cmd.name.to_string(),
+                                cmd.name.clone(),
                                 format!("/{} ", cmd.name),
                             )
                         })
