@@ -376,6 +376,9 @@ impl XAIClient {
                         .iter()
                         .map(|user_content| match user_content {
                             UserContent::Text { text } => text.clone(),
+                            UserContent::Image { image } => {
+                                format!("[Image: {}]", image.mime_type)
+                            }
                             UserContent::CommandExecution {
                                 command,
                                 stdout,
@@ -406,6 +409,9 @@ impl XAIClient {
                             AssistantContent::Text { text } => {
                                 text_parts.push(text.clone());
                             }
+                            AssistantContent::Image { image } => {
+                                text_parts.push(format!("[Image: {}]", image.mime_type));
+                            }
                             AssistantContent::ToolCall { tool_call, .. } => {
                                 tool_calls.push(XAIToolCall {
                                     id: tool_call.id.clone(),
@@ -417,6 +423,7 @@ impl XAIClient {
                                 });
                             }
                             AssistantContent::Thought { .. } => {
+
                                 // xAI doesn't support thinking blocks in requests, only in responses
                             }
                         }

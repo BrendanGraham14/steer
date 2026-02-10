@@ -315,6 +315,7 @@ impl ChatViewport {
                             // Check if there's any text content
                             let has_text_content = content.iter().any(|block| match block {
                                 AssistantContent::Text { text } => !text.trim().is_empty(),
+                                AssistantContent::Image { .. } => true,
                                 AssistantContent::Thought { .. } => true,
                                 AssistantContent::ToolCall { .. } => false,
                             });
@@ -616,6 +617,9 @@ fn hash_message_content(message: &Message, hasher: &mut impl Hasher) {
             for c in content {
                 match c {
                     UserContent::Text { text } => text.hash(hasher),
+                    UserContent::Image { image } => {
+                        image.mime_type.hash(hasher);
+                    }
                     UserContent::CommandExecution {
                         command,
                         stdout,
@@ -634,6 +638,9 @@ fn hash_message_content(message: &Message, hasher: &mut impl Hasher) {
             for b in content {
                 match b {
                     AssistantContent::Text { text } => text.hash(hasher),
+                    AssistantContent::Image { image } => {
+                        image.mime_type.hash(hasher);
+                    }
                     AssistantContent::ToolCall { tool_call, .. } => {
                         tool_call.id.hash(hasher);
                         tool_call.name.hash(hasher);

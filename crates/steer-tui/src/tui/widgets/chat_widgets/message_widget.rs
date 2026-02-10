@@ -44,6 +44,9 @@ impl MessageWidget {
                 for c in content {
                     match c {
                         UserContent::Text { text } => text.hash(&mut hasher),
+                        UserContent::Image { image } => {
+                            image.mime_type.hash(&mut hasher);
+                        }
                         UserContent::CommandExecution {
                             command,
                             stdout,
@@ -62,6 +65,9 @@ impl MessageWidget {
                 for b in content {
                     match b {
                         AssistantContent::Text { text } => text.hash(&mut hasher),
+                        AssistantContent::Image { image } => {
+                            image.mime_type.hash(&mut hasher);
+                        }
                         AssistantContent::ToolCall { tool_call, .. } => {
                             tool_call.id.hash(&mut hasher);
                             tool_call.name.hash(&mut hasher);
@@ -137,6 +143,13 @@ impl ChatRenderable for MessageWidget {
                                     }
                                 }
                             }
+                        }
+                        UserContent::Image { image } => {
+                            let style = theme.style(Component::DimText);
+                            lines.push(Line::from(Span::styled(
+                                format!("[Image: {}]", image.mime_type),
+                                style,
+                            )));
                         }
                         UserContent::CommandExecution {
                             command,
@@ -246,6 +259,13 @@ impl ChatRenderable for MessageWidget {
                                     }
                                 }
                             }
+                        }
+                        AssistantContent::Image { image } => {
+                            let style = theme.style(Component::DimText);
+                            lines.push(Line::from(Span::styled(
+                                format!("[Image: {}]", image.mime_type),
+                                style,
+                            )));
                         }
                         AssistantContent::ToolCall { .. } => {
                             // Tool calls are rendered separately

@@ -85,7 +85,7 @@ impl HeadlessCommand {
                     .iter()
                     .find_map(|c| match c {
                         UserContent::Text { text } => Some(text.clone()),
-                        UserContent::CommandExecution { .. } => None,
+                        UserContent::Image { .. } | UserContent::CommandExecution { .. } => None,
                     })
                     .ok_or_else(|| eyre!("Last message must contain text content")),
                 _ => Err(eyre!("Last message must be from User")),

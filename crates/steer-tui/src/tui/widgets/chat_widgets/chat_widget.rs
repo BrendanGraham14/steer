@@ -124,6 +124,9 @@ impl ChatBlock {
                                 has_text = true;
                             }
                         }
+                        AssistantContent::Image { .. } => {
+                            has_text = true;
+                        }
                         AssistantContent::ToolCall { tool_call, .. } => {
                             tool_calls.push(tool_call.clone());
                         }

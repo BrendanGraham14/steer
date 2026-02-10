@@ -1657,7 +1657,9 @@ impl Tui {
                 .iter()
                 .filter_map(|block| match block {
                     UserContent::Text { text } => Some(text.as_str()),
-                    UserContent::CommandExecution { .. } => None,
+                    UserContent::Image { .. } | UserContent::CommandExecution { .. } => {
+                        None
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n");

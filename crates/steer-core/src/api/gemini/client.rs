@@ -377,6 +377,9 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                         UserContent::Text { text } => {
                             GeminiRequestPart::Text { text: text.clone() }
                         }
+                        UserContent::Image { image } => GeminiRequestPart::Text {
+                            text: format!("[Image: {}]", image.mime_type),
+                        },
                         UserContent::CommandExecution {
                             command,
                             stdout,
@@ -406,6 +409,11 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                     .filter_map(|assistant_content| match assistant_content {
                         AssistantContent::Text { text } => {
                             Some(GeminiRequestPart::Text { text: text.clone() })
+                        }
+                        AssistantContent::Image { image } => {
+                            Some(GeminiRequestPart::Text {
+                                text: format!("[Image: {}]", image.mime_type),
+                            })
                         }
                         AssistantContent::ToolCall {
                             tool_call,

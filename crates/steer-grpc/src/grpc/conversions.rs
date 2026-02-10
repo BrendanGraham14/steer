@@ -375,6 +375,12 @@ pub(crate) fn message_to_proto(
                         UserContent::Text { text } => proto::UserContent {
                             content: Some(proto::user_content::Content::Text(text.clone())),
                         },
+                        UserContent::Image { image } => proto::UserContent {
+                            content: Some(proto::user_content::Content::Text(format!(
+                                "[Image: {}]",
+                                image.mime_type
+                            ))),
+                        },
                         UserContent::CommandExecution {
                             command,
                             stdout,
@@ -404,6 +410,12 @@ pub(crate) fn message_to_proto(
                     .map(|assistant_content| match assistant_content {
                         AssistantContent::Text { text } => proto::AssistantContent {
                             content: Some(proto::assistant_content::Content::Text(text.clone())),
+                        },
+                        AssistantContent::Image { image } => proto::AssistantContent {
+                            content: Some(proto::assistant_content::Content::Text(format!(
+                                "[Image: {}]",
+                                image.mime_type
+                            ))),
                         },
                         AssistantContent::ToolCall { tool_call, .. } => proto::AssistantContent {
                             content: Some(proto::assistant_content::Content::ToolCall(

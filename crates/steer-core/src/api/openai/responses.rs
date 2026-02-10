@@ -393,6 +393,11 @@ impl Client {
                                 content_parts
                                     .push(InputContentPart::InputText { text: text.clone() });
                             }
+                            UserContent::Image { image } => {
+                                content_parts.push(InputContentPart::InputText {
+                                    text: format!("[Image: {}]", image.mime_type),
+                                });
+                            }
                             UserContent::CommandExecution {
                                 command,
                                 stdout,
@@ -424,6 +429,12 @@ impl Client {
                             AssistantContent::Text { text } => {
                                 content_parts.push(InputContentPart::OutputText {
                                     text: text.clone(),
+                                    annotations: vec![],
+                                });
+                            }
+                            AssistantContent::Image { image } => {
+                                content_parts.push(InputContentPart::OutputText {
+                                    text: format!("[Image: {}]", image.mime_type),
                                     annotations: vec![],
                                 });
                             }

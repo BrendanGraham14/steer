@@ -1009,6 +1009,9 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                 .iter()
                 .map(|user_content| match user_content {
                     UserContent::Text { text } => text.clone(),
+                    UserContent::Image { image } => {
+                        format!("[Image: {}]", image.mime_type)
+                    }
                     UserContent::CommandExecution {
                         command,
                         stdout,
@@ -1045,6 +1048,11 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                             })
                         }
                     }
+                    AssistantContent::Image { image } => Some(ClaudeContentBlock::Text {
+                        text: format!("[Image: {}]", image.mime_type),
+                        cache_control: None,
+                        extra: Default::default(),
+                    }),
                     AssistantContent::ToolCall { tool_call, .. } => {
                         Some(ClaudeContentBlock::ToolUse {
                             id: tool_call.id.clone(),

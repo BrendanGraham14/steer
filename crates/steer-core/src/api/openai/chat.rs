@@ -206,6 +206,11 @@ impl Client {
                         UserContent::Text { text } => {
                             text_parts.push(OpenAIContentPart::Text { text });
                         }
+                        UserContent::Image { image } => {
+                            text_parts.push(OpenAIContentPart::Text {
+                                text: format!("[Image: {}]", image.mime_type),
+                            });
+                        }
                         UserContent::CommandExecution {
                             command,
                             stdout,
@@ -240,6 +245,12 @@ impl Client {
                                 text_content.push('\n');
                             }
                             text_content.push_str(&text);
+                        }
+                        AssistantContent::Image { image } => {
+                            if !text_content.is_empty() {
+                                text_content.push('\n');
+                            }
+                            text_content.push_str(&format!("[Image: {}]", image.mime_type));
                         }
                         AssistantContent::ToolCall { tool_call, .. } => {
                             tool_calls.push(OpenAIToolCall {

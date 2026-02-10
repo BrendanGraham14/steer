@@ -788,7 +788,7 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
                 .iter()
                 .filter_map(|c| match c {
                     UserContent::Text { text } => Some(text.as_str()),
-                    UserContent::CommandExecution { .. } => None,
+                    UserContent::Image { .. } | UserContent::CommandExecution { .. } => None,
                 })
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -799,7 +799,9 @@ fn format_message_for_summary(message: &crate::app::conversation::Message) -> St
                 .iter()
                 .filter_map(|c| match c {
                     AssistantContent::Text { text } => Some(text.as_str()),
-                    AssistantContent::ToolCall { .. } | AssistantContent::Thought { .. } => None,
+                    AssistantContent::Image { .. }
+                    | AssistantContent::ToolCall { .. }
+                    | AssistantContent::Thought { .. } => None,
                 })
                 .collect::<Vec<_>>()
                 .join(" ");

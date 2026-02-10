@@ -19,12 +19,37 @@ pub enum Role {
     Tool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum ImageSource {
+    SessionFile { relative_path: String },
+    DataUrl { data_url: String },
+    Url { url: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImageContent {
+    pub mime_type: String,
+    pub source: ImageSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+}
+
 /// Content that can be sent by a user
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UserContent {
     Text {
         text: String,
+    },
+    Image {
+        image: ImageContent,
     },
     CommandExecution {
         command: String,
@@ -98,6 +123,9 @@ impl ThoughtContent {
 pub enum AssistantContent {
     Text {
         text: String,
+    },
+    Image {
+        image: ImageContent,
     },
     ToolCall {
         tool_call: ToolCall,
@@ -175,16 +203,21 @@ impl Message {
                 .iter()
                 .map(|c| match c {
                     UserContent::Text { text } => text.clone(),
+                    UserContent::Image { .. } => "[Image]".to_string(),
                     UserContent::CommandExecution { stdout, .. } => stdout.clone(),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
             MessageData::Assistant { content } => content
                 .iter()
-                .filter_map(|c| match c {
-                    AssistantContent::Text { text } => Some(text.clone()),
-                    _ => None,
+                .map(|c| match c {
+                    AssistantContent::Text { text } => text.clone(),
+                    AssistantContent::Image { .. } => "[Image]".to_string(),
+                    AssistantContent::ToolCall { .. } | AssistantContent::Thought { .. } => {
+                        String::new()
+                    }
                 })
+                .filter(|line| !line.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n"),
             MessageData::Tool { result, .. } => result.llm_format(),
@@ -198,6 +231,9 @@ impl Message {
                 .iter()
                 .map(|c| match c {
                     UserContent::Text { text } => text.clone(),
+                    UserContent::Image { image } => {
+                        format!("[Image: {}]", image.mime_type)
+                    }
                     UserContent::CommandExecution {
                         command,
                         stdout,
@@ -220,6 +256,9 @@ impl Message {
                 .iter()
                 .map(|c| match c {
                     AssistantContent::Text { text } => text.clone(),
+                    AssistantContent::Image { image } => {
+                        format!("[Image: {}]", image.mime_type)
+                    }
                     AssistantContent::ToolCall { tool_call, .. } => {
                         format!("[Tool Call: {}]", tool_call.name)
                     }
