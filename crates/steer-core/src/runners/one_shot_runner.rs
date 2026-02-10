@@ -3,7 +3,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::agents::default_agent_spec_id;
-use crate::app::conversation::Message;
+use crate::app::conversation::{Message, UserContent};
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::runtime::{RuntimeError, RuntimeHandle};
 use crate::app::domain::types::SessionId;
@@ -86,7 +86,13 @@ impl OneShotRunner {
         info!(session_id = %session_id, message = %message, "Sending message to session");
 
         let op_id = runtime
-            .submit_user_input(session_id, message, model)
+            .submit_user_input(
+                session_id,
+                vec![UserContent::Text {
+                    text: message.clone(),
+                }],
+                model,
+            )
             .await
             .map_err(|e| {
                 Error::InvalidOperation(format!(

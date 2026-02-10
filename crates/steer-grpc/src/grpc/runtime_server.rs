@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use steer_core::app::conversation::UserContent;
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
 use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
 use steer_core::app::domain::types::SessionId;
@@ -638,7 +639,15 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                             steer_core::app::domain::state::QueuedWorkItem::UserMessage(message) => {
                                 proto::QueuedWorkItem {
                                     kind: proto::queued_work_item::Kind::UserMessage as i32,
-                                    content: message.text.as_str().to_string(),
+                                    content: message
+                                        .content
+                                        .iter()
+                                        .filter_map(|item| match item {
+                                            UserContent::Text { text } => Some(text.as_str()),
+                                            _ => None,
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n"),
                                     model: Some(model_to_proto(message.model.clone())),
                                     queued_at: message.queued_at,
                                     op_id: message.op_id.to_string(),
@@ -748,9 +757,75 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             config.default_model
         };
 
+        let user_content: Vec<UserContent> = req
+            .content
+            .into_iter()
+            .filter_map(|item| match item.content {
+                Some(proto::user_content::Content::Text(text)) => Some(UserContent::Text { text }),
+                Some(proto::user_content::Content::CommandExecution(cmd)) => {
+                    Some(UserContent::CommandExecution {
+                        command: cmd.command,
+                        stdout: cmd.stdout,
+                        stderr: cmd.stderr,
+                        exit_code: cmd.exit_code,
+                    })
+                }
+                Some(proto::user_content::Content::Image(image)) => {
+                    let source = image.source.map(|source| match source {
+                        proto::image_content::Source::SessionFile(file) => {
+                            steer_core::app::conversation::ImageSource::SessionFile {
+                                relative_path: file.relative_path,
+                            }
+                        }
+                        proto::image_content::Source::DataUrl(data_url) => {
+                            steer_core::app::conversation::ImageSource::DataUrl {
+                                data_url: data_url.data_url,
+                            }
+                        }
+                        proto::image_content::Source::Url(url) => {
+                            steer_core::app::conversation::ImageSource::Url { url: url.url }
+                        }
+                    });
+
+                    source.map(|source| UserContent::Image {
+                        image: steer_core::app::conversation::ImageContent {
+                            mime_type: image.mime_type,
+                            source,
+                            width: image.width,
+                            height: image.height,
+                            bytes: image.bytes,
+                            sha256: image.sha256,
+                        },
+                    })
+                }
+                None => None,
+            })
+            .collect();
+
+        let fallback_text = req.message;
+        let content = if user_content.is_empty() {
+            vec![UserContent::Text {
+                text: fallback_text,
+            }]
+        } else {
+            user_content
+        };
+
+        let has_text = content
+            .iter()
+            .any(|item| matches!(item, UserContent::Text { text } if !text.trim().is_empty()));
+
+        let has_non_text = content
+            .iter()
+            .any(|item| !matches!(item, UserContent::Text { .. }));
+
+        if !has_text && !has_non_text {
+            return Err(Status::invalid_argument("Input text cannot be empty"));
+        }
+
         match self
             .runtime
-            .submit_user_input(session_id, req.message, model)
+            .submit_user_input(session_id, content, model)
             .await
         {
             Ok(op_id) => Ok(Response::new(SendMessageResponse {

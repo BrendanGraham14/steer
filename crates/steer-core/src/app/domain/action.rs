@@ -1,5 +1,6 @@
+use crate::app::conversation::UserContent;
 use crate::app::domain::types::{
-    CompactionId, MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
+    CompactionId, MessageId, OpId, RequestId, SessionId, ToolCallId,
 };
 use crate::config::model::ModelId;
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use super::event::SessionEvent;
 pub enum Action {
     UserInput {
         session_id: SessionId,
-        text: NonEmptyString,
+        content: Vec<UserContent>,
         op_id: OpId,
         message_id: MessageId,
         model: ModelId,

@@ -6,13 +6,15 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::api::Client as ApiClient;
+use crate::app::conversation::UserContent;
 use crate::app::domain::action::Action;
 use crate::app::domain::delta::StreamDelta;
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::reduce::apply_event_to_state;
 use crate::app::domain::session::EventStore;
 use crate::app::domain::state::AppState;
-use crate::app::domain::types::{MessageId, NonEmptyString, OpId, RequestId, SessionId};
+use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId};
+
 use crate::config::model::ModelId;
 use crate::primary_agents::{default_primary_agent_id, resolve_effective_config};
 use crate::prompts::system_prompt_for_model;
@@ -608,12 +610,20 @@ impl RuntimeHandle {
     pub async fn submit_user_input(
         &self,
         session_id: SessionId,
-        text: String,
+        content: Vec<UserContent>,
         model: ModelId,
     ) -> Result<OpId, RuntimeError> {
-        let text = NonEmptyString::new(text).ok_or_else(|| RuntimeError::InvalidInput {
-            message: "Input text cannot be empty".to_string(),
-        })?;
+        let has_text = content
+            .iter()
+            .any(|item| matches!(item, UserContent::Text { text } if !text.trim().is_empty()));
+        let has_non_text = content
+            .iter()
+            .any(|item| !matches!(item, UserContent::Text { .. }));
+        if !has_text && !has_non_text {
+            return Err(RuntimeError::InvalidInput {
+                message: "Input text cannot be empty".to_string(),
+            });
+        }
 
         let op_id = OpId::new();
         let message_id = MessageId::new();
@@ -621,7 +631,7 @@ impl RuntimeHandle {
 
         let action = Action::UserInput {
             session_id,
-            text,
+            content,
             op_id,
             message_id,
             model,

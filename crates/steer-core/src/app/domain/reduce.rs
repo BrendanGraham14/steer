@@ -1,6 +1,8 @@
 use crate::agents::default_agent_spec_id;
 use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+
 use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory, McpServerState};
+
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{
     CancellationInfo, QueuedWorkItemSnapshot, QueuedWorkKind, SessionEvent,
@@ -8,11 +10,11 @@ use crate::app::domain::event::{
 use crate::app::domain::state::{
     AppState, OperationKind, PendingApproval, QueuedApproval, QueuedWorkItem,
 };
-use crate::app::domain::types::NonEmptyString;
 use crate::primary_agents::{
     default_primary_agent_id, primary_agent_spec, resolve_effective_config,
 };
 use crate::session::state::{BackendConfig, ToolDecision};
+
 use crate::tools::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams, DispatchAgentTarget};
 use serde_json::Value;
 use steer_tools::ToolError;
@@ -50,13 +52,13 @@ pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, Reduc
     match action {
         Action::UserInput {
             session_id,
-            text,
+            content,
             op_id,
             message_id,
             model,
             timestamp,
         } => Ok(handle_user_input(
-            state, session_id, text, op_id, message_id, model, timestamp,
+            state, session_id, content, op_id, message_id, model, timestamp,
         )),
 
         Action::UserEditedMessage {
@@ -268,7 +270,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, Reduc
 fn handle_user_input(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
-    text: crate::app::domain::types::NonEmptyString,
+    content: Vec<UserContent>,
     op_id: crate::app::domain::types::OpId,
     message_id: crate::app::domain::types::MessageId,
     model: crate::config::model::ModelId,
@@ -278,7 +280,7 @@ fn handle_user_input(
 
     if state.has_active_operation() {
         state.queue_user_message(crate::app::domain::state::QueuedUserMessage {
-            text,
+            content,
             op_id,
             message_id,
             model,
@@ -296,11 +298,7 @@ fn handle_user_input(
     let parent_id = state.message_graph.active_message_id.clone();
 
     let message = Message {
-        data: MessageData::User {
-            content: vec![UserContent::Text {
-                text: text.as_str().to_string(),
-            }],
-        },
+        data: MessageData::User { content },
         timestamp,
         id: message_id.0.clone(),
         parent_message_id: parent_id,
@@ -1380,7 +1378,7 @@ fn maybe_start_queued_work(
             effects.extend(handle_user_input(
                 state,
                 session_id,
-                item.text,
+                item.content,
                 item.op_id,
                 item.message_id,
                 item.model,
@@ -1414,7 +1412,14 @@ fn snapshot_queued_work_item(item: &QueuedWorkItem) -> QueuedWorkItemSnapshot {
     match item {
         QueuedWorkItem::UserMessage(message) => QueuedWorkItemSnapshot {
             kind: Some(QueuedWorkKind::UserMessage),
-            content: message.text.as_str().to_string(),
+            content: message
+                .content
+                .iter()
+                .filter_map(|item| match item {
+                    UserContent::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>(),
             queued_at: message.queued_at,
             model: Some(message.model.clone()),
             op_id: message.op_id,
@@ -1797,19 +1802,24 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
                 .insert(server_name.clone(), mcp_state.clone());
         }
         SessionEvent::QueueUpdated { queue } => {
-            let normalize_text = |content: &str| {
-                NonEmptyString::new(content.to_string())
-                    .or_else(|| NonEmptyString::new("(empty)".to_string()))
+            let parse_content = |content: &str| {
+                if content.trim().is_empty() {
+                    None
+                } else {
+                    Some(vec![UserContent::Text {
+                        text: content.to_string(),
+                    }])
+                }
             };
 
             state.queued_work = queue
                 .iter()
                 .filter_map(|item| match item.kind {
                     Some(QueuedWorkKind::UserMessage) => {
-                        let text = normalize_text(item.content.as_str())?;
+                        let content = parse_content(item.content.as_str())?;
                         Some(QueuedWorkItem::UserMessage(
                             crate::app::domain::state::QueuedUserMessage {
-                                text,
+                                content,
                                 op_id: item.op_id,
                                 message_id: item.message_id.clone(),
                                 model: item.model.clone().unwrap_or_else(
@@ -1828,10 +1838,10 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
                         },
                     )),
                     None => {
-                        let text = normalize_text(item.content.as_str())?;
+                        let content = parse_content(item.content.as_str())?;
                         Some(QueuedWorkItem::UserMessage(
                             crate::app::domain::state::QueuedUserMessage {
-                                text,
+                                content,
                                 op_id: item.op_id,
                                 message_id: item.message_id.clone(),
                                 model: item.model.clone().unwrap_or_else(

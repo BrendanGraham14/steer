@@ -1,9 +1,8 @@
 use crate::app::SystemContext;
 use crate::app::conversation::MessageGraph;
+use crate::app::conversation::UserContent;
 use crate::app::domain::action::McpServerState;
-use crate::app::domain::types::{
-    MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
-};
+use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use crate::prompts::system_prompt_for_model;
 use crate::session::state::SessionConfig;
@@ -60,7 +59,7 @@ pub struct QueuedApproval {
 
 #[derive(Debug, Clone)]
 pub struct QueuedUserMessage {
-    pub text: NonEmptyString,
+    pub content: Vec<UserContent>,
     pub op_id: OpId,
     pub message_id: MessageId,
     pub model: ModelId,
@@ -210,15 +209,19 @@ impl AppState {
 
     pub fn queue_user_message(&mut self, item: QueuedUserMessage) {
         if let Some(QueuedWorkItem::UserMessage(tail)) = self.queued_work.back_mut() {
-            let combined = format!("{}\n\n{}", tail.text.as_str(), item.text.as_str());
-            if let Some(text) = NonEmptyString::new(combined) {
-                tail.text = text;
-                tail.op_id = item.op_id;
-                tail.message_id = item.message_id;
-                tail.model = item.model;
-                tail.queued_at = item.queued_at;
-                return;
+            if tail.content.iter().any(|item| {
+                !matches!(item, UserContent::Text { text } if text.as_str().trim().is_empty())
+            }) {
+                tail.content.push(UserContent::Text {
+                    text: "\n\n".to_string(),
+                });
             }
+            tail.content.extend(item.content);
+            tail.op_id = item.op_id;
+            tail.message_id = item.message_id;
+            tail.model = item.model;
+            tail.queued_at = item.queued_at;
+            return;
         }
         self.queued_work
             .push_back(QueuedWorkItem::UserMessage(item));
