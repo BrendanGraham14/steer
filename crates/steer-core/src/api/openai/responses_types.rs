@@ -117,7 +117,10 @@ pub struct ResponsesApiResponse {
     pub status: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ApiError>,
+    pub error: Option<ResponseError>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incomplete_details: Option<ResponseIncompleteDetails>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<Vec<ResponseOutputItem>>,
@@ -471,15 +474,62 @@ pub enum TextFormat {
     JsonSchema { json_schema: serde_json::Value },
 }
 
-/// API error response
+/// Response-level error details returned by the Responses API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiError {
+pub struct ResponseError {
     pub code: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub param: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
+    pub error_type: Option<String>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, ExtraValue>,
+}
+
+/// Details for incomplete responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseIncompleteDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub type_: Option<String>,
+    pub reason: Option<String>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, ExtraValue>,
+}
+
+/// Error envelope returned by non-success HTTP responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponsesHttpErrorEnvelope {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ResponseError>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, ExtraValue>,
+}
+
+/// `error` SSE event payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseErrorEvent {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
+    pub event_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence_number: Option<u64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, ExtraValue>,
+}
+
+/// `response.failed` SSE event payload.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResponseFailedEvent {
+    pub response: ResponsesApiResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence_number: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "type")]
+    pub event_type: Option<String>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, ExtraValue>,
 }
 
 /// Annotation for content parts

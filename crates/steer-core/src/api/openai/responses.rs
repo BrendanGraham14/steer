@@ -7,8 +7,9 @@ use tracing::{debug, error};
 use crate::api::error::{ApiError, SseParseError, StreamError};
 use crate::api::openai::responses_types::{
     ExtraValue, InputContentPart, InputItem, InputType, MessageContentPart, ReasoningConfig,
-    ReasoningSummary, ReasoningSummaryPart, ResponseOutputItem, ResponsesApiResponse,
-    ResponsesFunctionTool, ResponsesRequest, ResponsesToolChoice,
+    ReasoningSummary, ReasoningSummaryPart, ResponseError, ResponseErrorEvent, ResponseFailedEvent,
+    ResponseOutputItem, ResponsesApiResponse, ResponsesFunctionTool, ResponsesHttpErrorEnvelope,
+    ResponsesRequest, ResponsesToolChoice,
 };
 use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
 use crate::api::sse::parse_sse_stream;
@@ -638,25 +639,7 @@ impl Client {
                     &body_text
                 );
 
-                if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                    if let Some(error) = err_json.get("error") {
-                        let message = error
-                            .get("message")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("Unknown error");
-                        return Err(ApiError::ServerError {
-                            provider: "openai".to_string(),
-                            status_code: status.as_u16(),
-                            details: message.to_string(),
-                        });
-                    }
-                }
-
-                return Err(ApiError::ServerError {
-                    provider: "openai".to_string(),
-                    status_code: status.as_u16(),
-                    details: body_text,
-                });
+                return Err(parse_http_error_response(status.as_u16(), body_text));
             }
 
             let parsed: ResponsesApiResponse = serde_json::from_str(&body_text).map_err(|e| {
@@ -772,25 +755,7 @@ impl Client {
                     &body_text
                 );
 
-                if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                    if let Some(error) = err_json.get("error") {
-                        let message = error
-                            .get("message")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("Unknown error");
-                        return Err(ApiError::ServerError {
-                            provider: "openai".to_string(),
-                            status_code: status.as_u16(),
-                            details: message.to_string(),
-                        });
-                    }
-                }
-
-                return Err(ApiError::ServerError {
-                    provider: "openai".to_string(),
-                    status_code: status.as_u16(),
-                    details: body_text,
-                });
+                return Err(parse_http_error_response(status.as_u16(), body_text));
             }
 
             let byte_stream = response.bytes_stream();
@@ -1075,28 +1040,73 @@ impl Client {
                                 break;
                             }
                             Some("error") => {
-                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                                    let message = data.get("message")
-                                        .and_then(|m| m.as_str())
-                                        .unwrap_or("Unknown error");
-                                    yield StreamChunk::Error(StreamError::Provider {
-                                        provider: "openai".into(),
-                                        error_type: "stream_error".into(),
-                                        message: message.to_string(),
-                                    });
-                                    break;
+                                let parsed_event =
+                                    serde_json::from_str::<ResponseErrorEvent>(&event.data);
+                                match parsed_event {
+                                    Ok(error_event) => {
+                                        let error_type = error_event
+                                            .event_type
+                                            .clone()
+                                            .unwrap_or_else(|| "stream_error".to_string());
+                                        yield StreamChunk::Error(StreamError::Provider {
+                                            provider: "openai".into(),
+                                            error_type,
+                                            message: error_event.message,
+                                        });
+                                        break;
+                                    }
+                                    Err(parse_error) => {
+                                        debug!(
+                                            target: "openai::responses::stream",
+                                            "Failed to parse error event payload: {} payload={}",
+                                            parse_error,
+                                            event.data,
+                                        );
+                                        yield StreamChunk::Error(StreamError::Provider {
+                                            provider: "openai".into(),
+                                            error_type: "stream_error".into(),
+                                            message: event.data.clone(),
+                                        });
+                                        break;
+                                    }
                                 }
                             }
                             Some("response.failed") => {
-                                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&event.data) {
-                                    let (error_type, message) = extract_stream_error(&data)
-                                        .unwrap_or_else(|| ("response_failed".to_string(), "Unknown error".to_string()));
-                                    yield StreamChunk::Error(StreamError::Provider {
-                                        provider: "openai".into(),
-                                        error_type,
-                                        message,
-                                    });
-                                    break;
+                                let parsed_event =
+                                    serde_json::from_str::<ResponseFailedEvent>(&event.data);
+                                match parsed_event {
+                                    Ok(failed_event) => {
+                                        let response_error = failed_event.response.error;
+                                        let fallback = response_error.as_ref().map_or_else(
+                                            || "Response failed without an error object".to_string(),
+                                            stream_error_message,
+                                        );
+                                        let (error_type, message) = response_error
+                                            .map_or_else(
+                                                || ("response_failed".to_string(), fallback),
+                                                |error| stream_error_details(&error),
+                                            );
+                                        yield StreamChunk::Error(StreamError::Provider {
+                                            provider: "openai".into(),
+                                            error_type,
+                                            message,
+                                        });
+                                        break;
+                                    }
+                                    Err(parse_error) => {
+                                        debug!(
+                                            target: "openai::responses::stream",
+                                            "Failed to parse response.failed payload: {} payload={}",
+                                            parse_error,
+                                            event.data,
+                                        );
+                                        yield StreamChunk::Error(StreamError::Provider {
+                                            provider: "openai".into(),
+                                            error_type: "response_failed".into(),
+                                            message: event.data.clone(),
+                                        });
+                                        break;
+                                    }
                                 }
                             }
                             _ => {
@@ -1626,21 +1636,53 @@ fn parse_tool_parameters(tool_name: &str, raw_args: &str) -> serde_json::Value {
     }
 }
 
-fn extract_stream_error(data: &serde_json::Value) -> Option<(String, String)> {
-    let error = data.get("error");
+fn parse_http_error_response(status_code: u16, body_text: String) -> ApiError {
+    match serde_json::from_str::<ResponsesHttpErrorEnvelope>(&body_text) {
+        Ok(envelope) => {
+            if let Some(error) = envelope.error {
+                let details = stream_error_message(&error);
+                return ApiError::ServerError {
+                    provider: "openai".to_string(),
+                    status_code,
+                    details,
+                };
+            }
+
+            ApiError::ServerError {
+                provider: "openai".to_string(),
+                status_code,
+                details: body_text,
+            }
+        }
+        Err(_) => ApiError::ServerError {
+            provider: "openai".to_string(),
+            status_code,
+            details: body_text,
+        },
+    }
+}
+
+fn stream_error_message(error: &ResponseError) -> String {
+    let message = error.message.trim();
+    let base = if message.is_empty() {
+        format!("OpenAI response error ({})", error.code)
+    } else {
+        message.to_string()
+    };
+
+    match &error.param {
+        Some(param) if !param.is_empty() => format!("{} (param: {param})", base),
+        _ => base,
+    }
+}
+
+fn stream_error_details(error: &ResponseError) -> (String, String) {
     let error_type = error
-        .and_then(|value| value.get("type"))
-        .and_then(|value| value.as_str())
-        .or_else(|| data.get("type").and_then(|value| value.as_str()))
-        .unwrap_or("stream_error")
-        .to_string();
-    let message = error
-        .and_then(|value| value.get("message"))
-        .and_then(|value| value.as_str())
-        .or_else(|| data.get("message").and_then(|value| value.as_str()))
-        .unwrap_or("Unknown error")
-        .to_string();
-    Some((error_type, message))
+        .error_type
+        .clone()
+        .unwrap_or_else(|| error.code.clone());
+    let message = stream_error_message(error);
+    (error_type, message)
 }
 
 fn auth_header_context(model_id: &ModelId, request_kind: RequestKind) -> AuthHeaderContext {
@@ -2089,6 +2131,7 @@ mod tests {
             created_at: 1_234_567_890,
             status: "completed".to_string(),
             error: None,
+            incomplete_details: None,
             output: Some(vec![
                 ResponseOutputItem::Reasoning {
                     id: "rs_123".to_string(),
@@ -2130,6 +2173,194 @@ mod tests {
         };
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_parse_http_error_response_uses_typed_error_message() {
+        let parsed = parse_http_error_response(
+            500,
+            r#"{"error":{"code":"server_error","message":"backend exploded","param":"model"}}"#
+                .to_string(),
+        );
+
+        match parsed {
+            ApiError::ServerError {
+                status_code,
+                details,
+                ..
+            } => {
+                assert_eq!(status_code, 500);
+                assert_eq!(details, "backend exploded (param: model)");
+            }
+            other => panic!("Expected server error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_http_error_response_falls_back_to_raw_body() {
+        let body = "upstream unavailable".to_string();
+        let parsed = parse_http_error_response(503, body.clone());
+
+        match parsed {
+            ApiError::ServerError {
+                status_code,
+                details,
+                ..
+            } => {
+                assert_eq!(status_code, 503);
+                assert_eq!(details, body);
+            }
+            other => panic!("Expected server error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_stream_error_message_uses_code_when_message_missing() {
+        let error = ResponseError {
+            code: "rate_limit_exceeded".to_string(),
+            message: " ".to_string(),
+            param: None,
+            error_type: None,
+            extra: Default::default(),
+        };
+
+        let message = stream_error_message(&error);
+        assert_eq!(message, "OpenAI response error (rate_limit_exceeded)");
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_error_event_prefers_typed_fields() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![Ok(SseEvent {
+            event_type: Some("error".to_string()),
+            data: r#"{"type":"error","code":"rate_limit_exceeded","message":"Too many requests","param":"model","sequence_number":4}"#.to_string(),
+            id: None,
+        })];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let error_chunk = stream.next().await.unwrap();
+        assert!(matches!(
+            error_chunk,
+            StreamChunk::Error(StreamError::Provider {
+                ref provider,
+                ref error_type,
+                ref message,
+            }) if provider == "openai" && error_type == "error" && message == "Too many requests"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_failed_event_uses_response_error() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![Ok(SseEvent {
+            event_type: Some("response.failed".to_string()),
+            data: r#"{"type":"response.failed","sequence_number":9,"response":{"id":"resp_1","object":"response","created_at":1,"status":"failed","error":{"code":"invalid_prompt","message":"Prompt blocked","param":"input"}}}"#.to_string(),
+            id: None,
+        })];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let error_chunk = stream.next().await.unwrap();
+        assert!(matches!(
+            error_chunk,
+            StreamChunk::Error(StreamError::Provider {
+                ref provider,
+                ref error_type,
+                ref message,
+            }) if provider == "openai" && error_type == "invalid_prompt" && message == "Prompt blocked (param: input)"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_failed_event_without_error_object() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![Ok(SseEvent {
+            event_type: Some("response.failed".to_string()),
+            data: r#"{"type":"response.failed","sequence_number":10,"response":{"id":"resp_2","object":"response","created_at":1,"status":"failed"}}"#.to_string(),
+            id: None,
+        })];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let error_chunk = stream.next().await.unwrap();
+        assert!(matches!(
+            error_chunk,
+            StreamChunk::Error(StreamError::Provider {
+                ref provider,
+                ref error_type,
+                ref message,
+            }) if provider == "openai" && error_type == "response_failed" && message == "Response failed without an error object"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_error_event_fallback_on_invalid_payload() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![Ok(SseEvent {
+            event_type: Some("error".to_string()),
+            data: "not-json".to_string(),
+            id: None,
+        })];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let error_chunk = stream.next().await.unwrap();
+        assert!(matches!(
+            error_chunk,
+            StreamChunk::Error(StreamError::Provider {
+                ref provider,
+                ref error_type,
+                ref message,
+            }) if provider == "openai" && error_type == "stream_error" && message == "not-json"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_failed_event_fallback_on_invalid_payload() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![Ok(SseEvent {
+            event_type: Some("response.failed".to_string()),
+            data: "not-json".to_string(),
+            id: None,
+        })];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let error_chunk = stream.next().await.unwrap();
+        assert!(matches!(
+            error_chunk,
+            StreamChunk::Error(StreamError::Provider {
+                ref provider,
+                ref error_type,
+                ref message,
+            }) if provider == "openai" && error_type == "response_failed" && message == "not-json"
+        ));
     }
 
     #[tokio::test]
