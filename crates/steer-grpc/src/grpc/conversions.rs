@@ -2038,6 +2038,10 @@ pub(crate) fn session_event_to_proto(
                     active_tools: vec![],
                     pending_tool_approvals: info.pending_tool_calls > 0,
                 }),
+                popped_queued_item: info
+                    .popped_queued_item
+                    .as_ref()
+                    .and_then(queued_work_item_to_proto),
             }),
         ),
         SessionEvent::CompactResult { result } => Some(proto::session_event::Event::CompactResult(
@@ -2585,9 +2589,14 @@ pub(crate) fn proto_to_client_event(
                 field: "operation_cancelled.info".to_string(),
             })?;
             let op_id = parse_op_id(&e.op_id)?;
+            let popped_queued_item = e
+                .popped_queued_item
+                .map(proto_to_queued_work_item)
+                .transpose()?;
             ClientEvent::OperationCancelled {
                 op_id,
                 pending_tool_calls: info.active_tools.len(),
+                popped_queued_item,
             }
         }
         proto::session_event::Event::StreamDelta(e) => {

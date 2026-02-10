@@ -43,14 +43,13 @@ impl EventProcessor for QueueEventProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notifications::NotificationManager;
     use crate::tui::events::processor::PendingToolApproval;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
-    use crate::tui::widgets::ChatListState;
+    use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
     use steer_grpc::AgentClient;
     use steer_grpc::client_api::{
-        MessageId, ModelId, OpId, Preferences, QueuedWorkItem, QueuedWorkKind, builtin,
+        MessageId, ModelId, OpId, QueuedWorkItem, QueuedWorkKind, builtin,
     };
 
     struct TestContext {
@@ -58,7 +57,7 @@ mod tests {
         chat_list_state: ChatListState,
         tool_registry: ToolCallRegistry,
         client: AgentClient,
-        notification_manager: std::sync::Arc<NotificationManager>,
+        input_panel_state: InputPanelState,
         is_processing: bool,
         progress_message: Option<String>,
         spinner_state: usize,
@@ -96,9 +95,7 @@ mod tests {
             chat_list_state,
             tool_registry,
             client,
-            notification_manager: std::sync::Arc::new(NotificationManager::new(
-                &Preferences::default(),
-            )),
+            input_panel_state: InputPanelState::new("test_session".to_string()),
             is_processing,
             progress_message,
             spinner_state,
@@ -127,12 +124,19 @@ mod tests {
             message_id: MessageId::from_string("msg_1"),
         };
 
+        let notification_manager = std::sync::Arc::new(
+            crate::notifications::NotificationManager::new(
+                &steer_grpc::client_api::Preferences::default(),
+            ),
+        );
+
         let mut processing_ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,
             tool_registry: &mut ctx.tool_registry,
             client: &ctx.client,
-            notification_manager: &ctx.notification_manager,
+            notification_manager: &notification_manager,
+            input_panel_state: &mut ctx.input_panel_state,
             is_processing: &mut ctx.is_processing,
             progress_message: &mut ctx.progress_message,
             spinner_state: &mut ctx.spinner_state,

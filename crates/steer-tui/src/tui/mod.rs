@@ -16,7 +16,9 @@ use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
 use futures::{FutureExt, StreamExt};
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{self, Event, EventStream, KeyEventKind, MouseEvent};
+use ratatui::crossterm::event::{
+    self, Event, EventStream, KeyCode, KeyEventKind, MouseEvent,
+};
 use ratatui::{Frame, Terminal};
 use steer_grpc::AgentClient;
 use steer_grpc::client_api::{
@@ -1223,7 +1225,25 @@ impl Tui {
             .add_processor(Box::new(SystemEventProcessor::new(notification_manager)))
     }
 
+    fn preprocess_client_event_double_tap(
+        event: &ClientEvent,
+        double_tap_tracker: &mut crate::tui::state::DoubleTapTracker,
+    ) {
+        if matches!(
+            event,
+            ClientEvent::OperationCancelled {
+                popped_queued_item: Some(_),
+                ..
+            }
+        ) {
+            // Cancelling with queued work restores that draft into input; clear ESC
+            // tap state so the second keypress doesn't immediately wipe it.
+            double_tap_tracker.clear_key(&KeyCode::Esc);
+        }
+    }
+
     async fn handle_client_event(&mut self, event: ClientEvent) {
+        Self::preprocess_client_event_double_tap(&event, &mut self.double_tap_tracker);
         let mut messages_updated = false;
 
         match &event {
@@ -1246,6 +1266,7 @@ impl Tui {
             tool_registry: &mut self.tool_registry,
             client: &self.client,
             notification_manager: &self.notification_manager,
+            input_panel_state: &mut self.input_panel_state,
             is_processing: &mut self.is_processing,
             progress_message: &mut self.progress_message,
             spinner_state: &mut self.spinner_state,
@@ -1912,7 +1933,7 @@ mod tests {
     use serde_json::json;
 
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use steer_grpc::client_api::{AssistantContent, Message, MessageData};
+    use steer_grpc::client_api::{AssistantContent, Message, MessageData, OpId, QueuedWorkItem};
     use tempfile::tempdir;
 
     /// RAII guard to ensure terminal state is restored after a test, even on panic.
@@ -1922,6 +1943,55 @@ mod tests {
         fn drop(&mut self) {
             cleanup();
         }
+    }
+
+    #[test]
+    fn operation_cancelled_with_popped_queue_item_clears_esc_double_tap_tracker() {
+        let mut tracker = crate::tui::state::DoubleTapTracker::new();
+        tracker.record_key(KeyCode::Esc);
+
+        let popped = QueuedWorkItem {
+            kind: steer_grpc::client_api::QueuedWorkKind::UserMessage,
+            content: "queued draft".to_string(),
+            model: None,
+            queued_at: 123,
+            op_id: OpId::new(),
+            message_id: steer_grpc::client_api::MessageId::from_string("msg_queued"),
+        };
+
+        Tui::preprocess_client_event_double_tap(
+            &ClientEvent::OperationCancelled {
+                op_id: OpId::new(),
+                pending_tool_calls: 0,
+                popped_queued_item: Some(popped),
+            },
+            &mut tracker,
+        );
+
+        assert!(
+            !tracker.is_double_tap(KeyCode::Esc, Duration::from_millis(300)),
+            "Esc tracker should be cleared when cancellation restores a queued item"
+        );
+    }
+
+    #[test]
+    fn operation_cancelled_without_popped_queue_item_keeps_esc_double_tap_tracker() {
+        let mut tracker = crate::tui::state::DoubleTapTracker::new();
+        tracker.record_key(KeyCode::Esc);
+
+        Tui::preprocess_client_event_double_tap(
+            &ClientEvent::OperationCancelled {
+                op_id: OpId::new(),
+                pending_tool_calls: 0,
+                popped_queued_item: None,
+            },
+            &mut tracker,
+        );
+
+        assert!(
+            tracker.is_double_tap(KeyCode::Esc, Duration::from_millis(300)),
+            "Esc tracker should remain armed when cancellation does not restore queued input"
+        );
     }
 
     #[tokio::test]

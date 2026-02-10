@@ -1406,25 +1406,29 @@ fn snapshot_queue(state: &AppState) -> Vec<QueuedWorkItemSnapshot> {
     state
         .queued_work
         .iter()
-        .map(|item| match item {
-            QueuedWorkItem::UserMessage(message) => QueuedWorkItemSnapshot {
-                kind: Some(QueuedWorkKind::UserMessage),
-                content: message.text.as_str().to_string(),
-                queued_at: message.queued_at,
-                model: Some(message.model.clone()),
-                op_id: message.op_id,
-                message_id: message.message_id.clone(),
-            },
-            QueuedWorkItem::DirectBash(command) => QueuedWorkItemSnapshot {
-                kind: Some(QueuedWorkKind::DirectBash),
-                content: command.command.clone(),
-                queued_at: command.queued_at,
-                model: None,
-                op_id: command.op_id,
-                message_id: command.message_id.clone(),
-            },
-        })
+        .map(snapshot_queued_work_item)
         .collect()
+}
+
+fn snapshot_queued_work_item(item: &QueuedWorkItem) -> QueuedWorkItemSnapshot {
+    match item {
+        QueuedWorkItem::UserMessage(message) => QueuedWorkItemSnapshot {
+            kind: Some(QueuedWorkKind::UserMessage),
+            content: message.text.as_str().to_string(),
+            queued_at: message.queued_at,
+            model: Some(message.model.clone()),
+            op_id: message.op_id,
+            message_id: message.message_id.clone(),
+        },
+        QueuedWorkItem::DirectBash(command) => QueuedWorkItemSnapshot {
+            kind: Some(QueuedWorkKind::DirectBash),
+            content: command.command.clone(),
+            queued_at: command.queued_at,
+            model: None,
+            op_id: command.op_id,
+            message_id: command.message_id.clone(),
+        },
+    }
 }
 
 fn handle_request_compaction(
@@ -1547,12 +1551,18 @@ fn handle_cancel(
     }
     state.active_streams.remove(&op.op_id);
 
+    let dequeued_item = state.pop_next_queued_work();
+    let popped_queued_item = dequeued_item
+        .as_ref()
+        .map(snapshot_queued_work_item);
+
     effects.push(Effect::EmitEvent {
         session_id,
         event: SessionEvent::OperationCancelled {
             op_id: op.op_id,
             info: CancellationInfo {
                 pending_tool_calls: op.pending_tool_calls.len(),
+                popped_queued_item,
             },
         },
     });
@@ -1564,7 +1574,14 @@ fn handle_cancel(
 
     state.complete_operation(op.op_id);
 
-    effects.extend(maybe_start_queued_work(state, session_id));
+    if dequeued_item.is_some() {
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::QueueUpdated {
+                queue: snapshot_queue(state),
+            },
+        });
+    }
 
     effects
 }
@@ -2493,6 +2510,74 @@ mod tests {
             },
             _ => panic!("expected tool message"),
         }
+    }
+
+    #[test]
+    fn test_cancel_pops_queued_item_without_auto_start() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let queued_op = OpId::new();
+        let queued_message_id = MessageId::from_string("queued_msg");
+        let _ = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("Queued message").expect("non-empty"),
+                op_id: queued_op,
+                message_id: queued_message_id.clone(),
+                model: builtin::claude_sonnet_4_5(),
+                timestamp: 1,
+            },
+        );
+
+        let effects = reduce(
+            &mut state,
+            Action::Cancel {
+                session_id,
+                op_id: None,
+            },
+        );
+
+        assert!(state.current_operation.is_none());
+        assert!(state.queued_work.is_empty());
+
+        let cancellation_info = effects.iter().find_map(|effect| match effect {
+            Effect::EmitEvent {
+                event: SessionEvent::OperationCancelled { info, .. },
+                ..
+            } => Some(info),
+            _ => None,
+        });
+        let info = cancellation_info.expect("expected OperationCancelled event");
+        let popped = info
+            .popped_queued_item
+            .as_ref()
+            .expect("expected popped queued item");
+        assert_eq!(popped.content, "Queued message");
+        assert_eq!(popped.op_id, queued_op);
+        assert_eq!(popped.message_id, queued_message_id);
+
+        assert!(
+            !effects.iter().any(|effect| matches!(
+                effect,
+                Effect::EmitEvent {
+                    event: SessionEvent::OperationStarted { .. },
+                    ..
+                }
+            )),
+            "queued work should not auto-start on cancel"
+        );
     }
 
     #[test]

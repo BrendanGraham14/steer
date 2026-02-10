@@ -44,8 +44,15 @@ impl Tui {
                     // Clear to prevent triple-tap
                     self.double_tap_tracker.clear_key(&KeyCode::Esc);
                 } else {
-                    // Single ESC - cancel operation if processing, otherwise just record for double-tap
-                    self.double_tap_tracker.record_key(KeyCode::Esc);
+                    // Single ESC. If this cancels an in-flight op with queued work,
+                    // do not count it toward double-tap so restored input isn't cleared.
+                    let canceling_with_queued_item = self.is_processing && self.queued_count > 0;
+                    if canceling_with_queued_item {
+                        self.double_tap_tracker.clear_key(&KeyCode::Esc);
+                    } else {
+                        self.double_tap_tracker.record_key(KeyCode::Esc);
+                    }
+
                     if self.is_processing {
                         self.client.cancel_operation().await?;
                     }

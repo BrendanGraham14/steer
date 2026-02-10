@@ -87,14 +87,6 @@ impl EventProcessor for ToolEventProcessor {
     }
 }
 
-impl Default for ToolEventProcessor {
-    fn default() -> Self {
-        Self::new(std::sync::Arc::new(NotificationManager::new(
-            &Preferences::default(),
-        )))
-    }
-}
-
 impl ToolEventProcessor {
     fn handle_tool_started(
         id: ToolCallId,
@@ -186,6 +178,14 @@ impl ToolEventProcessor {
     }
 }
 
+impl Default for ToolEventProcessor {
+    fn default() -> Self {
+        Self::new(std::sync::Arc::new(NotificationManager::new(
+            &Preferences::default(),
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,11 +196,13 @@ mod tests {
     use crate::tui::widgets::ChatListState;
     use steer_grpc::client_api::{AssistantContent, ModelId, OpId, Preferences, builtin};
 
+
     use serde_json::json;
     use std::collections::HashSet;
     use std::sync::Arc;
 
     use crate::tui::events::processor::PendingToolApproval;
+    use crate::tui::widgets::input_panel::InputPanelState;
     use steer_grpc::AgentClient;
 
     struct TestContext {
@@ -209,6 +211,7 @@ mod tests {
         tool_registry: ToolCallRegistry,
         client: AgentClient,
         notification_manager: Arc<NotificationManager>,
+        input_panel_state: InputPanelState,
         is_processing: bool,
         progress_message: Option<String>,
         spinner_state: usize,
@@ -247,6 +250,7 @@ mod tests {
             tool_registry,
             client,
             notification_manager: Arc::new(NotificationManager::new(&Preferences::default())),
+            input_panel_state: InputPanelState::new("test_session".to_string()),
             is_processing,
             progress_message,
             spinner_state,
@@ -294,6 +298,7 @@ mod tests {
                 tool_registry: &mut ctx.tool_registry,
                 client: &ctx.client,
                 notification_manager: &ctx.notification_manager,
+                input_panel_state: &mut ctx.input_panel_state,
                 is_processing: &mut ctx.is_processing,
                 progress_message: &mut ctx.progress_message,
                 spinner_state: &mut ctx.spinner_state,
@@ -323,6 +328,7 @@ mod tests {
                 tool_registry: &mut ctx.tool_registry,
                 client: &ctx.client,
                 notification_manager: &ctx.notification_manager,
+                input_panel_state: &mut ctx.input_panel_state,
                 is_processing: &mut ctx.is_processing,
                 progress_message: &mut ctx.progress_message,
                 spinner_state: &mut ctx.spinner_state,

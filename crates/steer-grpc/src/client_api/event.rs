@@ -72,6 +72,7 @@ pub enum ClientEvent {
     OperationCancelled {
         op_id: OpId,
         pending_tool_calls: usize,
+        popped_queued_item: Option<QueuedWorkItem>,
     },
     WorkspaceChanged,
     WorkspaceFiles {

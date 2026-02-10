@@ -162,6 +162,7 @@ message ErrorEvent {
 message OperationCancelledEvent {
   CancellationInfo info = 1;
   string op_id = 2;
+  optional QueuedWorkItem popped_queued_item = 3;
 }
 
 message StreamDeltaEvent {

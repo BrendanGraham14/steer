@@ -171,6 +171,7 @@ impl AgentInterpreter {
                                 op_id: self.op_id,
                                 info: CancellationInfo {
                                     pending_tool_calls: 0,
+                                    popped_queued_item: None,
                                 },
                             })
                             .await?;
@@ -359,6 +360,7 @@ impl AgentInterpreter {
                         op_id: self.op_id,
                         info: CancellationInfo {
                             pending_tool_calls: 0,
+                            popped_queued_item: None,
                         },
                     })
                     .await?;

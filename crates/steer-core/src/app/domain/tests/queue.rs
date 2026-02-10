@@ -252,6 +252,68 @@ mod tests {
     }
 
     #[test]
+    fn cancel_pops_queued_item_without_starting_it() {
+        let session_id = SessionId::new();
+        let active_op = OpId::new();
+        let mut state = active_state(session_id, active_op);
+        let model = builtin::claude_sonnet_4_5();
+        state.operation_models.insert(active_op, model.clone());
+
+        let queued_op = OpId::new();
+        let queued_message_id = MessageId::from_string("queued_msg");
+        let text = NonEmptyString::new("Queued".to_string()).expect("non-empty");
+        let _ = reduce_ok(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text,
+                op_id: queued_op,
+                message_id: queued_message_id.clone(),
+                model,
+                timestamp: 1,
+            },
+        );
+
+        let effects = reduce_ok(
+            &mut state,
+            Action::Cancel {
+                session_id,
+                op_id: None,
+            },
+        );
+
+        assert!(state.current_operation.is_none());
+        assert!(state.queued_work.is_empty());
+
+        let cancelled = effects.iter().find_map(|effect| match effect {
+            Effect::EmitEvent {
+                event: SessionEvent::OperationCancelled { info, .. },
+                ..
+            } => Some(info),
+            _ => None,
+        });
+        let info = cancelled.expect("Expected OperationCancelled event");
+        let popped = info
+            .popped_queued_item
+            .as_ref()
+            .expect("Expected popped queued item");
+        assert_eq!(popped.content, "Queued");
+        assert_eq!(popped.op_id, queued_op);
+        assert_eq!(popped.message_id, queued_message_id);
+
+        assert!(
+            !effects.iter().any(|effect| matches!(
+                effect,
+                Effect::EmitEvent {
+                    event: SessionEvent::OperationStarted { .. },
+                    ..
+                }
+            )),
+            "Queued item should not auto-start after cancellation"
+        );
+    }
+
+    #[test]
     fn dequeue_removes_head_without_starting() {
         let session_id = SessionId::new();
         let active_op = OpId::new();

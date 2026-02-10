@@ -190,6 +190,8 @@ impl<'de> Deserialize<'de> for CompactResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancellationInfo {
     pub pending_tool_calls: usize,
+    #[serde(default)]
+    pub popped_queued_item: Option<QueuedWorkItemSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

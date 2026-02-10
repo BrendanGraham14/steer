@@ -25,6 +25,7 @@ pub struct ProcessingContext<'a> {
     pub tool_registry: &'a mut ToolCallRegistry,
     pub client: &'a AgentClient,
     pub notification_manager: &'a NotificationManagerHandle,
+    pub input_panel_state: &'a mut crate::tui::widgets::input_panel::InputPanelState,
     pub is_processing: &'a mut bool,
     pub progress_message: &'a mut Option<String>,
     pub spinner_state: &'a mut usize,

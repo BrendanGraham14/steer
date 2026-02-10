@@ -164,7 +164,7 @@ proptest! {
 
 #[cfg(test)]
 mod id_preservation_tests {
-    use crate::client_api::{ClientEvent, OpId, RequestId};
+    use crate::client_api::{ClientEvent, OpId, QueuedWorkKind, RequestId};
     use crate::grpc::conversions::{proto_to_client_event, session_event_to_proto};
     use steer_core::app::domain::event::{CancellationInfo, SessionEvent};
     use steer_core::app::domain::state::OperationKind;
@@ -213,6 +213,14 @@ mod id_preservation_tests {
             op_id,
             info: CancellationInfo {
                 pending_tool_calls: 3,
+                popped_queued_item: Some(steer_core::app::domain::event::QueuedWorkItemSnapshot {
+                    kind: Some(steer_core::app::domain::event::QueuedWorkKind::UserMessage),
+                    content: "queued text".to_string(),
+                    queued_at: 123,
+                    model: None,
+                    op_id,
+                    message_id: steer_core::app::domain::types::MessageId::from_string("msg_queued"),
+                }),
             },
         };
 
@@ -223,9 +231,13 @@ mod id_preservation_tests {
             ClientEvent::OperationCancelled {
                 op_id: received,
                 pending_tool_calls,
+                popped_queued_item,
             } => {
                 assert_eq!(op_id, received);
                 assert_eq!(pending_tool_calls, 0);
+                let popped = popped_queued_item.expect("expected popped queued item");
+                assert_eq!(popped.kind, QueuedWorkKind::UserMessage);
+                assert_eq!(popped.content, "queued text");
             }
             other => panic!("Expected OperationCancelled, got {other:?}"),
         }

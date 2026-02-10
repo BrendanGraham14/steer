@@ -169,8 +169,15 @@ impl Tui {
                     return Ok(false);
                 }
 
-                // First Esc press – record and perform normal cancel behaviour
-                self.double_tap_tracker.record_key(KeyCode::Esc);
+                // First Esc press – perform normal cancel behaviour. If this
+                // cancel will pop queued work, avoid arming double-tap so we
+                // don't immediately clear the restored input.
+                let canceling_with_queued_item = self.is_processing && self.queued_count > 0;
+                if canceling_with_queued_item {
+                    self.double_tap_tracker.clear_key(&KeyCode::Esc);
+                } else {
+                    self.double_tap_tracker.record_key(KeyCode::Esc);
+                }
 
                 if self.vim_state.visual_mode {
                     self.vim_state.visual_mode = false;
