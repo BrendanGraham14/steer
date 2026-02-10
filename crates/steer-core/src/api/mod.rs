@@ -225,6 +225,39 @@ impl Client {
         }
     }
 
+    async fn collect_completion_from_stream(
+        mut stream: CompletionStream,
+        provider: String,
+    ) -> std::result::Result<CompletionResponse, ApiError> {
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                StreamChunk::MessageComplete(response) => return Ok(response),
+                StreamChunk::Error(StreamError::Cancelled) => {
+                    return Err(ApiError::Cancelled {
+                        provider: provider.clone(),
+                    });
+                }
+                StreamChunk::Error(error) => {
+                    return Err(ApiError::StreamError {
+                        provider: provider.clone(),
+                        details: error.to_string(),
+                    });
+                }
+                StreamChunk::TextDelta(_)
+                | StreamChunk::ThinkingDelta(_)
+                | StreamChunk::ToolUseStart { .. }
+                | StreamChunk::ToolUseInputDelta { .. }
+                | StreamChunk::ContentBlockStop { .. }
+                | StreamChunk::Reset => {}
+            }
+        }
+
+        Err(ApiError::StreamError {
+            provider,
+            details: "Stream ended without completion response".to_string(),
+        })
+    }
+
     /// Create a new Client with all dependencies injected.
     /// This is the preferred constructor to avoid internal registry loading.
     pub fn new_with_deps(
@@ -379,79 +412,17 @@ impl Client {
         call_options: Option<crate::config::model::ModelParameters>,
         token: CancellationToken,
     ) -> std::result::Result<CompletionResponse, ApiError> {
-        // Get provider from model ID
-        let provider_id = model_id.provider.clone();
-        let entry = self
-            .get_or_create_provider_entry(provider_id.clone())
-            .await
-            .map_err(ApiError::from)?;
-        let provider = entry.provider.clone();
-
-        if token.is_cancelled() {
-            return Err(ApiError::Cancelled {
-                provider: provider.name().to_string(),
-            });
-        }
-
-        // Get model config and merge parameters
-        let model_config = self.model_registry.get(model_id);
-        let effective_params = match (model_config, &call_options) {
-            (Some(config), Some(opts)) => config.effective_parameters(Some(opts)),
-            (Some(config), None) => config.effective_parameters(None),
-            (None, Some(opts)) => Some(*opts),
-            (None, None) => None,
-        };
-
         debug!(
             target: "api::complete",
             ?model_id,
-            ?call_options,
-            ?effective_params,
-            "Final parameters for model"
+            "Completing by consuming the streamed endpoint"
         );
 
-        let result = Self::run_complete_with_retry(
-            &provider,
-            model_id,
-            &messages,
-            &system,
-            &tools,
-            effective_params,
-            &token,
-            RETRY_MAX_ATTEMPTS,
-        )
-        .await;
+        let stream = self
+            .stream_complete(model_id, messages, system, tools, call_options, token)
+            .await?;
 
-        if let Err(ref err) = result
-            && Self::should_invalidate_provider(err)
-        {
-            self.invalidate_provider(&provider_id);
-
-            if matches!(entry.auth_source, AuthSource::Plugin { .. })
-                && let Some(fallback) = self.fallback_api_key_entry(&provider_id).await?
-            {
-                let fallback_result = Self::run_complete_with_retry(
-                    &fallback.provider,
-                    model_id,
-                    &messages,
-                    &system,
-                    &tools,
-                    effective_params,
-                    &token,
-                    RETRY_MAX_ATTEMPTS,
-                )
-                .await;
-                if fallback_result.is_ok() {
-                    let mut map = self.provider_map.write().map_err(|_| {
-                        ApiError::Configuration("Provider cache lock poisoned".to_string())
-                    })?;
-                    map.insert(provider_id, fallback);
-                }
-                return fallback_result;
-            }
-        }
-
-        result
+        Self::collect_completion_from_stream(stream, model_id.provider.to_string()).await
     }
 
     pub async fn stream_complete(
@@ -791,11 +762,26 @@ mod tests {
             _call_options: Option<crate::config::model::ModelParameters>,
             _token: CancellationToken,
         ) -> std::result::Result<CompletionResponse, ApiError> {
+            Ok(success_response())
+        }
+
+        async fn stream_complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionStream, ApiError> {
             let attempt = self.attempts.fetch_add(1, Ordering::Relaxed) + 1;
             if attempt <= self.failures_before_success {
                 return Err(network_api_error());
             }
-            Ok(success_response())
+            let response = success_response();
+            Ok(Box::pin(futures_util::stream::once(async move {
+                StreamChunk::MessageComplete(response)
+            })))
         }
     }
 
@@ -879,6 +865,21 @@ mod tests {
             _call_options: Option<crate::config::model::ModelParameters>,
             _token: CancellationToken,
         ) -> std::result::Result<CompletionResponse, ApiError> {
+            Err(ApiError::InvalidRequest {
+                provider: "stub".to_string(),
+                details: "bad request".to_string(),
+            })
+        }
+
+        async fn stream_complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionStream, ApiError> {
             self.attempts.fetch_add(1, Ordering::Relaxed);
             Err(ApiError::InvalidRequest {
                 provider: "stub".to_string(),
@@ -891,6 +892,119 @@ mod tests {
         CompletionResponse::new(vec![AssistantContent::Text {
             text: "ok".to_string(),
         }])
+    }
+
+    #[derive(Clone)]
+    struct StreamWithoutCompletionProvider;
+
+    #[async_trait]
+    impl Provider for StreamWithoutCompletionProvider {
+        fn name(&self) -> &'static str {
+            "stream-without-completion"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionResponse, ApiError> {
+            Ok(success_response())
+        }
+
+        async fn stream_complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionStream, ApiError> {
+            Ok(Box::pin(futures_util::stream::iter(vec![
+                StreamChunk::TextDelta("partial".to_string()),
+            ])))
+        }
+    }
+
+    #[derive(Clone)]
+    struct StreamCancelledProvider;
+
+    #[async_trait]
+    impl Provider for StreamCancelledProvider {
+        fn name(&self) -> &'static str {
+            "stream-cancelled"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionResponse, ApiError> {
+            Ok(success_response())
+        }
+
+        async fn stream_complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionStream, ApiError> {
+            Ok(Box::pin(futures_util::stream::iter(vec![
+                StreamChunk::Error(StreamError::Cancelled),
+            ])))
+        }
+    }
+
+    #[derive(Clone)]
+    struct StreamProviderErrorProvider;
+
+    #[async_trait]
+    impl Provider for StreamProviderErrorProvider {
+        fn name(&self) -> &'static str {
+            "stream-provider-error"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionResponse, ApiError> {
+            Ok(success_response())
+        }
+
+        async fn stream_complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<crate::config::model::ModelParameters>,
+            _token: CancellationToken,
+        ) -> std::result::Result<CompletionStream, ApiError> {
+            Ok(Box::pin(futures_util::stream::iter(vec![
+                StreamChunk::Error(StreamError::Provider {
+                    provider: "stub".to_string(),
+                    kind: ProviderStreamErrorKind::StreamError,
+                    raw_error_type: Some("stream_error".to_string()),
+                    message: "upstream failed".to_string(),
+                }),
+            ])))
+        }
     }
 
     fn network_api_error() -> ApiError {
@@ -1019,6 +1133,90 @@ mod tests {
 
         assert_eq!(response.extract_text(), "ok");
         assert_eq!(attempts.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test]
+    async fn complete_errors_when_stream_ends_without_message_complete() {
+        let client = test_client();
+        let provider_id = ProviderId("stream-without-completion".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
+
+        insert_provider(&client, provider_id, Arc::new(StreamWithoutCompletionProvider));
+
+        let err = client
+            .complete(
+                &model_id,
+                vec![],
+                None,
+                None,
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ApiError::StreamError {
+                ref provider,
+                ref details,
+            } if provider == "stream-without-completion" && details == "Stream ended without completion response"
+        ));
+    }
+
+    #[tokio::test]
+    async fn complete_maps_stream_cancelled_to_cancelled_api_error() {
+        let client = test_client();
+        let provider_id = ProviderId("stream-cancelled".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
+
+        insert_provider(&client, provider_id, Arc::new(StreamCancelledProvider));
+
+        let err = client
+            .complete(
+                &model_id,
+                vec![],
+                None,
+                None,
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ApiError::Cancelled { ref provider } if provider == "stream-cancelled"
+        ));
+    }
+
+    #[tokio::test]
+    async fn complete_maps_stream_provider_error_to_stream_api_error() {
+        let client = test_client();
+        let provider_id = ProviderId("stream-provider-error".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
+
+        insert_provider(&client, provider_id, Arc::new(StreamProviderErrorProvider));
+
+        let err = client
+            .complete(
+                &model_id,
+                vec![],
+                None,
+                None,
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ApiError::StreamError {
+                ref provider,
+                ref details,
+            } if provider == "stream-provider-error" && details.contains("upstream failed")
+        ));
     }
 
     #[tokio::test]
