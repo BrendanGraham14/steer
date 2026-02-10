@@ -1,7 +1,8 @@
 use ratatui::crossterm::{
     event::{
-        DisableBracketedPaste, DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableFocusChange,
+        EnableMouseCapture, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -16,6 +17,7 @@ pub struct TerminalState {
     pub(crate) bracketed_paste: AtomicBool,
     pub(crate) keyboard_flags_pushed: AtomicBool,
     pub(crate) mouse_capture: AtomicBool,
+    pub(crate) focus_change: AtomicBool,
 }
 
 impl Default for TerminalState {
@@ -32,6 +34,7 @@ impl TerminalState {
             bracketed_paste: AtomicBool::new(false),
             keyboard_flags_pushed: AtomicBool::new(false),
             mouse_capture: AtomicBool::new(false),
+            focus_change: AtomicBool::new(false),
         }
     }
 }
@@ -67,6 +70,10 @@ pub fn setup<W: Write>(w: &mut W) -> io::Result<()> {
     execute!(w, EnableMouseCapture)?;
     TERMINAL_STATE.mouse_capture.store(true, Ordering::Relaxed);
 
+    // focus change
+    execute!(w, EnableFocusChange)?;
+    TERMINAL_STATE.focus_change.store(true, Ordering::Relaxed);
+
     Ok(())
 }
 
@@ -78,6 +85,9 @@ pub fn cleanup_with_writer<W: Write>(writer: &mut W) {
         .swap(false, Ordering::Relaxed)
     {
         let _ = execute!(writer, PopKeyboardEnhancementFlags);
+    }
+    if TERMINAL_STATE.focus_change.swap(false, Ordering::Relaxed) {
+        let _ = execute!(writer, DisableFocusChange);
     }
     if TERMINAL_STATE.mouse_capture.swap(false, Ordering::Relaxed) {
         let _ = execute!(writer, DisableMouseCapture);

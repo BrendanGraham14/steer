@@ -21,14 +21,12 @@ pub struct Config {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct NotificationSettings {
     pub enable_sound: Option<bool>,
-    pub enable_desktop: Option<bool>,
 }
 
 impl Default for NotificationSettings {
     fn default() -> Self {
         Self {
             enable_sound: Some(true),
-            enable_desktop: Some(true),
         }
     }
 }

@@ -55,7 +55,7 @@ pub use steer_core::app::domain::action::McpServerState;
 
 pub use steer_core::tools::McpTransport;
 
-pub use steer_core::preferences::{EditingMode, Preferences};
+pub use steer_core::preferences::{EditingMode, NotificationTransport, Preferences};
 
 pub use steer_core::config::provider::ProviderId;
 

@@ -3,20 +3,20 @@
 //! Manages the overall processing state of the TUI, including thinking/processing
 //! indicators, spinner state, progress messages, and completion notifications.
 
-use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
+use crate::notifications::{NotificationEvent, NotificationManager, NotificationManagerHandle};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use async_trait::async_trait;
 use steer_grpc::client_api::ClientEvent;
 
 /// Processor for events that affect the overall processing state
 pub struct ProcessingStateProcessor {
-    notification_config: NotificationConfig,
+    notification_manager: NotificationManagerHandle,
 }
 
 impl ProcessingStateProcessor {
-    pub fn new() -> Self {
+    pub fn new(notification_manager: NotificationManagerHandle) -> Self {
         Self {
-            notification_config: NotificationConfig::from_env(),
+            notification_manager,
         }
     }
 }
@@ -56,12 +56,8 @@ impl EventProcessor for ProcessingStateProcessor {
                 ctx.in_flight_operations.remove(&op_id);
 
                 if was_processing {
-                    notify_with_sound(
-                        &self.notification_config,
-                        NotificationSound::ProcessingComplete,
-                        "Processing complete - waiting for input",
-                    )
-                    .await;
+                    self.notification_manager
+                        .emit(NotificationEvent::ProcessingComplete);
                 }
 
                 ProcessingResult::Handled
@@ -72,12 +68,9 @@ impl EventProcessor for ProcessingStateProcessor {
                 *ctx.progress_message = None;
 
                 if was_processing {
-                    notify_with_sound(
-                        &self.notification_config,
-                        NotificationSound::Error,
-                        &message,
-                    )
-                    .await;
+                    self.notification_manager.emit(NotificationEvent::Error {
+                        message: message.clone(),
+                    });
                 }
 
                 ProcessingResult::Handled
@@ -116,6 +109,8 @@ impl EventProcessor for ProcessingStateProcessor {
 
 impl Default for ProcessingStateProcessor {
     fn default() -> Self {
-        Self::new()
+        Self::new(std::sync::Arc::new(NotificationManager::new(
+            &steer_grpc::client_api::Preferences::default(),
+        )))
     }
 }

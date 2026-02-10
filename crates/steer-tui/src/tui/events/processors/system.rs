@@ -3,7 +3,7 @@
 //! Processes events related to command responses, compaction, and other
 //! system-level state changes.
 
-use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
+use crate::notifications::{NotificationEvent, NotificationManager, NotificationManagerHandle};
 use crate::tui::core_commands::{CommandResponse, CoreCommandType};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::{ChatItemData, NoticeLevel, generate_row_id};
@@ -12,13 +12,13 @@ use steer_grpc::client_api::ClientEvent;
 
 /// Processor for system-level events
 pub struct SystemEventProcessor {
-    notification_config: NotificationConfig,
+    notification_manager: NotificationManagerHandle,
 }
 
 impl SystemEventProcessor {
-    pub fn new() -> Self {
+    pub fn new(notification_manager: NotificationManagerHandle) -> Self {
         Self {
-            notification_config: NotificationConfig::from_env(),
+            notification_manager,
         }
     }
 }
@@ -58,12 +58,9 @@ impl EventProcessor for SystemEventProcessor {
                 ctx.chat_store.push(chat_item);
                 *ctx.messages_updated = true;
 
-                notify_with_sound(
-                    &self.notification_config,
-                    NotificationSound::Error,
-                    &message,
-                )
-                .await;
+                self.notification_manager.emit(NotificationEvent::Error {
+                    message: message.clone(),
+                });
 
                 ProcessingResult::Handled
             }
@@ -89,7 +86,7 @@ impl EventProcessor for SystemEventProcessor {
             }
             ClientEvent::SessionConfigUpdated {
                 primary_agent_id,
-                config,
+                config: _,
             } => {
                 let label = crate::tui::format_agent_label(&primary_agent_id);
                 *ctx.current_agent_label = Some(label);
@@ -106,6 +103,8 @@ impl EventProcessor for SystemEventProcessor {
 
 impl Default for SystemEventProcessor {
     fn default() -> Self {
-        Self::new()
+        Self::new(std::sync::Arc::new(NotificationManager::new(
+            &steer_grpc::client_api::Preferences::default(),
+        )))
     }
 }

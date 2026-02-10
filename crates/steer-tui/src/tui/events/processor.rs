@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::notifications::NotificationManagerHandle;
 use crate::tui::state::{ChatStore, ToolCallRegistry};
 use crate::tui::widgets::ChatListState;
 use steer_grpc::AgentClient;
@@ -23,6 +24,7 @@ pub struct ProcessingContext<'a> {
     pub chat_list_state: &'a mut ChatListState,
     pub tool_registry: &'a mut ToolCallRegistry,
     pub client: &'a AgentClient,
+    pub notification_manager: &'a NotificationManagerHandle,
     pub is_processing: &'a mut bool,
     pub progress_message: &'a mut Option<String>,
     pub spinner_state: &'a mut usize,

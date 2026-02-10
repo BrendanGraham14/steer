@@ -238,7 +238,7 @@ transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-K
 
 ## Notifications
 
-Steer supports desktop and audio notifications when certain events occur.
+Steer supports terminal notifications when certain events occur.
 
 ### Notification Types
 
@@ -250,13 +250,15 @@ Steer supports desktop and audio notifications when certain events occur.
 
 ### Configuration
 
-Both sound and desktop notifications are enabled by default. To disable either of them, edit the configuration via `steer preferences edit`:
+Notifications are configured via `steer preferences edit`:
 
 ```toml
 [ui.notifications]
-sound = true
-desktop = true
+transport = "auto" # auto | osc9 | off
 ```
+
+- `transport = "auto"` (default) uses OSC 9 terminal notifications.
+- In terminals like Ghostty, notification clicks can switch back to the relevant tab.
 
 ---
 

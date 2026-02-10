@@ -10,6 +10,16 @@ pub enum EditingMode {
     Vim, // Full vim keybindings
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, Display)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum NotificationTransport {
+    #[default]
+    Auto,
+    Osc9,
+    Off,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Preferences {
     pub default_model: Option<String>,
@@ -24,6 +34,7 @@ pub struct Preferences {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UiPreferences {
     pub theme: Option<String>,
+    #[serde(default)]
     pub notifications: NotificationPreferences,
     pub history_limit: Option<usize>,
     pub provider_priority: Option<Vec<String>>,
@@ -33,8 +44,8 @@ pub struct UiPreferences {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationPreferences {
-    pub sound: bool,
-    pub desktop: bool,
+    #[serde(default)]
+    pub transport: NotificationTransport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -45,8 +56,7 @@ pub struct ToolPreferences {
 impl Default for NotificationPreferences {
     fn default() -> Self {
         Self {
-            sound: true,
-            desktop: true,
+            transport: NotificationTransport::Auto,
         }
     }
 }

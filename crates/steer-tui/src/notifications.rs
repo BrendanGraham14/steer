@@ -1,215 +1,226 @@
-//! Notification module for the TUI
+//! Notification module for the TUI.
 //!
-//! Provides sound and desktop notifications when processing completes.
+//! Provides centralized, focus-aware notification delivery with OSC 9 as the
+//! primary transport.
 
-use crate::error::Result;
-use notify_rust::Notification;
-use process_wrap::tokio::{ProcessGroup, TokioCommandWrap};
+use ratatui::crossterm::{Command, execute};
 use std::fmt;
-use std::str::FromStr;
-use std::time::Duration;
-use tokio::time::sleep;
+use std::io::{self, stdout};
+use std::sync::{Arc, Mutex};
 use tracing::debug;
 
-/// Type of notification sound to play
-#[derive(Debug, Clone, Copy)]
-pub enum NotificationSound {
-    /// Processing complete - ascending tones
+use steer_grpc::client_api::{NotificationTransport, Preferences};
+
+/// High-level notification categories emitted by event processors.
+#[derive(Debug, Clone)]
+pub enum NotificationEvent {
     ProcessingComplete,
-    /// Tool approval needed - urgent double beep
-    ToolApproval,
-    /// Error occurred - descending tones
-    Error,
+    ToolApprovalRequested { tool_name: String },
+    Error { message: String },
 }
 
-impl FromStr for NotificationSound {
-    type Err = ();
+impl NotificationEvent {
+    fn title() -> &'static str {
+        "Steer"
+    }
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "ProcessingComplete" => Ok(NotificationSound::ProcessingComplete),
-            "ToolApproval" => Ok(NotificationSound::ToolApproval),
-            "Error" => Ok(NotificationSound::Error),
-            _ => Err(()),
+    fn body(&self) -> String {
+        match self {
+            NotificationEvent::ProcessingComplete => {
+                "Processing complete - waiting for input".to_string()
+            }
+            NotificationEvent::ToolApprovalRequested { tool_name } => {
+                format!("Tool approval needed: {tool_name}")
+            }
+            NotificationEvent::Error { message } => message.clone(),
         }
     }
 }
 
-impl fmt::Display for NotificationSound {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            NotificationSound::ProcessingComplete => "ProcessingComplete",
-            NotificationSound::ToolApproval => "ToolApproval",
-            NotificationSound::Error => "Error",
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffectiveTransport {
+    Osc9,
+    Off,
+}
+
+/// Focus-aware manager used by event processors to emit notifications.
+#[derive(Debug)]
+pub struct NotificationManager {
+    inner: Mutex<NotificationState>,
+}
+
+#[derive(Debug)]
+struct NotificationState {
+    transport: EffectiveTransport,
+    terminal_focused: bool,
+    focus_events_enabled: bool,
+}
+
+impl NotificationManager {
+    pub fn new(preferences: &Preferences) -> Self {
+        let config = NotificationConfig::from_preferences(preferences);
+        let transport = resolve_transport(config.transport);
+        Self {
+            inner: Mutex::new(NotificationState {
+                transport,
+                terminal_focused: true,
+                focus_events_enabled: false,
+            }),
+        }
+    }
+
+    pub fn set_terminal_focused(&self, focused: bool) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.terminal_focused = focused;
+    }
+
+    pub fn set_focus_events_enabled(&self, enabled: bool) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.focus_events_enabled = enabled;
+    }
+
+    pub fn emit(&self, event: NotificationEvent) {
+        let (should_emit, transport, title, body) = {
+            let state = self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let should_emit = if state.focus_events_enabled {
+                !state.terminal_focused
+            } else {
+                true
+            };
+            (
+                should_emit,
+                state.transport,
+                NotificationEvent::title().to_string(),
+                event.body(),
+            )
         };
-        write!(f, "{s}")
+
+        if !should_emit || transport == EffectiveTransport::Off {
+            return;
+        }
+
+        match transport {
+            EffectiveTransport::Osc9 => {
+                if let Err(err) = show_osc9_notification(&title, &body) {
+                    debug!("Failed to emit OSC 9 notification: {err}");
+                }
+            }
+            EffectiveTransport::Off => {}
+        }
     }
 }
 
-/// Get the appropriate system sound name for the notification type
-fn get_sound_name(sound_type: NotificationSound) -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        match sound_type {
-            NotificationSound::ProcessingComplete => "Glass", // Pleasant completion sound
-            NotificationSound::ToolApproval => "Ping",        // Attention-getting sound
-            NotificationSound::Error => "Basso",              // Error/failure sound
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        match sound_type {
-            NotificationSound::ProcessingComplete => "message-new-instant", // Completion sound
-            NotificationSound::ToolApproval => "dialog-warning", // Warning/attention sound
-            NotificationSound::Error => "dialog-error",          // Error sound
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // Windows has limited notification sound options
-        match sound_type {
-            NotificationSound::ProcessingComplete => "default",
-            NotificationSound::ToolApproval => "default",
-            NotificationSound::Error => "default",
-        }
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        "default"
+fn resolve_transport(transport: NotificationTransport) -> EffectiveTransport {
+    match transport {
+        NotificationTransport::Auto | NotificationTransport::Osc9 => EffectiveTransport::Osc9,
+        NotificationTransport::Off => EffectiveTransport::Off,
     }
 }
 
-/// Show a desktop notification with optional sound
-pub fn show_notification_with_sound(
-    title: &str,
-    message: &str,
-    sound_type: Option<NotificationSound>,
-) -> Result<()> {
-    let mut notification = Notification::new();
-    notification
-        .summary(title)
-        .body(message)
-        .appname("steer")
-        .timeout(5000);
+/// Shared handle passed through TUI state and event processors.
+pub type NotificationManagerHandle = Arc<NotificationManager>;
 
-    // Add sound if specified
-    if let Some(sound) = sound_type {
-        notification.sound_name(get_sound_name(sound));
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        notification.icon("terminal").timeout(5000);
-    }
-
-    notification.show()?;
-    Ok(())
-}
-
-/// Configuration for notifications
+/// Configuration for notifications.
 #[derive(Debug, Clone)]
 pub struct NotificationConfig {
-    pub enable_sound: bool,
-    pub enable_desktop_notification: bool,
+    pub transport: NotificationTransport,
 }
 
 impl Default for NotificationConfig {
     fn default() -> Self {
         Self {
-            enable_sound: true,
-            enable_desktop_notification: true,
+            transport: NotificationTransport::Auto,
         }
     }
 }
 
 impl NotificationConfig {
-    /// Load configuration from environment variables
-    pub fn from_env() -> Self {
+    pub fn from_preferences(preferences: &Preferences) -> Self {
         Self {
-            enable_sound: std::env::var("STEER_NOTIFICATION_SOUND")
-                .map(|v| v != "false" && v != "0")
-                .unwrap_or(true),
-            enable_desktop_notification: std::env::var("STEER_NOTIFICATION_DESKTOP")
-                .map(|v| v != "false" && v != "0")
-                .unwrap_or(true),
+            transport: preferences.ui.notifications.transport,
         }
     }
 }
 
-/// We need to do this in a subprocess because on mac at least, notify-rust's Notification::show()
-/// **NEVER RETURNS**.
-/// This is a workaround to ensure that both:
-/// 1. The notification is shown
-/// 2. We don't leak tokio tasks / threads
-/// 3. We don't end up with blocking tokio tasks which prevent the main thread from exiting.
-async fn trigger_notification_subprocess(
-    title: &str,
-    message: &str,
-    sound: Option<NotificationSound>,
-) -> Result<()> {
-    let current_exe = std::env::current_exe()?;
-    let mut args = vec![
-        "notify".to_string(),
-        "--title".to_string(),
-        title.to_string(),
-        "--message".to_string(),
-        message.to_string(),
-    ];
+/// Command that emits an OSC 9 notification with a message.
+#[derive(Debug, Clone)]
+struct PostNotification(pub String);
 
-    if let Some(sound_type) = sound {
-        args.push("--sound".to_string());
-        args.push(sound_type.to_string());
+impl Command for PostNotification {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        write!(f, "\x1b]9;{}\x07", self.0)
     }
 
-    let mut child = TokioCommandWrap::with_new(current_exe, |command| {
-        command.args(args);
-    })
-    .wrap(ProcessGroup::leader())
-    .spawn()?;
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> io::Result<()> {
+        Err(std::io::Error::other(
+            "tried to execute PostNotification using WinAPI; use ANSI instead",
+        ))
+    }
 
-    tokio::spawn(async move {
-        sleep(Duration::from_secs(2)).await;
-        match child.start_kill() {
-            Ok(()) => {}
-            Err(e) => {
-                debug!("Failed to kill notification subprocess: {}", e);
-            }
-        }
-    });
-
-    Ok(())
+    #[cfg(windows)]
+    fn is_ansi_code_supported(&self) -> bool {
+        true
+    }
 }
 
-/// Trigger notifications with specific sound
-pub async fn notify_with_sound(
-    config: &NotificationConfig,
-    sound: NotificationSound,
-    message: &str,
-) {
-    notify_with_title_and_sound(config, sound, "Steer", message).await;
+fn show_osc9_notification(title: &str, message: &str) -> io::Result<()> {
+    let body = if title.is_empty() {
+        message.to_string()
+    } else {
+        format!("{title}: {message}")
+    };
+    execute!(stdout(), PostNotification(body))
 }
 
-/// Trigger notifications with custom title and sound
-pub async fn notify_with_title_and_sound(
-    config: &NotificationConfig,
-    sound: NotificationSound,
-    title: &str,
-    message: &str,
-) {
-    if config.enable_desktop_notification {
-        let sound_option = if config.enable_sound {
-            Some(sound)
-        } else {
-            None
-        };
-        match trigger_notification_subprocess(title, message, sound_option).await {
-            Ok(()) => {}
-            Err(e) => {
-                debug!("Failed to trigger notification subprocess: {}", e);
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use steer_grpc::client_api::NotificationTransport;
+
+    fn prefs_with_transport(transport: NotificationTransport) -> Preferences {
+        let mut prefs = Preferences::default();
+        prefs.ui.notifications.transport = transport;
+        prefs
+    }
+
+    #[test]
+    fn resolve_auto_to_osc9() {
+        let prefs = prefs_with_transport(NotificationTransport::Auto);
+        let manager = NotificationManager::new(&prefs);
+        let state = manager
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(state.transport, EffectiveTransport::Osc9);
+    }
+
+    #[test]
+    fn resolve_off_to_off() {
+        let prefs = prefs_with_transport(NotificationTransport::Off);
+        let manager = NotificationManager::new(&prefs);
+        let state = manager
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(state.transport, EffectiveTransport::Off);
+    }
+
+    #[test]
+    fn event_body_formats_approval() {
+        let body = NotificationEvent::ToolApprovalRequested {
+            tool_name: "bash".to_string(),
         }
+        .body();
+        assert_eq!(body, "Tool approval needed: bash");
     }
 }

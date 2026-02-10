@@ -2,23 +2,23 @@
 //!
 //! Manages tool execution state, approval requests, completion, and failure events.
 
-use crate::notifications::{NotificationConfig, NotificationSound, notify_with_sound};
+use crate::notifications::{NotificationEvent, NotificationManager, NotificationManagerHandle};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItemData;
 use async_trait::async_trait;
 use steer_grpc::client_api::{
-    ClientEvent, Message, MessageData, ToolCall, ToolCallId, ToolError, ToolResult,
+    ClientEvent, Message, MessageData, Preferences, ToolCall, ToolCallId, ToolError, ToolResult,
 };
 
 /// Processor for tool-related events
 pub struct ToolEventProcessor {
-    notification_config: NotificationConfig,
+    notification_manager: NotificationManagerHandle,
 }
 
 impl ToolEventProcessor {
-    pub fn new() -> Self {
+    pub fn new(notification_manager: NotificationManagerHandle) -> Self {
         Self {
-            notification_config: NotificationConfig::from_env(),
+            notification_manager,
         }
     }
 }
@@ -71,12 +71,10 @@ impl EventProcessor for ToolEventProcessor {
             } => {
                 *ctx.current_tool_approval = Some((request_id, tool_call.clone()));
 
-                notify_with_sound(
-                    &self.notification_config,
-                    NotificationSound::ToolApproval,
-                    &format!("Tool approval needed: {}", tool_call.name),
-                )
-                .await;
+                self.notification_manager
+                    .emit(NotificationEvent::ToolApprovalRequested {
+                        tool_name: tool_call.name,
+                    });
 
                 ProcessingResult::Handled
             }
@@ -86,6 +84,14 @@ impl EventProcessor for ToolEventProcessor {
 
     fn name(&self) -> &'static str {
         "ToolEventProcessor"
+    }
+}
+
+impl Default for ToolEventProcessor {
+    fn default() -> Self {
+        Self::new(std::sync::Arc::new(NotificationManager::new(
+            &Preferences::default(),
+        )))
     }
 }
 
@@ -180,23 +186,19 @@ impl ToolEventProcessor {
     }
 }
 
-impl Default for ToolEventProcessor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::notifications::NotificationManager;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::events::processors::message::MessageEventProcessor;
     use crate::tui::state::{ChatStore, ToolCallRegistry};
     use crate::tui::widgets::ChatListState;
-    use steer_grpc::client_api::{AssistantContent, ModelId, OpId, builtin};
+    use steer_grpc::client_api::{AssistantContent, ModelId, OpId, Preferences, builtin};
 
     use serde_json::json;
     use std::collections::HashSet;
+    use std::sync::Arc;
 
     use crate::tui::events::processor::PendingToolApproval;
     use steer_grpc::AgentClient;
@@ -206,6 +208,7 @@ mod tests {
         chat_list_state: ChatListState,
         tool_registry: ToolCallRegistry,
         client: AgentClient,
+        notification_manager: Arc<NotificationManager>,
         is_processing: bool,
         progress_message: Option<String>,
         spinner_state: usize,
@@ -243,6 +246,7 @@ mod tests {
             chat_list_state,
             tool_registry,
             client,
+            notification_manager: Arc::new(NotificationManager::new(&Preferences::default())),
             is_processing,
             progress_message,
             spinner_state,
@@ -259,9 +263,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_toolcallstarted_after_assistant_keeps_params() {
-        let mut tool_proc = ToolEventProcessor::new();
-        let mut msg_proc = MessageEventProcessor::new();
         let mut ctx = create_test_context().await;
+        let mut tool_proc = ToolEventProcessor::new(ctx.notification_manager.clone());
+        let mut msg_proc = MessageEventProcessor::new();
 
         let full_call = ToolCall {
             id: "id123".to_string(),
@@ -284,11 +288,12 @@ mod tests {
         let model = ctx.current_model.clone();
 
         {
-            let mut ctx = ProcessingContext {
+            let mut proc_ctx = ProcessingContext {
                 chat_store: &mut ctx.chat_store,
                 chat_list_state: &mut ctx.chat_list_state,
                 tool_registry: &mut ctx.tool_registry,
                 client: &ctx.client,
+                notification_manager: &ctx.notification_manager,
                 is_processing: &mut ctx.is_processing,
                 progress_message: &mut ctx.progress_message,
                 spinner_state: &mut ctx.spinner_state,
@@ -306,17 +311,18 @@ mod tests {
                         message: assistant,
                         model: model.clone(),
                     },
-                    &mut ctx,
+                    &mut proc_ctx,
                 )
                 .await;
         }
 
         {
-            let mut ctx = ProcessingContext {
+            let mut proc_ctx = ProcessingContext {
                 chat_store: &mut ctx.chat_store,
                 chat_list_state: &mut ctx.chat_list_state,
                 tool_registry: &mut ctx.tool_registry,
                 client: &ctx.client,
+                notification_manager: &ctx.notification_manager,
                 is_processing: &mut ctx.is_processing,
                 progress_message: &mut ctx.progress_message,
                 spinner_state: &mut ctx.spinner_state,
@@ -335,7 +341,7 @@ mod tests {
                         id: "id123".into(),
                         parameters: serde_json::Value::Null,
                     },
-                    &mut ctx,
+                    &mut proc_ctx,
                 )
                 .await;
         }

@@ -66,13 +66,6 @@ pub enum Error {
     TuiCommandParsing(#[from] crate::tui::commands::TuiCommandError),
 }
 
-// Convert notify-rust errors to our error type
-impl From<notify_rust::error::Error> for Error {
-    fn from(err: notify_rust::error::Error) -> Self {
-        Error::Notification(err.to_string())
-    }
-}
-
 impl From<steer_grpc::GrpcError> for Error {
     fn from(err: steer_grpc::GrpcError) -> Self {
         Error::Grpc(Box::new(err))

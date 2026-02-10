@@ -10,6 +10,7 @@ use std::time::Duration;
 use crate::tui::update::UpdateStatus;
 
 use crate::error::{Error, Result};
+use crate::notifications::{NotificationManager, NotificationManagerHandle};
 use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
@@ -215,6 +216,8 @@ pub struct Tui {
     command_registry: CommandRegistry,
     /// User preferences
     preferences: Preferences,
+    /// Centralized notification manager
+    notification_manager: NotificationManagerHandle,
     /// Double-tap tracker for key sequences
     double_tap_tracker: crate::tui::state::DoubleTapTracker,
     /// Vim mode state
@@ -318,6 +321,8 @@ impl Tui {
             EditingMode::Vim => InputMode::VimNormal,
         };
 
+        let notification_manager = std::sync::Arc::new(NotificationManager::new(&preferences));
+
         let mut tui = Self {
             terminal,
             terminal_size,
@@ -333,7 +338,7 @@ impl Tui {
             current_tool_approval: None,
             current_model,
             current_agent_label: None,
-            event_pipeline: Self::create_event_pipeline(),
+            event_pipeline: Self::create_event_pipeline(notification_manager.clone()),
             chat_store: ChatStore::new(),
             tool_registry: ToolCallRegistry::new(),
             chat_viewport: ChatViewport::new(),
@@ -345,6 +350,7 @@ impl Tui {
             queued_count: 0,
             command_registry: CommandRegistry::new(),
             preferences,
+            notification_manager,
             double_tap_tracker: crate::tui::state::DoubleTapTracker::new(),
             vim_state: VimState::default(),
             mode_stack: VecDeque::new(),
@@ -354,6 +360,7 @@ impl Tui {
         };
 
         tui.refresh_agent_label().await;
+        tui.notification_manager.set_focus_events_enabled(true);
 
         // Disarm guard; Tui instance will handle cleanup
         guard.disarm();
@@ -723,6 +730,12 @@ impl Tui {
 
         while let Some(event) = pending_events.pop_front() {
             match event {
+                Event::FocusGained => {
+                    self.notification_manager.set_terminal_focused(true);
+                }
+                Event::FocusLost => {
+                    self.notification_manager.set_terminal_focused(false);
+                }
                 Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                     match self.handle_key_event(key_event).await {
                         Ok(exit) => {
@@ -1195,15 +1208,19 @@ impl Tui {
     }
 
     /// Create the event processing pipeline
-    fn create_event_pipeline() -> EventPipeline {
+    fn create_event_pipeline(notification_manager: NotificationManagerHandle) -> EventPipeline {
         EventPipeline::new()
-            .add_processor(Box::new(ProcessingStateProcessor::new()))
+            .add_processor(Box::new(ProcessingStateProcessor::new(
+                notification_manager.clone(),
+            )))
             .add_processor(Box::new(MessageEventProcessor::new()))
             .add_processor(Box::new(
                 crate::tui::events::processors::queue::QueueEventProcessor::new(),
             ))
-            .add_processor(Box::new(ToolEventProcessor::new()))
-            .add_processor(Box::new(SystemEventProcessor::new()))
+            .add_processor(Box::new(ToolEventProcessor::new(
+                notification_manager.clone(),
+            )))
+            .add_processor(Box::new(SystemEventProcessor::new(notification_manager)))
     }
 
     async fn handle_client_event(&mut self, event: ClientEvent) {
@@ -1228,6 +1245,7 @@ impl Tui {
             chat_list_state: self.chat_viewport.state_mut(),
             tool_registry: &mut self.tool_registry,
             client: &self.client,
+            notification_manager: &self.notification_manager,
             is_processing: &mut self.is_processing,
             progress_message: &mut self.progress_message,
             spinner_state: &mut self.spinner_state,
