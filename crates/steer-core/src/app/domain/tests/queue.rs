@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use crate::app::conversation::AssistantContent;
+    use crate::app::conversation::{AssistantContent, UserContent};
     use crate::app::domain::action::Action;
     use crate::app::domain::effect::Effect;
     use crate::app::domain::event::SessionEvent;
     use crate::app::domain::reduce::{InvalidActionKind, ReduceError, reduce};
     use crate::app::domain::state::{AppState, OperationKind, OperationState, QueuedWorkItem};
-    use crate::app::domain::types::{MessageId, NonEmptyString, OpId, SessionId};
+    use crate::app::domain::types::{MessageId, OpId, SessionId};
     use crate::config::model::builtin;
     use std::collections::HashSet;
 
@@ -33,13 +33,13 @@ mod tests {
         let queued_op = OpId::new();
         let message_id = MessageId::from_string("queued_msg");
         let model = builtin::claude_sonnet_4_5();
-        let text = NonEmptyString::new("Hello".to_string()).expect("non-empty");
-
         let effects = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
-                text,
+                content: vec![UserContent::Text {
+                    text: "Hello".to_string(),
+                }],
                 op_id: queued_op,
                 message_id: message_id.clone(),
                 model,
@@ -50,7 +50,16 @@ mod tests {
         assert_eq!(state.queued_work.len(), 1);
         match state.queued_work.front() {
             Some(QueuedWorkItem::UserMessage(item)) => {
-                assert_eq!(item.text.as_str(), "Hello");
+                let joined_text = item
+                    .content
+                    .iter()
+                    .filter_map(|content| match content {
+                        UserContent::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                assert_eq!(joined_text, "Hello");
                 assert_eq!(item.op_id, queued_op);
                 assert_eq!(item.message_id, message_id);
             }
@@ -77,12 +86,13 @@ mod tests {
 
         let model = builtin::claude_sonnet_4_5();
 
-        let first = NonEmptyString::new("First".to_string()).expect("non-empty");
         let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
-                text: first,
+                content: vec![UserContent::Text {
+                    text: "First".to_string(),
+                }],
                 op_id: OpId::new(),
                 message_id: MessageId::from_string("m1"),
                 model: model.clone(),
@@ -90,12 +100,13 @@ mod tests {
             },
         );
 
-        let second = NonEmptyString::new("Second".to_string()).expect("non-empty");
         let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
-                text: second,
+                content: vec![UserContent::Text {
+                    text: "Second".to_string(),
+                }],
                 op_id: OpId::new(),
                 message_id: MessageId::from_string("m2"),
                 model,
@@ -106,7 +117,16 @@ mod tests {
         assert_eq!(state.queued_work.len(), 1);
         match state.queued_work.front() {
             Some(QueuedWorkItem::UserMessage(item)) => {
-                assert_eq!(item.text.as_str(), "First\n\nSecond");
+                let joined_text = item
+                    .content
+                    .iter()
+                    .filter_map(|content| match content {
+                        UserContent::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                assert_eq!(joined_text, "First\n\nSecond");
             }
             _ => panic!("Expected queued user message"),
         }
@@ -159,13 +179,13 @@ mod tests {
 
         let queued_op = OpId::new();
         let queued_message_id = MessageId::from_string("queued_user");
-        let text = NonEmptyString::new("Queued".to_string()).expect("non-empty");
-
         let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
-                text,
+                content: vec![UserContent::Text {
+                    text: "Queued".to_string(),
+                }],
                 op_id: queued_op,
                 message_id: queued_message_id,
                 model: model.clone(),
@@ -320,12 +340,13 @@ mod tests {
         let mut state = active_state(session_id, active_op);
 
         let model = builtin::claude_sonnet_4_5();
-        let text = NonEmptyString::new("Queued".to_string()).expect("non-empty");
         let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
-                text,
+                content: vec![UserContent::Text {
+                    text: "Queued".to_string(),
+                }],
                 op_id: OpId::new(),
                 message_id: MessageId::from_string("queued_msg"),
                 model,

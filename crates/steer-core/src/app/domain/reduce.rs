@@ -2022,9 +2022,7 @@ fn emit_mcp_connect_effects(
 mod tests {
     use super::*;
     use crate::app::domain::state::{OperationState, PendingApproval};
-    use crate::app::domain::types::{
-        MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
-    };
+    use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
     use crate::config::model::builtin;
     use crate::primary_agents::resolve_effective_config;
     use crate::session::state::{
@@ -2074,7 +2072,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("Hello").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "Hello".to_string(),
+                }],
                 op_id,
                 message_id,
                 model,
@@ -2960,7 +2960,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("first").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "first".to_string(),
+                }],
                 op_id: op_a,
                 message_id: MessageId::new(),
                 model: model.clone(),
@@ -2972,7 +2974,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("second").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "second".to_string(),
+                }],
                 op_id: op_b,
                 message_id: MessageId::new(),
                 model: model.clone(),

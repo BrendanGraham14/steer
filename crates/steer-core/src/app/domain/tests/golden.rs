@@ -1,14 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use crate::app::conversation::AssistantContent;
+    use crate::app::conversation::{AssistantContent, UserContent};
     use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory};
     use crate::app::domain::effect::Effect;
     use crate::app::domain::event::SessionEvent;
     use crate::app::domain::reduce::reduce;
     use crate::app::domain::state::{AppState, OperationKind, OperationState};
-    use crate::app::domain::types::{
-        MessageId, NonEmptyString, OpId, RequestId, SessionId, ToolCallId,
-    };
+    use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
     use crate::config::model::builtin;
     use serde::{Deserialize, Serialize};
     use std::collections::HashSet;
@@ -184,7 +182,7 @@ mod tests {
                 timestamp,
             } => Action::UserInput {
                 session_id,
-                text: NonEmptyString::new(text.clone()).unwrap(),
+                content: vec![UserContent::Text { text: text.clone() }],
                 op_id: deterministic_op_id(*op_id),
                 message_id: deterministic_message_id(message_id),
                 timestamp: *timestamp,
@@ -439,7 +437,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("List files").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "List files".to_string(),
+                }],
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,
@@ -544,7 +544,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("Hello").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "Hello".to_string(),
+                }],
                 op_id,
                 message_id: deterministic_message_id("msg_1"),
                 timestamp: 1000,

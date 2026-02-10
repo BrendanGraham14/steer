@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::app::conversation::AssistantContent;
+    use crate::app::conversation::{AssistantContent, UserContent};
     use crate::app::domain::action::Action;
     use crate::app::domain::effect::Effect;
     use crate::app::domain::event::SessionEvent;
@@ -66,7 +66,9 @@ mod tests {
             .prop_map(
                 move |(op_id, message_id, text, timestamp)| Action::UserInput {
                     session_id,
-                    text,
+                    content: vec![UserContent::Text {
+                        text: text.to_string(),
+                    }],
                     op_id,
                     message_id,
                     timestamp,
@@ -88,7 +90,9 @@ mod tests {
         ) {
             let action = Action::UserInput {
                 session_id,
-                text: text.clone(),
+                content: vec![UserContent::Text {
+                    text: text.to_string(),
+                }],
                 op_id,
                 message_id: message_id.clone(),
                 timestamp,
@@ -122,10 +126,10 @@ mod tests {
         fn prop_user_input_always_starts_operation(
             _session_id in arb_session_id(),
             action in arb_user_input_action(SessionId::from(uuid::Uuid::from_u128(12345))).prop_map(|a| {
-                if let Action::UserInput { text, op_id, message_id, timestamp, .. } = a {
+                if let Action::UserInput { content, op_id, message_id, timestamp, .. } = a {
                     Action::UserInput {
                         session_id: SessionId::from(uuid::Uuid::from_u128(12345)),
-                        text,
+                        content,
                         op_id,
                         message_id,
                         timestamp,

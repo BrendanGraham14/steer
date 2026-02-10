@@ -1,16 +1,21 @@
 use async_trait::async_trait;
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
+use sha2::{Digest, Sha256};
 use sqlx::{
     Row,
     sqlite::{
         SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
     },
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use super::catalog::{SessionCatalog, SessionCatalogError, SessionFilter, SessionSummary};
 use super::event_store::{EventStore, EventStoreError};
+use crate::app::conversation::{
+    AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
+};
 use crate::app::domain::event::SessionEvent;
 use crate::app::domain::types::SessionId;
 use crate::session::state::SessionConfig;
@@ -18,6 +23,7 @@ use steer_tools::tools::todo::TodoItem;
 
 pub struct SqliteEventStore {
     pool: SqlitePool,
+    media_root: Option<PathBuf>,
 }
 
 impl SqliteEventStore {
@@ -43,7 +49,10 @@ impl SqliteEventStore {
                 EventStoreError::connection(format!("Failed to connect to SQLite: {e}"))
             })?;
 
-        let store = Self { pool };
+        let store = Self {
+            pool,
+            media_root: media_root_for_path(path),
+        };
         store.run_migrations().await?;
 
         Ok(store)
@@ -64,7 +73,10 @@ impl SqliteEventStore {
                 EventStoreError::connection(format!("Failed to connect to SQLite: {e}"))
             })?;
 
-        let store = Self { pool };
+        let store = Self {
+            pool,
+            media_root: None,
+        };
         store.run_migrations().await?;
 
         Ok(store)
@@ -185,6 +197,155 @@ impl SqliteEventStore {
         Ok(())
     }
 
+    fn prepare_event_for_storage(
+        &self,
+        session_id: SessionId,
+        event: &SessionEvent,
+    ) -> Result<SessionEvent, EventStoreError> {
+        let Some(media_root) = &self.media_root else {
+            return Ok(event.clone());
+        };
+
+        let session_root = media_root.join(session_id.to_string());
+
+        match event {
+            SessionEvent::UserMessageAdded { message } => {
+                let message = self.persist_message_images(session_id, message, &session_root)?;
+                Ok(SessionEvent::UserMessageAdded { message })
+            }
+            SessionEvent::MessageUpdated { message } => {
+                let message = self.persist_message_images(session_id, message, &session_root)?;
+                Ok(SessionEvent::MessageUpdated { message })
+            }
+            SessionEvent::AssistantMessageAdded { message, model } => {
+                let message = self.persist_message_images(session_id, message, &session_root)?;
+                Ok(SessionEvent::AssistantMessageAdded {
+                    message,
+                    model: model.clone(),
+                })
+            }
+            _ => Ok(event.clone()),
+        }
+    }
+
+    fn persist_message_images(
+        &self,
+        session_id: SessionId,
+        message: &Message,
+        session_root: &Path,
+    ) -> Result<Message, EventStoreError> {
+        let data = match &message.data {
+            MessageData::User { content } => {
+                let mut updated = Vec::with_capacity(content.len());
+                let mut changed = false;
+                for block in content {
+                    match block {
+                        UserContent::Image { image } => {
+                            let persisted =
+                                self.persist_image_content(session_id, &message.id, image, session_root)?;
+                            changed |= persisted != *image;
+                            updated.push(UserContent::Image { image: persisted });
+                        }
+                        _ => updated.push(block.clone()),
+                    }
+                }
+                if !changed {
+                    return Ok(message.clone());
+                }
+                MessageData::User { content: updated }
+            }
+            MessageData::Assistant { content } => {
+                let mut updated = Vec::with_capacity(content.len());
+                let mut changed = false;
+                for block in content {
+                    match block {
+                        AssistantContent::Image { image } => {
+                            let persisted =
+                                self.persist_image_content(session_id, &message.id, image, session_root)?;
+                            changed |= persisted != *image;
+                            updated.push(AssistantContent::Image { image: persisted });
+                        }
+                        _ => updated.push(block.clone()),
+                    }
+                }
+                if !changed {
+                    return Ok(message.clone());
+                }
+                MessageData::Assistant { content: updated }
+            }
+            MessageData::Tool { .. } => return Ok(message.clone()),
+        };
+
+        Ok(Message {
+            timestamp: message.timestamp,
+            id: message.id.clone(),
+            parent_message_id: message.parent_message_id.clone(),
+            data,
+        })
+    }
+
+    fn persist_image_content(
+        &self,
+        session_id: SessionId,
+        message_id: &str,
+        image: &ImageContent,
+        session_root: &Path,
+    ) -> Result<ImageContent, EventStoreError> {
+        let data_url = match &image.source {
+            ImageSource::DataUrl { data_url } => data_url,
+            ImageSource::SessionFile { relative_path } => {
+                validate_session_relative_path(session_id, relative_path)?;
+                return Ok(image.clone());
+            }
+            ImageSource::Url { .. } => return Ok(image.clone()),
+        };
+
+        let (mime_type, decoded) = decode_data_url(data_url).map_err(|e| {
+            EventStoreError::serialization(format!(
+                "Failed to decode image data URL for session {session_id}: {e}"
+            ))
+        })?;
+
+        if !image.mime_type.is_empty() && image.mime_type != mime_type {
+            return Err(EventStoreError::serialization(format!(
+                "Image MIME type mismatch for message {message_id}: metadata='{}' data_url='{}'",
+                image.mime_type, mime_type
+            )));
+        }
+
+        std::fs::create_dir_all(session_root).map_err(|e| {
+            EventStoreError::database(format!(
+                "Failed to create media directory for session {session_id}: {e}"
+            ))
+        })?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(&decoded);
+        let digest = hasher.finalize();
+        let digest_hex = hex::encode(digest);
+
+        let extension = extension_for_mime_type(&mime_type);
+        let file_name = format!("{digest_hex}.{extension}");
+        let absolute_path = session_root.join(&file_name);
+        if !absolute_path.exists() {
+            std::fs::write(&absolute_path, &decoded).map_err(|e| {
+                EventStoreError::database(format!(
+                    "Failed to persist image for session {session_id}: {e}"
+                ))
+            })?;
+        }
+
+        let relative_path = format!("{}/{}", session_id, file_name);
+        Ok(ImageContent {
+            mime_type,
+            source: ImageSource::SessionFile { relative_path },
+            width: image.width,
+            height: image.height,
+            bytes: Some(decoded.len() as u64),
+            sha256: Some(digest_hex),
+        })
+    }
+
     fn event_type_string(event: &SessionEvent) -> &'static str {
         match event {
             SessionEvent::SessionCreated { .. } => "session_created",
@@ -219,8 +380,9 @@ impl EventStore for SqliteEventStore {
         event: &SessionEvent,
     ) -> Result<u64, EventStoreError> {
         let session_id_str = session_id.0.to_string();
-        let event_type = Self::event_type_string(event);
-        let event_data = serde_json::to_string(event).map_err(|e| {
+        let prepared_event = self.prepare_event_for_storage(session_id, event)?;
+        let event_type = Self::event_type_string(&prepared_event);
+        let event_data = serde_json::to_string(&prepared_event).map_err(|e| {
             EventStoreError::serialization(format!("Failed to serialize event: {e}"))
         })?;
 
@@ -246,7 +408,7 @@ impl EventStore for SqliteEventStore {
         .await
         .map_err(|e| EventStoreError::database(format!("Failed to append event: {e}")))?;
 
-        if let SessionEvent::SessionConfigUpdated { config, .. } = event {
+        if let SessionEvent::SessionConfigUpdated { config, .. } = &prepared_event {
             self.update_session_catalog(session_id, Some(config), false, None)
                 .await
                 .map_err(|e| {
@@ -639,10 +801,92 @@ impl SessionCatalog for SqliteEventStore {
     }
 }
 
+fn media_root_for_path(path: &Path) -> Option<PathBuf> {
+    path.parent().map(|parent| parent.join("session_media"))
+}
+
+fn validate_session_relative_path(
+    session_id: SessionId,
+    relative_path: &str,
+) -> Result<(), EventStoreError> {
+    if relative_path.is_empty() {
+        return Err(EventStoreError::serialization(
+            "Session file path cannot be empty",
+        ));
+    }
+    if relative_path.starts_with('/') || relative_path.starts_with('\\') {
+        return Err(EventStoreError::serialization(format!(
+            "Session file path must be relative: {relative_path}"
+        )));
+    }
+    if relative_path.contains("..") {
+        return Err(EventStoreError::serialization(format!(
+            "Session file path cannot contain '..': {relative_path}"
+        )));
+    }
+
+    let expected_prefix = format!("{}/", session_id);
+    if !relative_path.starts_with(&expected_prefix) {
+        return Err(EventStoreError::serialization(format!(
+            "Session file path must be scoped to session {session_id}: {relative_path}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn extension_for_mime_type(mime_type: &str) -> &'static str {
+    match mime_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        "image/heic" => "heic",
+        "image/heif" => "heif",
+        _ => "bin",
+    }
+}
+
+fn decode_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
+    let Some((meta, payload)) = data_url.split_once(',') else {
+        return Err("missing data URL separator ','".to_string());
+    };
+
+    let Some(meta) = meta.strip_prefix("data:") else {
+        return Err("data URL must start with 'data:'".to_string());
+    };
+
+    let mut segments = meta.split(';');
+    let mime_type = segments
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    let mut is_base64 = false;
+    for segment in segments {
+        if segment.eq_ignore_ascii_case("base64") {
+            is_base64 = true;
+            break;
+        }
+    }
+
+    if !is_base64 {
+        return Err("only base64 data URLs are supported".to_string());
+    }
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|e| format!("invalid base64 payload: {e}"))?;
+    Ok((mime_type, decoded))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{Message, MessageData};
+    use crate::app::conversation::{ImageContent, ImageSource, Message, MessageData, UserContent};
     use crate::app::domain::event::SessionEvent;
     use crate::app::domain::types::ToolCallId;
     use crate::config::model::builtin;
@@ -652,6 +896,8 @@ mod tests {
     use steer_tools::result::ToolResult;
     use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
     use steer_tools::tools::view::ViewError;
+
+    const PNG_1X1_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2N8AAAAASUVORK5CYII=";
 
     fn sample_todos() -> Vec<TodoItem> {
         vec![
@@ -668,6 +914,21 @@ mod tests {
                 id: "todo-2".to_string(),
             },
         ]
+    }
+
+    fn sample_png_data_url() -> String {
+        format!("data:image/png;base64,{PNG_1X1_BASE64}")
+    }
+
+    fn user_image_message(message_id: &str, image: ImageContent) -> Message {
+        Message {
+            timestamp: 0,
+            id: message_id.to_string(),
+            parent_message_id: None,
+            data: MessageData::User {
+                content: vec![UserContent::Image { image }],
+            },
+        }
     }
 
     #[tokio::test]
@@ -953,5 +1214,136 @@ mod tests {
             .unwrap()
             .expect("config");
         assert_eq!(loaded.system_prompt, config.system_prompt);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_persists_image_data_url_as_session_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("events.sqlite");
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let data_url = sample_png_data_url();
+        let (_, expected_bytes) = decode_data_url(&data_url).expect("valid png data URL");
+        let image = ImageContent {
+            mime_type: "image/png".to_string(),
+            source: ImageSource::DataUrl {
+                data_url: data_url.clone(),
+            },
+            width: Some(1),
+            height: Some(1),
+            bytes: None,
+            sha256: None,
+        };
+        let event = SessionEvent::UserMessageAdded {
+            message: user_image_message("user-msg-image", image),
+        };
+
+        store.append(session_id, &event).await.unwrap();
+
+        let raw_event_json: String = sqlx::query_scalar(
+            "SELECT event_data FROM domain_events WHERE session_id = ?1 AND sequence_num = 0",
+        )
+        .bind(session_id.to_string())
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert!(!raw_event_json.contains(PNG_1X1_BASE64));
+        assert!(raw_event_json.contains("session_file"));
+
+        let events = store.load_events(session_id).await.unwrap();
+        assert_eq!(events.len(), 1);
+
+        let persisted_image = match &events[0].1 {
+            SessionEvent::UserMessageAdded { message } => match &message.data {
+                MessageData::User { content } => match content.first() {
+                    Some(UserContent::Image { image }) => image,
+                    other => panic!("expected first user content image, got {other:?}"),
+                },
+                other => panic!("expected user message data, got {other:?}"),
+            },
+            other => panic!("expected UserMessageAdded, got {other:?}"),
+        };
+
+        let relative_path = match &persisted_image.source {
+            ImageSource::SessionFile { relative_path } => relative_path,
+            other => panic!("expected session_file image source, got {other:?}"),
+        };
+        let expected_prefix = format!("{session_id}/");
+        assert!(relative_path.starts_with(&expected_prefix));
+
+        let media_file_path = temp_dir.path().join("session_media").join(relative_path);
+        let persisted_bytes = std::fs::read(&media_file_path).unwrap();
+        assert_eq!(persisted_bytes, expected_bytes);
+        assert_eq!(persisted_image.bytes, Some(expected_bytes.len() as u64));
+        assert_eq!(persisted_image.width, Some(1));
+        assert_eq!(persisted_image.height, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_rejects_cross_session_file_reference() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("events.sqlite");
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+        let session_id = SessionId::new();
+        let other_session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let image = ImageContent {
+            mime_type: "image/png".to_string(),
+            source: ImageSource::SessionFile {
+                relative_path: format!("{other_session_id}/some-image.png"),
+            },
+            width: None,
+            height: None,
+            bytes: None,
+            sha256: None,
+        };
+        let event = SessionEvent::UserMessageAdded {
+            message: user_image_message("user-msg-session-file", image),
+        };
+
+        let err = store.append(session_id, &event).await.unwrap_err();
+        match err {
+            EventStoreError::Serialization { message } => {
+                assert!(message.contains("must be scoped to session"));
+            }
+            other => panic!("expected serialization error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_rejects_mime_mismatch_between_metadata_and_data_url() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("events.sqlite");
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let image = ImageContent {
+            mime_type: "image/jpeg".to_string(),
+            source: ImageSource::DataUrl {
+                data_url: sample_png_data_url(),
+            },
+            width: None,
+            height: None,
+            bytes: None,
+            sha256: None,
+        };
+        let event = SessionEvent::UserMessageAdded {
+            message: user_image_message("user-msg-mime-mismatch", image),
+        };
+
+        let err = store.append(session_id, &event).await.unwrap_err();
+        match err {
+            EventStoreError::Serialization { message } => {
+                assert!(message.contains("MIME type mismatch"));
+            }
+            other => panic!("expected serialization error, got {other:?}"),
+        }
     }
 }
