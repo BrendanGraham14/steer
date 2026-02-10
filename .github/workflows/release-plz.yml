@@ -13,7 +13,6 @@ jobs:
     permissions:
       contents: write
       id-token: write
-      actions: write
     outputs:
       steer_tag: ${{ steps.steer_tag.outputs.tag }}
     steps:
@@ -39,14 +38,18 @@ jobs:
         id: steer_tag
         run: |
           releases='${{ steps.release_plz.outputs.releases }}'
-          tag=$(echo "$releases" | jq -r '.[] | select(.package_name=="steer") | .tag' | head -n 1)
+          if ! echo "$releases" | jq -e . >/dev/null 2>&1; then
+            echo "release-plz releases output is invalid JSON; treating as empty"
+            releases='[]'
+          fi
+
+          tag=$(echo "$releases" | jq -r 'map(select(.package_name=="steer"))[0].tag // empty')
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if [ -z "$tag" ]; then
             echo "No steer tag found in release-plz output"
           else
             echo "Found steer tag: $tag"
           fi
-
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
@@ -56,7 +59,7 @@ jobs:
       contents: write
     concurrency:
       group: release-plz-${{ github.ref }}
-      cancel-in-progress: false
+      cancel-in-progress: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -88,3 +91,4 @@ jobs:
         run: |
           echo "Dispatching release workflow for tag $TAG"
           gh workflow run release.yml --ref main -f tag="$TAG"
+

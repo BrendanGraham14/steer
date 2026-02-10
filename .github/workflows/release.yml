@@ -42,7 +42,7 @@ permissions:
 on:
   push:
     tags:
-      - 'steer-v[0-9]+.[0-9]+.[0-9]+*'
+      - 'steer-v*.*.*'
   workflow_dispatch:
     inputs:
       tag:
@@ -370,8 +370,23 @@ jobs:
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PLAN: ${{ needs.plan.outputs.val }}
+      HOMEBREW_RESULT: ${{ needs.publish-homebrew-formula.result }}
+      NPM_RESULT: ${{ needs.publish-npm.result }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          submodules: recursive
+      - name: Verify GitHub release exists
+        run: gh release view "$TAG" --json url --jq '.url'
+
+      - name: Publish release summary
+        run: |
+          release_url=$(gh release view "$TAG" --json url --jq '.url')
+
+          echo "### Release pipeline complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tag: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- GitHub release: $release_url" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Homebrew publish: $HOMEBREW_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          echo "- npm publish: $NPM_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published apps:" >> "$GITHUB_STEP_SUMMARY"
+          echo "$PLAN" | jq -r '.releases[] | "- \(.app_name) \(.app_version)"' >> "$GITHUB_STEP_SUMMARY"
