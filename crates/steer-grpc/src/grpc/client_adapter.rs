@@ -211,11 +211,13 @@ impl AgentClient {
         let request = Request::new(proto::SendMessageRequest {
             session_id,
             message,
+            content: Vec::new(),
             model: Some(proto::ModelSpec {
                 provider_id: provider.storage_key(),
                 model_id: id,
             }),
         });
+
 
         self.client
             .lock()

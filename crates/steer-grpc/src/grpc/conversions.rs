@@ -1563,6 +1563,9 @@ pub(crate) fn proto_to_message(
                 .filter_map(|user_content| {
                     user_content.content.map(|content| match content {
                         user_content::Content::Text(text) => UserContent::Text { text },
+                        user_content::Content::Image(image) => UserContent::Image {
+                            image: proto_image_to_core(image),
+                        },
                         user_content::Content::CommandExecution(cmd) => {
                             UserContent::CommandExecution {
                                 command: cmd.command,
@@ -1590,6 +1593,9 @@ pub(crate) fn proto_to_message(
                         assistant_content::Content::Text(text) => {
                             Some(AssistantContent::Text { text })
                         }
+                        assistant_content::Content::Image(image) => Some(AssistantContent::Image {
+                            image: proto_image_to_core(image),
+                        }),
                         assistant_content::Content::ToolCall(tool_call) => {
                             match proto_tool_call_to_core(&tool_call) {
                                 Ok(core_tool_call) => Some(AssistantContent::ToolCall {
@@ -1665,6 +1671,9 @@ fn proto_user_message_to_core(
         .filter_map(|user_content| {
             user_content.content.map(|content| match content {
                 user_content::Content::Text(text) => UserContent::Text { text },
+                user_content::Content::Image(image) => UserContent::Image {
+                    image: proto_image_to_core(image),
+                },
                 user_content::Content::CommandExecution(cmd) => UserContent::CommandExecution {
                     command: cmd.command,
                     stdout: cmd.stdout,
@@ -1696,6 +1705,9 @@ fn proto_assistant_message_to_core(
         .filter_map(|assistant_content| {
             assistant_content.content.and_then(|content| match content {
                 assistant_content::Content::Text(text) => Some(AssistantContent::Text { text }),
+                assistant_content::Content::Image(image) => Some(AssistantContent::Image {
+                    image: proto_image_to_core(image),
+                }),
                 assistant_content::Content::ToolCall(tool_call) => {
                     match proto_tool_call_to_core(&tool_call) {
                         Ok(core_tool_call) => Some(AssistantContent::ToolCall {
@@ -1733,6 +1745,34 @@ fn proto_assistant_message_to_core(
         id,
         parent_message_id: assistant_msg.parent_message_id,
     })
+}
+
+fn proto_image_to_core(image: proto::ImageContent) -> steer_core::app::conversation::ImageContent {
+    use steer_core::app::conversation::{ImageContent, ImageSource};
+
+    let source = image
+        .source
+        .map(|source| match source {
+            proto::image_content::Source::SessionFile(file) => ImageSource::SessionFile {
+                relative_path: file.relative_path,
+            },
+            proto::image_content::Source::DataUrl(data_url) => ImageSource::DataUrl {
+                data_url: data_url.data_url,
+            },
+            proto::image_content::Source::Url(url) => ImageSource::Url { url: url.url },
+        })
+        .unwrap_or(ImageSource::DataUrl {
+            data_url: String::new(),
+        });
+
+    ImageContent {
+        mime_type: image.mime_type,
+        source,
+        width: image.width,
+        height: image.height,
+        bytes: image.bytes,
+        sha256: image.sha256,
+    }
 }
 
 fn proto_tool_message_to_core(

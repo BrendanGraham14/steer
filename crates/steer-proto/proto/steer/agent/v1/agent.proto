@@ -253,8 +253,9 @@ message CreateSessionResponse {
 
 message SendMessageRequest {
   string session_id = 1;
-  string message = 2;
+  string message = 2;  // Deprecated fallback for legacy clients
   optional ModelSpec model = 3;  // Optional; falls back to session's default_model
+  repeated UserContent content = 4;
 }
 
 message SendMessageResponse {
@@ -719,7 +720,33 @@ message UserContent {
   oneof content {
     string text = 1;
     CommandExecution command_execution = 2;
+    ImageContent image = 3;
   }
+}
+
+message ImageContent {
+  string mime_type = 1;
+  oneof source {
+    SessionFileSource session_file = 2;
+    DataUrlSource data_url = 3;
+    UrlSource url = 4;
+  }
+  optional uint32 width = 5;
+  optional uint32 height = 6;
+  optional uint64 bytes = 7;
+  optional string sha256 = 8;
+}
+
+message SessionFileSource {
+  string relative_path = 1;
+}
+
+message DataUrlSource {
+  string data_url = 1;
+}
+
+message UrlSource {
+  string url = 1;
 }
 
 message CommandExecution {
@@ -740,6 +767,7 @@ message AssistantContent {
     string text = 1;
     ToolCall tool_call = 2;
     ThoughtContent thought = 3;
+    ImageContent image = 4;
   }
 }
 
