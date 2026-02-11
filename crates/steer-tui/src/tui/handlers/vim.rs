@@ -465,6 +465,12 @@ impl Tui {
                 if !self.has_pending_send_content() {
                     // Just insert a newline if empty
                     self.input_panel_state.handle_input(Input::from(key));
+                } else if !self.pending_attachments.is_empty() && content.starts_with('/') {
+                    self.push_notice(
+                        NoticeLevel::Warn,
+                        "Image attachments are only supported for regular prompts.".to_string(),
+                    );
+                    return Ok(false);
                 } else if content.starts_with('!') && content.len() > 1 {
                     // Execute as bash command
                     let command = content[1..].trim().to_string();

@@ -76,6 +76,13 @@ impl Tui {
             KeyCode::Enter => {
                 let content = self.input_panel_state.content().trim().to_string();
                 if self.has_pending_send_content() {
+                    if !self.pending_attachments.is_empty() && content.starts_with('/') {
+                        self.push_notice(
+                            NoticeLevel::Warn,
+                            "Image attachments are only supported for regular prompts.".to_string(),
+                        );
+                        return Ok(false);
+                    }
                     if content.starts_with('!') && content.len() > 1 {
                         // Execute as bash command
                         let command = content[1..].trim().to_string();

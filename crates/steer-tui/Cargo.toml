@@ -60,6 +60,8 @@ strum = { version = "0.27.1", features = ["derive"] }
 strum_macros = "0.27.1"
 indexmap = { version = "2.0", features = ["std"] }
 directories = "6.0.0"
+base64 = "0.22.1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 
 # Update checker
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

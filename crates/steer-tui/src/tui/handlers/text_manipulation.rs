@@ -109,6 +109,19 @@ impl Tui {
                 Ok(true)
             }
 
+            (KeyCode::Char('x'), KeyModifiers::CONTROL) => {
+                if !self.pending_attachments.is_empty() {
+                    self.pending_attachments.clear();
+                    self.push_notice(
+                        crate::tui::model::NoticeLevel::Info,
+                        "Cleared pending image attachments.".to_string(),
+                    );
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+
             // Multi-line support
             (KeyCode::Enter, m)
                 if m.contains(KeyModifiers::SHIFT)

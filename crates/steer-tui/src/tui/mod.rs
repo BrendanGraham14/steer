@@ -17,7 +17,7 @@ use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
 use futures::{FutureExt, StreamExt};
-use image::{ImageFormat, ImageReader};
+use image::ImageFormat;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
@@ -54,6 +54,35 @@ fn has_any_auth_source(source: Option<&steer_grpc::client_api::AuthSource>) -> b
                 | steer_grpc::client_api::AuthSource::Plugin { .. }
         )
     )
+}
+
+fn decode_pasted_image(data: &str) -> Option<ImageContent> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    let format = image::guess_format(&bytes).ok()?;
+
+    let mime_type = match format {
+        ImageFormat::Png => "image/png",
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::Gif => "image/gif",
+        ImageFormat::WebP => "image/webp",
+        ImageFormat::Bmp => "image/bmp",
+        ImageFormat::Tiff => "image/tiff",
+        _ => return None,
+    }
+    .to_string();
+
+    Some(ImageContent {
+        source: ImageSource::DataUrl {
+            data_url: format!("data:{};base64,{}", mime_type, data),
+        },
+        mime_type,
+        width: None,
+        height: None,
+        bytes: Some(bytes.len() as u64),
+        sha256: None,
+    })
 }
 
 pub(crate) fn format_agent_label(primary_agent_id: &str) -> String {
@@ -823,6 +852,7 @@ impl Tui {
                     }
 
                     let maybe_image = decode_pasted_image(&data);
+                    let had_image = maybe_image.is_some();
                     let normalized_data = data.replace("\r\n", "\n").replace('\r', "\n");
                     let mut text_inserted = false;
                     if !normalized_data.is_empty() {
@@ -845,14 +875,9 @@ impl Tui {
                                 self.pending_attachments.len()
                             ),
                         );
-                    } else if !normalized_data.is_empty() {
-                        self.push_notice(
-                            NoticeLevel::Warn,
-                            "Paste did not include a supported image attachment.".to_string(),
-                        );
                     }
 
-                    if text_inserted || !self.pending_attachments.is_empty() {
+                    if text_inserted || had_image {
                         needs_redraw = true;
                     }
                 }
@@ -1353,9 +1378,21 @@ impl Tui {
             }
             return Ok(());
         }
+
+        let mut content_blocks = Vec::new();
+        if !content.is_empty() {
+            content_blocks.push(UserContent::Text { text: content });
+        }
+        content_blocks.extend(
+            self.pending_attachments
+                .iter()
+                .cloned()
+                .map(|image| UserContent::Image { image }),
+        );
+
         if let Err(e) = self
             .client
-            .send_message(content, self.current_model.clone())
+            .send_content_message(content_blocks, self.current_model.clone())
             .await
         {
             self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
@@ -2193,5 +2230,25 @@ mod tests {
         } else {
             panic!("Tool call should be in registry");
         }
+    }
+
+    #[test]
+    fn decode_pasted_image_recognizes_png_base64_and_sets_metadata() {
+        let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2N8AAAAASUVORK5CYII=";
+
+        let image = decode_pasted_image(png_base64).expect("png should decode");
+
+        assert_eq!(image.mime_type, "image/png");
+        assert!(matches!(image.source, ImageSource::DataUrl { .. }));
+        assert_eq!(image.width, None);
+        assert_eq!(image.height, None);
+        assert!(image.bytes.is_some());
+    }
+
+    #[test]
+    fn decode_pasted_image_rejects_non_image_payload() {
+        let not_image = base64::engine::general_purpose::STANDARD.encode("plain text");
+        let decoded = decode_pasted_image(&not_image);
+        assert!(decoded.is_none());
     }
 }

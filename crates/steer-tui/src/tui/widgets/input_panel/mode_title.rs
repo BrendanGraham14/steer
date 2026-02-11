@@ -182,7 +182,8 @@ impl<'a> ModeTitleWidget<'a> {
         }
 
         if self.attachment_count > 0 {
-            keybinds.insert(0, ("Ctrl+V", "add image"));
+            keybinds.insert(0, ("Ctrl+X", "clear images"));
+            keybinds.insert(1, ("Ctrl+V", "add image"));
         }
 
         keybinds
