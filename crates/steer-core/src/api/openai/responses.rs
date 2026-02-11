@@ -15,7 +15,7 @@ use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
 use crate::api::sse::parse_sse_stream;
 use crate::app::SystemContext;
 use crate::app::conversation::{
-    AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
+    AssistantContent, ImageSource, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
 use crate::auth::{
     AuthErrorAction, AuthErrorContext, AuthHeaderContext, InstructionPolicy, OpenAiResponsesAuth,
@@ -51,6 +51,30 @@ pub(super) struct Client {
 impl Client {
     pub(super) fn new(api_key: String) -> Result<Self, ApiError> {
         Self::with_base_url(api_key, None)
+    }
+
+    fn user_image_part(
+        image: &crate::app::conversation::ImageContent,
+    ) -> Result<InputContentPart, ApiError> {
+        let image_url = match &image.source {
+            ImageSource::DataUrl { data_url } => data_url.clone(),
+            ImageSource::Url { url } => url.clone(),
+            ImageSource::SessionFile { relative_path } => {
+                return Err(ApiError::UnsupportedFeature {
+                    provider: super::PROVIDER_NAME.to_string(),
+                    feature: "image input source".to_string(),
+                    details: format!(
+                        "OpenAI Responses API cannot access session file '{}' directly; use data URLs or public URLs",
+                        relative_path
+                    ),
+                });
+            }
+        };
+
+        Ok(InputContentPart::InputImage {
+            image_url,
+            detail: "auto".to_string(),
+        })
     }
 
     pub(super) fn with_base_url(
@@ -102,14 +126,14 @@ impl Client {
         system: Option<SystemContext>,
         tools: Option<Vec<ToolSchema>>,
         call_options: Option<ModelParameters>,
-    ) -> ResponsesRequest {
+    ) -> Result<ResponsesRequest, ApiError> {
         let directive = self.auth.directive();
         let instructions = apply_instruction_policy(
             system,
             directive.and_then(|d| d.instruction_policy.as_ref()),
         );
 
-        let input = Self::convert_messages_to_input(&messages);
+        let input = Self::convert_messages_to_input(&messages)?;
 
         let responses_tools = tools.map(|tools| {
             tools
@@ -189,7 +213,7 @@ impl Client {
                 .insert("include".to_string(), ExtraValue::Array(values));
         }
 
-        request
+        Ok(request)
     }
 
     async fn auth_headers(&self, ctx: AuthHeaderContext) -> Result<header::HeaderMap, ApiError> {
@@ -379,7 +403,9 @@ impl Client {
     }
 
     /// Convert messages to the structured input format that preserves roles
-    pub(super) fn convert_messages_to_input(messages: &[AppMessage]) -> Option<InputType> {
+    pub(super) fn convert_messages_to_input(
+        messages: &[AppMessage],
+    ) -> Result<Option<InputType>, ApiError> {
         let mut input_items = Vec::new();
 
         for message in messages {
@@ -394,9 +420,7 @@ impl Client {
                                     .push(InputContentPart::InputText { text: text.clone() });
                             }
                             UserContent::Image { image } => {
-                                content_parts.push(InputContentPart::InputText {
-                                    text: format!("[Image: {}]", image.mime_type),
-                                });
+                                content_parts.push(Self::user_image_part(image)?);
                             }
                             UserContent::CommandExecution {
                                 command,
@@ -481,9 +505,9 @@ impl Client {
         }
 
         if input_items.is_empty() {
-            None
+            Ok(None)
         } else {
-            Some(InputType::Messages(input_items))
+            Ok(Some(InputType::Messages(input_items)))
         }
     }
 
@@ -545,7 +569,7 @@ impl Client {
                 system.clone(),
                 tools.clone(),
                 call_options,
-            );
+            )?;
             log_request_payload(&request, false);
             let headers = self.auth_headers(auth_ctx.clone()).await?;
             let request_builder = self
@@ -686,7 +710,7 @@ impl Client {
                 system.clone(),
                 tools.clone(),
                 call_options,
-            );
+            )?;
             request.stream = Some(true);
             log_request_payload(&request, true);
 
@@ -1784,7 +1808,9 @@ mod tests {
     use super::*;
 
     use crate::app::SystemContext;
-    use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+    use crate::app::conversation::{
+        AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
+    };
     use crate::workspace::EnvironmentInfo;
 
     use schemars::schema_for;
@@ -1816,7 +1842,8 @@ mod tests {
             },
         ];
 
-        let actual = Client::convert_messages_to_input(&messages);
+        let actual =
+            Client::convert_messages_to_input(&messages).expect("conversion should succeed");
         let expected = Some(InputType::Messages(vec![
             InputItem::Message {
                 role: "user".to_string(),
@@ -1834,6 +1861,90 @@ mod tests {
         ]));
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_responses_api_message_conversion_with_data_url_image() {
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![
+                    UserContent::Text {
+                        text: "Look at this".to_string(),
+                    },
+                    UserContent::Image {
+                        image: ImageContent {
+                            mime_type: "image/png".to_string(),
+                            source: ImageSource::DataUrl {
+                                data_url: "data:image/png;base64,Zm9v".to_string(),
+                            },
+                            width: Some(1),
+                            height: Some(1),
+                            bytes: Some(3),
+                            sha256: None,
+                        },
+                    },
+                ],
+            },
+            timestamp: 1000,
+            id: "msg1".to_string(),
+            parent_message_id: None,
+        }];
+
+        let actual =
+            Client::convert_messages_to_input(&messages).expect("conversion should succeed");
+        let expected = Some(InputType::Messages(vec![InputItem::Message {
+            role: "user".to_string(),
+            content: vec![
+                InputContentPart::InputText {
+                    text: "Look at this".to_string(),
+                },
+                InputContentPart::InputImage {
+                    image_url: "data:image/png;base64,Zm9v".to_string(),
+                    detail: "auto".to_string(),
+                },
+            ],
+        }]));
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_responses_api_message_conversion_rejects_session_file_image() {
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Image {
+                    image: ImageContent {
+                        mime_type: "image/png".to_string(),
+                        source: ImageSource::SessionFile {
+                            relative_path: "session-id/image.png".to_string(),
+                        },
+                        width: None,
+                        height: None,
+                        bytes: None,
+                        sha256: None,
+                    },
+                }],
+            },
+            timestamp: 1000,
+            id: "msg1".to_string(),
+            parent_message_id: None,
+        }];
+
+        let err = Client::convert_messages_to_input(&messages)
+            .expect_err("session-file image should be rejected");
+
+        match err {
+            ApiError::UnsupportedFeature {
+                provider,
+                feature,
+                details,
+            } => {
+                assert_eq!(provider, "openai");
+                assert_eq!(feature, "image input source");
+                assert!(details.contains("session file"));
+            }
+            other => panic!("Expected UnsupportedFeature error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1870,15 +1981,17 @@ mod tests {
         }];
 
         let model_id = ModelId::new(crate::config::provider::openai(), "gpt-4.1-2025-04-14");
-        let request = client.build_request(
-            &model_id,
-            messages,
-            Some(SystemContext::new(
-                "You are a weather assistant".to_string(),
-            )),
-            Some(tools),
-            None, // No call options for this test
-        );
+        let request = client
+            .build_request(
+                &model_id,
+                messages,
+                Some(SystemContext::new(
+                    "You are a weather assistant".to_string(),
+                )),
+                Some(tools),
+                None, // No call options for this test
+            )
+            .expect("request should build");
 
         assert!(request.tools.is_some());
         let tools = request.tools.unwrap();
@@ -1913,7 +2026,9 @@ mod tests {
         }];
 
         let model_id = ModelId::new(crate::config::provider::openai(), "gpt-4.1-2025-04-14");
-        let request = client.build_request(&model_id, messages, None, Some(tools), None);
+        let request = client
+            .build_request(&model_id, messages, None, Some(tools), None)
+            .expect("request should build");
 
         let tool = request
             .tools
@@ -1979,7 +2094,9 @@ mod tests {
                 ..Default::default()
             }),
         });
-        let request = client.build_request(&model_id, messages.clone(), None, None, call_options);
+        let request = client
+            .build_request(&model_id, messages.clone(), None, None, call_options)
+            .expect("request should build");
 
         assert!(request.reasoning.is_some());
         let reasoning = request.reasoning.unwrap();
@@ -1990,7 +2107,9 @@ mod tests {
 
         // Test with non-reasoning model (no thinking config)
         let model_id = ModelId::new(crate::config::provider::openai(), "gpt-4.1-2025-04-14");
-        let request = client.build_request(&model_id, messages, None, None, None);
+        let request = client
+            .build_request(&model_id, messages, None, None, None)
+            .expect("request should build");
 
         assert!(request.reasoning.is_none());
     }
@@ -2039,7 +2158,8 @@ mod tests {
             },
         ];
 
-        let actual = Client::convert_messages_to_input(&messages);
+        let actual =
+            Client::convert_messages_to_input(&messages).expect("conversion should succeed");
         let expected = Some(InputType::Messages(vec![
             InputItem::Message {
                 role: "user".to_string(),

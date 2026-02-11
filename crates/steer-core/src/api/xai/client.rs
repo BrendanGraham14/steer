@@ -11,7 +11,9 @@ use crate::api::provider::{CompletionResponse, CompletionStream, Provider, Strea
 use crate::api::sse::parse_sse_stream;
 use crate::api::util::normalize_chat_url;
 use crate::app::SystemContext;
-use crate::app::conversation::{AssistantContent, Message as AppMessage, ToolResult, UserContent};
+use crate::app::conversation::{
+    AssistantContent, ImageSource, Message as AppMessage, ToolResult, UserContent,
+};
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
 
@@ -33,7 +35,7 @@ enum XAIMessage {
         name: Option<String>,
     },
     User {
-        content: String,
+        content: XAIUserContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
@@ -51,6 +53,27 @@ enum XAIMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum XAIUserContent {
+    Text(String),
+    Parts(Vec<XAIUserContentPart>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum XAIUserContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: XAIImageUrl },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct XAIImageUrl {
+    url: String,
 }
 
 // xAI function calling format
@@ -353,10 +376,33 @@ impl XAIClient {
         })
     }
 
+    fn user_image_part(
+        image: &crate::app::conversation::ImageContent,
+    ) -> Result<XAIUserContentPart, ApiError> {
+        let image_url = match &image.source {
+            ImageSource::DataUrl { data_url } => data_url.clone(),
+            ImageSource::Url { url } => url.clone(),
+            ImageSource::SessionFile { relative_path } => {
+                return Err(ApiError::UnsupportedFeature {
+                    provider: "xai".to_string(),
+                    feature: "image input source".to_string(),
+                    details: format!(
+                        "xAI chat API cannot access session file '{}' directly; use data URLs or public URLs",
+                        relative_path
+                    ),
+                });
+            }
+        };
+
+        Ok(XAIUserContentPart::ImageUrl {
+            image_url: XAIImageUrl { url: image_url },
+        })
+    }
+
     fn convert_messages(
         messages: Vec<AppMessage>,
         system: Option<SystemContext>,
-    ) -> Vec<XAIMessage> {
+    ) -> Result<Vec<XAIMessage>, ApiError> {
         let mut xai_messages = Vec::new();
 
         // Add system message if provided
@@ -371,30 +417,44 @@ impl XAIClient {
         for message in messages {
             match &message.data {
                 crate::app::conversation::MessageData::User { content, .. } => {
-                    // Convert UserContent to text
-                    let combined_text = content
-                        .iter()
-                        .map(|user_content| match user_content {
-                            UserContent::Text { text } => text.clone(),
+                    let mut content_parts = Vec::new();
+
+                    for user_content in content {
+                        match user_content {
+                            UserContent::Text { text } => {
+                                content_parts.push(XAIUserContentPart::Text { text: text.clone() });
+                            }
                             UserContent::Image { image } => {
-                                format!("[Image: {}]", image.mime_type)
+                                content_parts.push(Self::user_image_part(image)?);
                             }
                             UserContent::CommandExecution {
                                 command,
                                 stdout,
                                 stderr,
                                 exit_code,
-                            } => UserContent::format_command_execution_as_xml(
-                                command, stdout, stderr, *exit_code,
-                            ),
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                            } => {
+                                content_parts.push(XAIUserContentPart::Text {
+                                    text: UserContent::format_command_execution_as_xml(
+                                        command, stdout, stderr, *exit_code,
+                                    ),
+                                });
+                            }
+                        }
+                    }
 
                     // Only add the message if it has content after filtering
-                    if !combined_text.trim().is_empty() {
+                    if !content_parts.is_empty() {
+                        let content = if content_parts.len() == 1 {
+                            match content_parts.into_iter().next().expect("single part") {
+                                XAIUserContentPart::Text { text } => XAIUserContent::Text(text),
+                                part => XAIUserContent::Parts(vec![part]),
+                            }
+                        } else {
+                            XAIUserContent::Parts(content_parts)
+                        };
+
                         xai_messages.push(XAIMessage::User {
-                            content: combined_text,
+                            content,
                             name: None,
                         });
                     }
@@ -410,7 +470,21 @@ impl XAIClient {
                                 text_parts.push(text.clone());
                             }
                             AssistantContent::Image { image } => {
-                                text_parts.push(format!("[Image: {}]", image.mime_type));
+                                match Self::user_image_part(image) {
+                                    Ok(XAIUserContentPart::ImageUrl { image_url }) => {
+                                        text_parts.push(format!("[Image URL: {}]", image_url.url));
+                                    }
+                                    Ok(XAIUserContentPart::Text { text }) => {
+                                        text_parts.push(text);
+                                    }
+                                    Err(err) => {
+                                        debug!(
+                                            target: "xai::convert_messages",
+                                            "Skipping unsupported assistant image block: {}",
+                                            err
+                                        );
+                                    }
+                                }
                             }
                             AssistantContent::ToolCall { tool_call, .. } => {
                                 tool_calls.push(XAIToolCall {
@@ -474,7 +548,7 @@ impl XAIClient {
             }
         }
 
-        xai_messages
+        Ok(xai_messages)
     }
 
     fn convert_tools(tools: Vec<ToolSchema>) -> Vec<XAITool> {
@@ -507,7 +581,7 @@ impl Provider for XAIClient {
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionResponse, ApiError> {
-        let xai_messages = Self::convert_messages(messages, system);
+        let xai_messages = Self::convert_messages(messages, system)?;
         let xai_tools = tools.map(Self::convert_tools);
 
         // Extract thinking support and map optional effort
@@ -687,7 +761,7 @@ impl Provider for XAIClient {
         call_options: Option<ModelParameters>,
         token: CancellationToken,
     ) -> Result<CompletionStream, ApiError> {
-        let xai_messages = Self::convert_messages(messages, system);
+        let xai_messages = Self::convert_messages(messages, system)?;
         let xai_tools = tools.map(Self::convert_tools);
 
         let (supports_thinking, reasoning_effort) = call_options
@@ -985,6 +1059,100 @@ impl XAIClient {
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::conversation::{ImageContent, ImageSource, Message, MessageData, UserContent};
+
+    #[test]
+    fn test_convert_messages_includes_data_url_image_part() {
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![
+                    UserContent::Text {
+                        text: "describe".to_string(),
+                    },
+                    UserContent::Image {
+                        image: ImageContent {
+                            mime_type: "image/png".to_string(),
+                            source: ImageSource::DataUrl {
+                                data_url: "data:image/png;base64,Zm9v".to_string(),
+                            },
+                            width: None,
+                            height: None,
+                            bytes: None,
+                            sha256: None,
+                        },
+                    },
+                ],
+            },
+            timestamp: 1,
+            id: "msg-1".to_string(),
+            parent_message_id: None,
+        }];
+
+        let converted = XAIClient::convert_messages(messages, None).expect("convert messages");
+        assert_eq!(converted.len(), 1);
+
+        match &converted[0] {
+            XAIMessage::User { content, .. } => match content {
+                XAIUserContent::Parts(parts) => {
+                    assert_eq!(parts.len(), 2);
+                    assert!(matches!(
+                        &parts[0],
+                        XAIUserContentPart::Text { text } if text == "describe"
+                    ));
+                    assert!(matches!(
+                        &parts[1],
+                        XAIUserContentPart::ImageUrl { image_url }
+                            if image_url.url == "data:image/png;base64,Zm9v"
+                    ));
+                }
+                other => panic!("Expected parts content, got {other:?}"),
+            },
+            other => panic!("Expected user message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_convert_messages_rejects_session_file_image_source() {
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Image {
+                    image: ImageContent {
+                        mime_type: "image/png".to_string(),
+                        source: ImageSource::SessionFile {
+                            relative_path: "session-1/image.png".to_string(),
+                        },
+                        width: None,
+                        height: None,
+                        bytes: None,
+                        sha256: None,
+                    },
+                }],
+            },
+            timestamp: 1,
+            id: "msg-1".to_string(),
+            parent_message_id: None,
+        }];
+
+        let err =
+            XAIClient::convert_messages(messages, None).expect_err("expected unsupported feature");
+        match err {
+            ApiError::UnsupportedFeature {
+                provider,
+                feature,
+                details,
+            } => {
+                assert_eq!(provider, "xai");
+                assert_eq!(feature, "image input source");
+                assert!(details.contains("session file"));
+            }
+            other => panic!("Expected UnsupportedFeature, got {other:?}"),
         }
     }
 }

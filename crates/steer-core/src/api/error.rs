@@ -91,6 +91,13 @@ pub enum ApiError {
     #[error("Configuration error: {0}")]
     Configuration(String),
 
+    #[error("{provider} does not support {feature}: {details}")]
+    UnsupportedFeature {
+        provider: String,
+        feature: String,
+        details: String,
+    },
+
     #[error("Stream error from {provider}: {details}")]
     StreamError { provider: String, details: String },
 }

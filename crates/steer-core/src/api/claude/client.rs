@@ -13,7 +13,7 @@ use crate::api::sse::parse_sse_stream;
 use crate::api::{CompletionResponse, Provider, error::ApiError};
 use crate::app::SystemContext;
 use crate::app::conversation::{
-    AssistantContent, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
+    AssistantContent, ImageSource, Message as AppMessage, ThoughtContent, ToolResult, UserContent,
 };
 use crate::auth::{
     AnthropicAuth, AuthErrorAction, AuthErrorContext, AuthHeaderContext, InstructionPolicy,
@@ -88,6 +88,14 @@ struct Thinking {
     #[serde(rename = "type", default)]
     thinking_type: ThinkingType,
     budget_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClaudeImageSource {
+    #[serde(rename = "type")]
+    source_type: String,
+    media_type: String,
+    data: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -725,6 +733,55 @@ mod tests {
 
         assert_eq!(sanitized, expected);
     }
+
+    #[test]
+    fn user_image_data_url_to_claude_block() {
+        let image = crate::app::conversation::ImageContent {
+            mime_type: "image/png".to_string(),
+            source: crate::app::conversation::ImageSource::DataUrl {
+                data_url: "data:image/png;base64,Zm9v".to_string(),
+            },
+            width: None,
+            height: None,
+            bytes: None,
+            sha256: None,
+        };
+
+        let block = user_image_to_claude_block(&image).expect("image should convert");
+        let json = serde_json::to_value(block).expect("serialize block");
+        assert_eq!(json["type"], "image");
+        assert_eq!(json["source"]["type"], "base64");
+        assert_eq!(json["source"]["media_type"], "image/png");
+        assert_eq!(json["source"]["data"], "Zm9v");
+    }
+
+    #[test]
+    fn user_image_session_file_source_is_unsupported() {
+        let image = crate::app::conversation::ImageContent {
+            mime_type: "image/png".to_string(),
+            source: crate::app::conversation::ImageSource::SessionFile {
+                relative_path: "session-1/image.png".to_string(),
+            },
+            width: None,
+            height: None,
+            bytes: None,
+            sha256: None,
+        };
+
+        let err = user_image_to_claude_block(&image).expect_err("expected unsupported feature");
+        match err {
+            ApiError::UnsupportedFeature {
+                provider,
+                feature,
+                details,
+            } => {
+                assert_eq!(provider, "anthropic");
+                assert_eq!(feature, "image input source");
+                assert!(details.contains("session file"));
+            }
+            other => panic!("Expected UnsupportedFeature, got {other:?}"),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -739,6 +796,14 @@ pub enum ClaudeContentBlock {
     #[serde(rename = "text")]
     Text {
         text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
+    },
+    #[serde(rename = "image")]
+    Image {
+        source: ClaudeImageSource,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
         #[serde(flatten)]
@@ -1001,37 +1066,137 @@ fn convert_messages(messages: Vec<AppMessage>) -> Result<Vec<ClaudeMessage>, Api
     })
 }
 
+fn user_image_to_claude_block(
+    image: &crate::app::conversation::ImageContent,
+) -> Result<ClaudeContentBlock, ApiError> {
+    match &image.source {
+        ImageSource::DataUrl { data_url } => {
+            let Some((meta, payload)) = data_url.split_once(',') else {
+                return Err(ApiError::InvalidRequest {
+                    provider: "anthropic".to_string(),
+                    details: "Image data URL is missing ',' separator".to_string(),
+                });
+            };
+
+            let Some(meta_body) = meta.strip_prefix("data:") else {
+                return Err(ApiError::InvalidRequest {
+                    provider: "anthropic".to_string(),
+                    details: "Image data URL must start with 'data:'".to_string(),
+                });
+            };
+
+            if !meta_body
+                .split(';')
+                .any(|segment| segment.eq_ignore_ascii_case("base64"))
+            {
+                return Err(ApiError::InvalidRequest {
+                    provider: "anthropic".to_string(),
+                    details: "Anthropic image data URLs must be base64 encoded".to_string(),
+                });
+            }
+
+            let media_type = meta_body
+                .split(';')
+                .next()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+
+            if !media_type.starts_with("image/") {
+                return Err(ApiError::UnsupportedFeature {
+                    provider: "anthropic".to_string(),
+                    feature: "image input mime type".to_string(),
+                    details: format!("Unsupported image media type '{}'", media_type),
+                });
+            }
+
+            Ok(ClaudeContentBlock::Image {
+                source: ClaudeImageSource {
+                    source_type: "base64".to_string(),
+                    media_type,
+                    data: payload.to_string(),
+                },
+                cache_control: None,
+                extra: Default::default(),
+            })
+        }
+        ImageSource::Url { url } => Err(ApiError::UnsupportedFeature {
+            provider: "anthropic".to_string(),
+            feature: "image input source".to_string(),
+            details: format!(
+                "Anthropic image input currently requires data URLs in this adapter; got URL '{}'",
+                url
+            ),
+        }),
+        ImageSource::SessionFile { relative_path } => Err(ApiError::UnsupportedFeature {
+            provider: "anthropic".to_string(),
+            feature: "image input source".to_string(),
+            details: format!(
+                "Anthropic adapter cannot access session file '{}' directly; use data URLs",
+                relative_path
+            ),
+        }),
+    }
+}
+
 fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
     match &msg.data {
         crate::app::conversation::MessageData::User { content, .. } => {
-            // Convert UserContent to Claude format
-            let combined_text = content
-                .iter()
-                .map(|user_content| match user_content {
-                    UserContent::Text { text } => text.clone(),
+            // Convert UserContent to Claude blocks
+            let mut claude_blocks = Vec::new();
+            for user_content in content {
+                match user_content {
+                    UserContent::Text { text } => {
+                        if !text.trim().is_empty() {
+                            claude_blocks.push(ClaudeContentBlock::Text {
+                                text: text.clone(),
+                                cache_control: None,
+                                extra: Default::default(),
+                            });
+                        }
+                    }
                     UserContent::Image { image } => {
-                        format!("[Image: {}]", image.mime_type)
+                        claude_blocks.push(user_image_to_claude_block(image)?);
                     }
                     UserContent::CommandExecution {
                         command,
                         stdout,
                         stderr,
                         exit_code,
-                    } => UserContent::format_command_execution_as_xml(
-                        command, stdout, stderr, *exit_code,
+                    } => {
+                        let text = UserContent::format_command_execution_as_xml(
+                            command, stdout, stderr, *exit_code,
+                        );
+                        if !text.trim().is_empty() {
+                            claude_blocks.push(ClaudeContentBlock::Text {
+                                text,
+                                cache_control: None,
+                                extra: Default::default(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            if claude_blocks.is_empty() {
+                return Err(ApiError::InvalidRequest {
+                    provider: "anthropic".to_string(),
+                    details: format!(
+                        "User message ID {} resulted in no valid content blocks",
+                        msg.id
                     ),
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+                });
+            }
 
             Ok(ClaudeMessage {
                 role: ClaudeMessageRole::User,
-                content: ClaudeMessageContent::Text {
-                    content: combined_text,
+                content: ClaudeMessageContent::StructuredContent {
+                    content: ClaudeStructuredContent(claude_blocks),
                 },
                 id: Some(msg.id.clone()),
             })
         }
+
         crate::app::conversation::MessageData::Assistant { content, .. } => {
             // Convert AssistantContent to Claude blocks
             let claude_blocks: Vec<ClaudeContentBlock> = content
@@ -1048,11 +1213,17 @@ fn convert_single_message(msg: AppMessage) -> Result<ClaudeMessage, ApiError> {
                             })
                         }
                     }
-                    AssistantContent::Image { image } => Some(ClaudeContentBlock::Text {
-                        text: format!("[Image: {}]", image.mime_type),
-                        cache_control: None,
-                        extra: Default::default(),
-                    }),
+                    AssistantContent::Image { image } => match user_image_to_claude_block(image) {
+                        Ok(block) => Some(block),
+                        Err(err) => {
+                            debug!(
+                                target: "claude::convert_message",
+                                "Skipping unsupported assistant image block: {}",
+                                err
+                            );
+                            None
+                        }
+                    },
                     AssistantContent::ToolCall { tool_call, .. } => {
                         Some(ClaudeContentBlock::ToolUse {
                             id: tool_call.id.clone(),
@@ -1197,6 +1368,23 @@ fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<Assista
         .into_iter()
         .filter_map(|block| match block {
             ClaudeContentBlock::Text { text, .. } => Some(AssistantContent::Text { text }),
+            ClaudeContentBlock::Image { source, .. } => {
+                let media_type = source.media_type;
+                let data = source.data;
+                Some(AssistantContent::Image {
+                    image: crate::app::conversation::ImageContent {
+                        mime_type: media_type.clone(),
+                        source: crate::app::conversation::ImageSource::DataUrl {
+                            data_url: format!("data:{};base64,{}", media_type, data),
+                        },
+                        width: None,
+                        height: None,
+                        bytes: None,
+                        sha256: None,
+                    },
+                })
+            }
+
             ClaudeContentBlock::ToolUse {
                 id, name, input, ..
             } => Some(AssistantContent::ToolCall {

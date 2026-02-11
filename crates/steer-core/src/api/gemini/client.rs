@@ -11,8 +11,8 @@ use crate::api::provider::{CompletionResponse, CompletionStream, Provider, Strea
 use crate::api::sse::parse_sse_stream;
 use crate::app::SystemContext;
 use crate::app::conversation::{
-    AssistantContent, Message as AppMessage, ThoughtContent, ThoughtSignature, ToolResult,
-    UserContent,
+    AssistantContent, ImageSource, Message as AppMessage, ThoughtContent, ThoughtSignature,
+    ToolResult, UserContent,
 };
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
@@ -32,6 +32,13 @@ struct GeminiFileData {
     mime_type: String,
     #[serde(rename = "fileUri")]
     file_uri: String,
+}
+
+#[expect(dead_code)]
+#[derive(Debug, Deserialize, Serialize, Clone)] // Added Serialize and Clone
+struct GeminiCodeExecutionResult {
+    outcome: String, // e.g., "OK", "ERROR"
+                     // Potentially add output field later if needed
 }
 
 pub struct GeminiClient {
@@ -124,6 +131,16 @@ struct GeminiContent {
 enum GeminiRequestPart {
     Text {
         text: String,
+    },
+    #[serde(rename = "inlineData")]
+    InlineData {
+        #[serde(rename = "inlineData")]
+        inline_data: GeminiBlob,
+    },
+    #[serde(rename = "fileData")]
+    FileData {
+        #[serde(rename = "fileData")]
+        file_data: GeminiFileData,
     },
     #[serde(rename = "functionCall")]
     FunctionCall {
@@ -366,59 +383,134 @@ struct GeminiContentResponse {
     parts: Vec<GeminiResponsePart>,
 }
 
-fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
-    messages
-        .into_iter()
-        .filter_map(|msg| match &msg.data {
+fn user_image_to_request_part(
+    image: &crate::app::conversation::ImageContent,
+) -> Result<GeminiRequestPart, ApiError> {
+    match &image.source {
+        ImageSource::DataUrl { data_url } => {
+            let Some((meta, payload)) = data_url.split_once(',') else {
+                return Err(ApiError::InvalidRequest {
+                    provider: "google".to_string(),
+                    details: "Image data URL is missing ',' separator".to_string(),
+                });
+            };
+
+            let Some(meta_body) = meta.strip_prefix("data:") else {
+                return Err(ApiError::InvalidRequest {
+                    provider: "google".to_string(),
+                    details: "Image data URL must start with 'data:'".to_string(),
+                });
+            };
+
+            if !meta_body
+                .split(';')
+                .any(|segment| segment.eq_ignore_ascii_case("base64"))
+            {
+                return Err(ApiError::InvalidRequest {
+                    provider: "google".to_string(),
+                    details: "Gemini image data URLs must be base64 encoded".to_string(),
+                });
+            }
+
+            let mime_type = meta_body
+                .split(';')
+                .next()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+
+            if !mime_type.starts_with("image/") {
+                return Err(ApiError::UnsupportedFeature {
+                    provider: "google".to_string(),
+                    feature: "image input mime type".to_string(),
+                    details: format!("Unsupported image media type '{}'", mime_type),
+                });
+            }
+
+            Ok(GeminiRequestPart::InlineData {
+                inline_data: GeminiBlob {
+                    mime_type,
+                    data: payload.to_string(),
+                },
+            })
+        }
+        ImageSource::Url { url } => Ok(GeminiRequestPart::FileData {
+            file_data: GeminiFileData {
+                mime_type: image.mime_type.clone(),
+                file_uri: url.clone(),
+            },
+        }),
+        ImageSource::SessionFile { relative_path } => Err(ApiError::UnsupportedFeature {
+            provider: "google".to_string(),
+            feature: "image input source".to_string(),
+            details: format!(
+                "Gemini adapter cannot access session file '{}' directly; use data URLs or URL sources",
+                relative_path
+            ),
+        }),
+    }
+}
+
+fn convert_messages(messages: Vec<AppMessage>) -> Result<Vec<GeminiContent>, ApiError> {
+    let mut converted = Vec::new();
+
+    for msg in messages {
+        match &msg.data {
             crate::app::conversation::MessageData::User { content, .. } => {
-                let parts: Vec<GeminiRequestPart> = content
-                    .iter()
-                    .map(|user_content| match user_content {
+                let mut parts = Vec::new();
+                for user_content in content {
+                    match user_content {
                         UserContent::Text { text } => {
-                            GeminiRequestPart::Text { text: text.clone() }
+                            parts.push(GeminiRequestPart::Text { text: text.clone() });
                         }
-                        UserContent::Image { image } => GeminiRequestPart::Text {
-                            text: format!("[Image: {}]", image.mime_type),
-                        },
+                        UserContent::Image { image } => {
+                            parts.push(user_image_to_request_part(image)?);
+                        }
                         UserContent::CommandExecution {
                             command,
                             stdout,
                             stderr,
                             exit_code,
-                        } => GeminiRequestPart::Text {
-                            text: UserContent::format_command_execution_as_xml(
-                                command, stdout, stderr, *exit_code,
-                            ),
-                        },
-                    })
-                    .collect();
+                        } => {
+                            parts.push(GeminiRequestPart::Text {
+                                text: UserContent::format_command_execution_as_xml(
+                                    command, stdout, stderr, *exit_code,
+                                ),
+                            });
+                        }
+                    }
+                }
 
-                // Only include the message if it has content after filtering
-                if parts.is_empty() {
-                    None
-                } else {
-                    Some(GeminiContent {
+                if !parts.is_empty() {
+                    converted.push(GeminiContent {
                         role: "user".to_string(),
                         parts,
-                    })
+                    });
                 }
             }
             crate::app::conversation::MessageData::Assistant { content, .. } => {
-                let parts: Vec<GeminiRequestPart> = content
-                    .iter()
-                    .filter_map(|assistant_content| match assistant_content {
+                let mut parts = Vec::new();
+                for assistant_content in content {
+                    match assistant_content {
                         AssistantContent::Text { text } => {
-                            Some(GeminiRequestPart::Text { text: text.clone() })
+                            parts.push(GeminiRequestPart::Text { text: text.clone() });
                         }
                         AssistantContent::Image { image } => {
-                            Some(GeminiRequestPart::Text {
-                                text: format!("[Image: {}]", image.mime_type),
-                            })
+                            match user_image_to_request_part(image) {
+                                Ok(part) => parts.push(part),
+                                Err(err) => {
+                                    debug!(
+                                        target: "gemini::convert_messages",
+                                        "Skipping unsupported assistant image block: {}",
+                                        err
+                                    );
+                                }
+                            }
                         }
                         AssistantContent::ToolCall {
                             tool_call,
                             thought_signature,
-                        } => Some(GeminiRequestPart::FunctionCall {
+                        } => parts.push(GeminiRequestPart::FunctionCall {
                             function_call: GeminiFunctionCall {
                                 name: tool_call.name.clone(),
                                 args: tool_call.parameters.clone(),
@@ -429,48 +521,44 @@ fn convert_messages(messages: Vec<AppMessage>) -> Vec<GeminiContent> {
                         }),
                         AssistantContent::Thought { .. } => {
                             // Gemini doesn't send thought blocks in requests
-                            None
                         }
-                    })
-                    .collect();
+                    }
+                }
 
-                // Always include assistant messages (they should always have content)
-                Some(GeminiContent {
+                converted.push(GeminiContent {
                     role: "model".to_string(),
                     parts,
-                })
+                });
             }
             crate::app::conversation::MessageData::Tool {
                 tool_use_id,
                 result,
                 ..
             } => {
-                // Convert tool result to function response
                 let result_value = match result {
                     ToolResult::Error(e) => Value::String(format!("Error: {e}")),
-                    _ => {
-                        // For all other variants, try to serialize as JSON
-                        serde_json::to_value(result)
-                            .unwrap_or_else(|_| Value::String(result.llm_format()))
-                    }
+                    _ => serde_json::to_value(result)
+                        .unwrap_or_else(|_| Value::String(result.llm_format())),
                 };
 
                 let parts = vec![GeminiRequestPart::FunctionResponse {
                     function_response: GeminiFunctionResponse {
-                        name: tool_use_id.clone(), // Use tool_use_id as function name
+                        name: tool_use_id.clone(),
                         response: GeminiResponseContent {
                             content: result_value,
                         },
                     },
                 }];
 
-                Some(GeminiContent {
+                converted.push(GeminiContent {
                     role: "function".to_string(),
                     parts,
-                })
+                });
             }
-        })
-        .collect()
+        }
+    }
+
+    Ok(converted)
 }
 
 fn resolve_ref<'a>(root: &'a Value, schema: &'a Value) -> Option<&'a Value> {
@@ -1100,7 +1188,7 @@ impl Provider for GeminiClient {
             GEMINI_API_BASE, model_name, self.api_key
         );
 
-        let gemini_contents = convert_messages(messages);
+        let gemini_contents = convert_messages(messages)?;
 
         let system_instruction = system
             .and_then(|context| context.render())
@@ -1225,7 +1313,7 @@ impl Provider for GeminiClient {
             GEMINI_API_BASE, model_name, self.api_key
         );
 
-        let gemini_contents = convert_messages(messages);
+        let gemini_contents = convert_messages(messages)?;
 
         let system_instruction = system
             .and_then(|context| context.render())
@@ -1434,6 +1522,7 @@ impl GeminiClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::conversation::{ImageContent, ImageSource, Message, MessageData, UserContent};
     use serde_json::json;
 
     #[test]
@@ -1668,6 +1757,76 @@ mod tests {
 
         let result = convert_tools(vec![tool]);
         assert_eq!(result, expected_tools);
+    }
+
+    #[test]
+    fn test_convert_messages_includes_data_url_image_as_inline_data() {
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Image {
+                    image: ImageContent {
+                        mime_type: "image/png".to_string(),
+                        source: ImageSource::DataUrl {
+                            data_url: "data:image/png;base64,Zm9v".to_string(),
+                        },
+                        width: None,
+                        height: None,
+                        bytes: None,
+                        sha256: None,
+                    },
+                }],
+            },
+            timestamp: 1,
+            id: "msg-image".to_string(),
+            parent_message_id: None,
+        }];
+
+        let converted = convert_messages(messages).expect("convert messages");
+        assert_eq!(converted.len(), 1);
+        let first = &converted[0];
+        assert_eq!(first.role, "user");
+        assert_eq!(first.parts.len(), 1);
+
+        let json = serde_json::to_value(&first.parts[0]).expect("serialize part");
+        assert_eq!(json["inlineData"]["mimeType"], "image/png");
+        assert_eq!(json["inlineData"]["data"], "Zm9v");
+    }
+
+    #[test]
+    fn test_convert_messages_rejects_session_file_image_source() {
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Image {
+                    image: ImageContent {
+                        mime_type: "image/png".to_string(),
+                        source: ImageSource::SessionFile {
+                            relative_path: "session-1/image.png".to_string(),
+                        },
+                        width: None,
+                        height: None,
+                        bytes: None,
+                        sha256: None,
+                    },
+                }],
+            },
+            timestamp: 1,
+            id: "msg-image".to_string(),
+            parent_message_id: None,
+        }];
+
+        let err = convert_messages(messages).expect_err("expected unsupported feature");
+        match err {
+            ApiError::UnsupportedFeature {
+                provider,
+                feature,
+                details,
+            } => {
+                assert_eq!(provider, "google");
+                assert_eq!(feature, "image input source");
+                assert!(details.contains("session file"));
+            }
+            other => panic!("Expected UnsupportedFeature, got {other:?}"),
+        }
     }
 
     #[tokio::test]

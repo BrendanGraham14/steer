@@ -10,7 +10,7 @@ use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
 use crate::api::sse::parse_sse_stream;
 use crate::app::SystemContext;
 use crate::app::conversation::{
-    AssistantContent, Message as AppMessage, MessageData, ThoughtContent, UserContent,
+    AssistantContent, ImageSource, Message as AppMessage, MessageData, ThoughtContent, UserContent,
 };
 use crate::config::model::{ModelId, ModelParameters};
 use steer_tools::ToolSchema;
@@ -28,6 +28,29 @@ pub(super) struct Client {
 impl Client {
     pub(super) fn new(api_key: String) -> Result<Self, ApiError> {
         Self::with_base_url(api_key, None)
+    }
+
+    fn user_image_part(
+        image: &crate::app::conversation::ImageContent,
+    ) -> Result<OpenAIContentPart, ApiError> {
+        let image_url = match &image.source {
+            ImageSource::DataUrl { data_url } => data_url.clone(),
+            ImageSource::Url { url } => url.clone(),
+            ImageSource::SessionFile { relative_path } => {
+                return Err(ApiError::UnsupportedFeature {
+                    provider: super::PROVIDER_NAME.to_string(),
+                    feature: "image input source".to_string(),
+                    details: format!(
+                        "OpenAI chat API cannot access session file '{}' directly; use data URLs or public URLs",
+                        relative_path
+                    ),
+                });
+            }
+        };
+
+        Ok(OpenAIContentPart::ImageUrl {
+            image_url: OpenAIImageUrl { url: image_url },
+        })
     }
 
     pub(super) fn with_base_url(
@@ -200,16 +223,14 @@ impl Client {
     fn convert_message(message: AppMessage) -> Result<Vec<OpenAIMessage>, ApiError> {
         match message.data {
             MessageData::User { content, .. } => {
-                let mut text_parts = Vec::new();
+                let mut content_parts = Vec::new();
                 for c in content {
                     match c {
                         UserContent::Text { text } => {
-                            text_parts.push(OpenAIContentPart::Text { text });
+                            content_parts.push(OpenAIContentPart::Text { text });
                         }
                         UserContent::Image { image } => {
-                            text_parts.push(OpenAIContentPart::Text {
-                                text: format!("[Image: {}]", image.mime_type),
-                            });
+                            content_parts.push(Self::user_image_part(&image)?);
                         }
                         UserContent::CommandExecution {
                             command,
@@ -220,16 +241,26 @@ impl Client {
                             let formatted = UserContent::format_command_execution_as_xml(
                                 &command, &stdout, &stderr, exit_code,
                             );
-                            text_parts.push(OpenAIContentPart::Text { text: formatted });
+                            content_parts.push(OpenAIContentPart::Text { text: formatted });
                         }
                     }
                 }
+
+                if content_parts.is_empty() {
+                    return Err(ApiError::InvalidRequest {
+                        provider: super::PROVIDER_NAME.to_string(),
+                        details: "User message had no content after conversion".to_string(),
+                    });
+                }
+
                 Ok(vec![OpenAIMessage::User {
-                    content: if text_parts.len() == 1 {
-                        let OpenAIContentPart::Text { text } = &text_parts[0];
-                        OpenAIContent::String(text.clone())
+                    content: if content_parts.len() == 1 {
+                        match &content_parts[0] {
+                            OpenAIContentPart::Text { text } => OpenAIContent::String(text.clone()),
+                            _ => OpenAIContent::Array(content_parts),
+                        }
                     } else {
-                        OpenAIContent::Array(text_parts)
+                        OpenAIContent::Array(content_parts)
                     },
                     name: None,
                 }])
@@ -316,6 +347,20 @@ impl Client {
                         match part {
                             OpenAIContentPart::Text { text } => {
                                 content.push(AssistantContent::Text { text: text.clone() });
+                            }
+                            OpenAIContentPart::ImageUrl { image_url } => {
+                                content.push(AssistantContent::Image {
+                                    image: crate::app::conversation::ImageContent {
+                                        mime_type: "image/*".to_string(),
+                                        source: ImageSource::Url {
+                                            url: image_url.url.clone(),
+                                        },
+                                        width: None,
+                                        height: None,
+                                        bytes: None,
+                                        sha256: None,
+                                    },
+                                });
                             }
                         }
                     }
@@ -708,6 +753,13 @@ enum OpenAIContent {
 enum OpenAIContentPart {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: OpenAIImageUrl },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OpenAIImageUrl {
+    url: String,
 }
 
 // OpenAI tool call
@@ -890,7 +942,7 @@ struct OpenAIStreamFunction {
 mod tests {
     use super::*;
     use crate::api::sse::SseEvent;
-    use crate::app::conversation::{Message, MessageData, UserContent};
+    use crate::app::conversation::{ImageContent, ImageSource, Message, MessageData, UserContent};
     use futures::stream;
     use std::pin::pin;
 
@@ -1088,6 +1140,7 @@ mod tests {
                         OpenAIContentPart::Text { text } => {
                             assert_eq!(text, "Here's the result:");
                         }
+                        other => panic!("Expected text content part, got {other:?}"),
                     }
 
                     // Check second part contains command execution
@@ -1097,6 +1150,7 @@ mod tests {
                             assert!(text.contains("ls -la"));
                             assert!(text.contains("total 24"));
                         }
+                        other => panic!("Expected text content part, got {other:?}"),
                     }
                 }
                 OpenAIContent::String(_text) => {
@@ -1106,6 +1160,93 @@ mod tests {
             OpenAIMessage::Assistant { .. }
             | OpenAIMessage::System { .. }
             | OpenAIMessage::Tool { .. } => unreachable!("Expected user message"),
+        }
+    }
+
+    #[test]
+    fn test_convert_message_with_data_url_image() {
+        let message = Message {
+            data: MessageData::User {
+                content: vec![
+                    UserContent::Text {
+                        text: "Describe this".to_string(),
+                    },
+                    UserContent::Image {
+                        image: ImageContent {
+                            mime_type: "image/png".to_string(),
+                            source: ImageSource::DataUrl {
+                                data_url: "data:image/png;base64,Zm9v".to_string(),
+                            },
+                            width: Some(1),
+                            height: Some(1),
+                            bytes: Some(3),
+                            sha256: None,
+                        },
+                    },
+                ],
+            },
+            timestamp: 1,
+            id: "test-image-msg".to_string(),
+            parent_message_id: None,
+        };
+
+        let result = Client::convert_message(message).expect("convert_message should succeed");
+        assert_eq!(result.len(), 1);
+
+        match &result[0] {
+            OpenAIMessage::User { content, .. } => match content {
+                OpenAIContent::Array(parts) => {
+                    assert_eq!(parts.len(), 2);
+                    assert!(matches!(
+                        &parts[0],
+                        OpenAIContentPart::Text { text } if text == "Describe this"
+                    ));
+                    assert!(matches!(
+                        &parts[1],
+                        OpenAIContentPart::ImageUrl { image_url }
+                            if image_url.url == "data:image/png;base64,Zm9v"
+                    ));
+                }
+                other => panic!("Expected array content, got {other:?}"),
+            },
+            other => panic!("Expected user message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_convert_message_rejects_session_file_image_source() {
+        let message = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Image {
+                    image: ImageContent {
+                        mime_type: "image/png".to_string(),
+                        source: ImageSource::SessionFile {
+                            relative_path: "session-123/image.png".to_string(),
+                        },
+                        width: None,
+                        height: None,
+                        bytes: None,
+                        sha256: None,
+                    },
+                }],
+            },
+            timestamp: 1,
+            id: "test-session-file-image-msg".to_string(),
+            parent_message_id: None,
+        };
+
+        let err = Client::convert_message(message).expect_err("should reject session-file image");
+        match err {
+            ApiError::UnsupportedFeature {
+                provider,
+                feature,
+                details,
+            } => {
+                assert_eq!(provider, "openai");
+                assert_eq!(feature, "image input source");
+                assert!(details.contains("session file"));
+            }
+            other => panic!("Expected UnsupportedFeature error, got {other:?}"),
         }
     }
 
