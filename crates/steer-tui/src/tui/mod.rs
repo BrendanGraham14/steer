@@ -7,6 +7,8 @@ use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use base64::Engine as _;
+
 use crate::tui::update::UpdateStatus;
 
 use crate::error::{Error, Result};
@@ -15,13 +17,15 @@ use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
 use futures::{FutureExt, StreamExt};
+use image::{ImageFormat, ImageReader};
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
 use steer_grpc::AgentClient;
 use steer_grpc::client_api::{
-    AssistantContent, ClientEvent, EditingMode, LlmStatus, Message, MessageData, ModelId, OpId,
-    Preferences, ProviderId, UserContent, WorkspaceStatus, builtin, default_primary_agent_id,
+    AssistantContent, ClientEvent, EditingMode, ImageContent, ImageSource, LlmStatus, Message,
+    MessageData, ModelId, OpId, Preferences, ProviderId, UserContent, WorkspaceStatus, builtin,
+    default_primary_agent_id,
 };
 
 use crate::tui::events::processor::PendingToolApproval;
@@ -179,6 +183,8 @@ pub struct Tui {
     input_panel_state: crate::tui::widgets::input_panel::InputPanelState,
     /// The ID of the message being edited (if any)
     editing_message_id: Option<String>,
+    /// Pending image attachments to include on next send.
+    pending_attachments: Vec<ImageContent>,
     /// Handle to send commands to the app
     client: AgentClient,
     /// Are we currently processing a request?
@@ -289,6 +295,10 @@ impl Tui {
                 | InputMode::FuzzyFinder
         )
     }
+
+    fn has_pending_send_content(&self) -> bool {
+        self.input_panel_state.has_content() || !self.pending_attachments.is_empty()
+    }
     /// Create a new TUI instance
     pub async fn new(
         client: AgentClient,
@@ -331,6 +341,7 @@ impl Tui {
                 session_id.clone(),
             ),
             editing_message_id: None,
+            pending_attachments: Vec::new(),
             client,
             is_processing: false,
             progress_message: None,
@@ -790,36 +801,59 @@ impl Tui {
                     needs_redraw = true;
                 }
                 Event::Paste(data) => {
-                    // Handle paste in modes that accept text input
-                    if self.is_text_input_mode() {
-                        if self.input_mode == InputMode::Setup {
-                            // Handle paste in setup mode
-                            if let Some(setup_state) = &mut self.setup_state {
-                                if let crate::tui::state::SetupStep::Authentication(_) =
-                                    &setup_state.current_step
-                                {
-                                    setup_state.auth_input.push_str(&data);
-                                    debug!(
-                                        target:"tui.run",
-                                        "Pasted {} chars in Setup mode",
-                                        data.len()
-                                    );
-                                    needs_redraw = true;
-                                } else {
-                                    // Other setup steps don't accept paste
-                                }
+                    if !self.is_text_input_mode() {
+                        continue;
+                    }
+
+                    if self.input_mode == InputMode::Setup {
+                        if let Some(setup_state) = &mut self.setup_state {
+                            if let crate::tui::state::SetupStep::Authentication(_) =
+                                &setup_state.current_step
+                            {
+                                setup_state.auth_input.push_str(&data);
+                                debug!(
+                                    target:"tui.run",
+                                    "Pasted {} chars in Setup mode",
+                                    data.len()
+                                );
+                                needs_redraw = true;
                             }
-                        } else {
-                            let normalized_data = data.replace("\r\n", "\n").replace('\r', "\n");
-                            self.input_panel_state.insert_str(&normalized_data);
-                            debug!(
-                                target:"tui.run",
-                                "Pasted {} chars in {:?} mode",
-                                normalized_data.len(),
-                                self.input_mode
-                            );
-                            needs_redraw = true;
                         }
+                        continue;
+                    }
+
+                    let maybe_image = decode_pasted_image(&data);
+                    let normalized_data = data.replace("\r\n", "\n").replace('\r', "\n");
+                    let mut text_inserted = false;
+                    if !normalized_data.is_empty() {
+                        self.input_panel_state.insert_str(&normalized_data);
+                        text_inserted = true;
+                        debug!(
+                            target:"tui.run",
+                            "Pasted {} chars in {:?} mode",
+                            normalized_data.len(),
+                            self.input_mode
+                        );
+                    }
+
+                    if let Some(image) = maybe_image {
+                        self.pending_attachments.push(image);
+                        self.push_notice(
+                            NoticeLevel::Info,
+                            format!(
+                                "Attached image from paste ({} pending)",
+                                self.pending_attachments.len()
+                            ),
+                        );
+                    } else if !normalized_data.is_empty() {
+                        self.push_notice(
+                            NoticeLevel::Warn,
+                            "Paste did not include a supported image attachment.".to_string(),
+                        );
+                    }
+
+                    if text_inserted || !self.pending_attachments.is_empty() {
+                        needs_redraw = true;
                     }
                 }
                 Event::Key(_) => {}
@@ -1024,6 +1058,7 @@ impl Tui {
                 editing_preview: editing_preview.as_deref(),
                 queued_count: self.queued_count,
                 queued_preview: queue_preview,
+                attachment_count: self.pending_attachments.len(),
                 theme: &self.theme,
             });
             f.render_stateful_widget(input_panel, layout.input, &mut self.input_panel_state);

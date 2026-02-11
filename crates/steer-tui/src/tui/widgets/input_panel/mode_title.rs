@@ -18,6 +18,7 @@ pub struct ModeTitleWidget<'a> {
     theme: &'a Theme,
     has_content: bool,
     queued_count: usize,
+    attachment_count: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +31,7 @@ pub struct ModeTitleParams<'a> {
     pub theme: &'a Theme,
     pub has_content: bool,
     pub queued_count: usize,
+    pub attachment_count: usize,
 }
 
 impl<'a> ModeTitleWidget<'a> {
@@ -44,6 +46,7 @@ impl<'a> ModeTitleWidget<'a> {
             theme: params.theme,
             has_content: params.has_content,
             queued_count: params.queued_count,
+            attachment_count: params.attachment_count,
         }
     }
 
@@ -176,6 +179,10 @@ impl<'a> ModeTitleWidget<'a> {
 
         if self.queued_count > 0 {
             keybinds.insert(0, ("Alt+Up", "edit queued"));
+        }
+
+        if self.attachment_count > 0 {
+            keybinds.insert(0, ("Ctrl+V", "add image"));
         }
 
         keybinds

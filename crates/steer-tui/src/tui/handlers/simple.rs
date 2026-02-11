@@ -75,7 +75,7 @@ impl Tui {
 
             KeyCode::Enter => {
                 let content = self.input_panel_state.content().trim().to_string();
-                if !content.is_empty() {
+                if self.has_pending_send_content() {
                     if content.starts_with('!') && content.len() > 1 {
                         // Execute as bash command
                         let command = content[1..].trim().to_string();
@@ -88,6 +88,7 @@ impl Tui {
                         self.send_message(content).await?;
                     }
                     self.input_panel_state.clear();
+                    self.pending_attachments.clear();
                 }
             }
 

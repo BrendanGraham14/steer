@@ -314,6 +314,7 @@ pub struct InputPanelParams<'a> {
     pub editing_preview: Option<&'a str>,
     pub queued_count: usize,
     pub queued_preview: Option<&'a str>,
+    pub attachment_count: usize,
     pub theme: &'a Theme,
 }
 
@@ -328,6 +329,7 @@ pub struct InputPanel<'a> {
     pub editing_preview: Option<&'a str>,
     pub queued_count: usize,
     pub queued_preview: Option<&'a str>,
+    pub attachment_count: usize,
     pub theme: &'a Theme,
 }
 
@@ -342,6 +344,7 @@ impl<'a> InputPanel<'a> {
             editing_preview: params.editing_preview,
             queued_count: params.queued_count,
             queued_preview: params.queued_preview,
+            attachment_count: params.attachment_count,
             theme: params.theme,
         }
     }
@@ -365,6 +368,7 @@ impl StatefulWidget for InputPanel<'_> {
             theme: self.theme,
             has_content: state.has_content(),
             queued_count: self.queued_count,
+            attachment_count: self.attachment_count,
         })
         .render();
 

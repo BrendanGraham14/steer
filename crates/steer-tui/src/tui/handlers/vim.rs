@@ -462,7 +462,7 @@ impl Tui {
 
             KeyCode::Enter => {
                 let content = self.input_panel_state.content().trim().to_string();
-                if content.is_empty() {
+                if !self.has_pending_send_content() {
                     // Just insert a newline if empty
                     self.input_panel_state.handle_input(Input::from(key));
                 } else if content.starts_with('!') && content.len() > 1 {
@@ -470,12 +470,14 @@ impl Tui {
                     let command = content[1..].trim().to_string();
                     self.client.execute_bash_command(command).await?;
                     self.input_panel_state.clear();
+                    self.pending_attachments.clear();
                     self.set_mode(InputMode::VimNormal);
                 } else if content.starts_with('/') {
                     // Handle as slash command
                     let old_editing_mode = self.preferences.ui.editing_mode;
                     self.handle_slash_command(content).await?;
                     self.input_panel_state.clear();
+                    self.pending_attachments.clear();
                     // Return to VimNormal only if we're *still* in VimInsert and the
                     // editing mode hasn’t changed (e.g. not switched into Setup).
                     if self.input_mode == InputMode::VimInsert
@@ -487,6 +489,7 @@ impl Tui {
                     // Send as normal message
                     self.send_message(content).await?;
                     self.input_panel_state.clear();
+                    self.pending_attachments.clear();
                     self.set_mode(InputMode::VimNormal);
                 }
             }
