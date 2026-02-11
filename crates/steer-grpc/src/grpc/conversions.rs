@@ -2,7 +2,8 @@ use crate::grpc::error::ConversionError;
 use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use steer_core::app::conversation::{
-    AssistantContent, Message as ConversationMessage, MessageData, ThoughtContent, UserContent,
+    AssistantContent, ImageSource, Message as ConversationMessage, MessageData, ThoughtContent,
+    UserContent,
 };
 use steer_core::app::domain::types::SessionId;
 use steer_core::app::domain::{SessionEvent, StreamDelta, ToolCallDelta as CoreToolCallDelta};
@@ -376,10 +377,9 @@ pub(crate) fn message_to_proto(
                             content: Some(proto::user_content::Content::Text(text.clone())),
                         },
                         UserContent::Image { image } => proto::UserContent {
-                            content: Some(proto::user_content::Content::Text(format!(
-                                "[Image: {}]",
-                                image.mime_type
-                            ))),
+                            content: Some(proto::user_content::Content::Image(
+                                core_image_to_proto(image),
+                            )),
                         },
                         UserContent::CommandExecution {
                             command,
@@ -412,10 +412,9 @@ pub(crate) fn message_to_proto(
                             content: Some(proto::assistant_content::Content::Text(text.clone())),
                         },
                         AssistantContent::Image { image } => proto::AssistantContent {
-                            content: Some(proto::assistant_content::Content::Text(format!(
-                                "[Image: {}]",
-                                image.mime_type
-                            ))),
+                            content: Some(proto::assistant_content::Content::Image(
+                                core_image_to_proto(image),
+                            )),
                         },
                         AssistantContent::ToolCall { tool_call, .. } => proto::AssistantContent {
                             content: Some(proto::assistant_content::Content::ToolCall(
@@ -1745,6 +1744,33 @@ fn proto_assistant_message_to_core(
         id,
         parent_message_id: assistant_msg.parent_message_id,
     })
+}
+
+fn core_image_to_proto(image: &steer_core::app::conversation::ImageContent) -> proto::ImageContent {
+    let source = match &image.source {
+        ImageSource::SessionFile { relative_path } => Some(
+            proto::image_content::Source::SessionFile(proto::SessionFileSource {
+                relative_path: relative_path.clone(),
+            }),
+        ),
+        ImageSource::DataUrl { data_url } => Some(proto::image_content::Source::DataUrl(
+            proto::DataUrlSource {
+                data_url: data_url.clone(),
+            },
+        )),
+        ImageSource::Url { url } => Some(proto::image_content::Source::Url(proto::UrlSource {
+            url: url.clone(),
+        })),
+    };
+
+    proto::ImageContent {
+        mime_type: image.mime_type.clone(),
+        source,
+        width: image.width,
+        height: image.height,
+        bytes: image.bytes,
+        sha256: image.sha256.clone(),
+    }
 }
 
 fn proto_image_to_core(image: proto::ImageContent) -> steer_core::app::conversation::ImageContent {

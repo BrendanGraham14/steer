@@ -277,9 +277,12 @@ mod id_preservation_tests {
 
 #[cfg(test)]
 mod event_conversion_tests {
+    use steer_core::app::conversation::{
+        AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
+    };
     use crate::client_api::{ClientEvent, MessageId, OpId, ToolCallDelta, ToolCallId};
     use crate::grpc::conversions::{
-        proto_to_client_event, session_event_to_proto, stream_delta_to_proto,
+        message_to_proto, proto_to_client_event, session_event_to_proto, stream_delta_to_proto,
     };
     use steer_core::app::domain::delta::StreamDelta;
     use steer_core::app::domain::event::{CompactResult, SessionEvent};
@@ -299,6 +302,149 @@ mod event_conversion_tests {
                 assert!(matches!(result, CompactResult::Success(ref s) if s == "summary"));
             }
             other => panic!("Expected CompactResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_message_to_proto_preserves_image_content() {
+        let user_message = Message {
+            timestamp: 1,
+            id: "user-img-1".to_string(),
+            parent_message_id: None,
+            data: MessageData::User {
+                content: vec![UserContent::Image {
+                    image: ImageContent {
+                        mime_type: "image/png".to_string(),
+                        source: ImageSource::SessionFile {
+                            relative_path: "session-id/hash.png".to_string(),
+                        },
+                        width: Some(120),
+                        height: Some(80),
+                        bytes: Some(1024),
+                        sha256: Some("abc123".to_string()),
+                    },
+                }],
+            },
+        };
+
+        let user_proto = message_to_proto(user_message).unwrap();
+        let user_variant = user_proto.message.expect("message");
+        let user_block = match user_variant {
+            steer_proto::agent::v1::message::Message::User(message) => {
+                message.content.into_iter().next().expect("content block")
+            }
+            other => panic!("Expected user message, got {other:?}"),
+        };
+        match user_block.content {
+            Some(steer_proto::agent::v1::user_content::Content::Image(image)) => {
+                assert_eq!(image.mime_type, "image/png");
+                assert_eq!(image.width, Some(120));
+                assert_eq!(image.height, Some(80));
+                assert_eq!(image.bytes, Some(1024));
+                assert_eq!(image.sha256.as_deref(), Some("abc123"));
+                match image.source {
+                    Some(steer_proto::agent::v1::image_content::Source::SessionFile(source)) => {
+                        assert_eq!(source.relative_path, "session-id/hash.png");
+                    }
+                    other => panic!("Expected session file source, got {other:?}"),
+                }
+            }
+            other => panic!("Expected image content block, got {other:?}"),
+        }
+
+        let assistant_message = Message {
+            timestamp: 2,
+            id: "assistant-img-1".to_string(),
+            parent_message_id: Some("user-img-1".to_string()),
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Image {
+                    image: ImageContent {
+                        mime_type: "image/jpeg".to_string(),
+                        source: ImageSource::DataUrl {
+                            data_url: "data:image/jpeg;base64,Zm9v".to_string(),
+                        },
+                        width: None,
+                        height: None,
+                        bytes: None,
+                        sha256: None,
+                    },
+                }],
+            },
+        };
+
+        let assistant_proto = message_to_proto(assistant_message).unwrap();
+        let assistant_variant = assistant_proto.message.expect("message");
+        let assistant_block = match assistant_variant {
+            steer_proto::agent::v1::message::Message::Assistant(message) => {
+                message.content.into_iter().next().expect("content block")
+            }
+            other => panic!("Expected assistant message, got {other:?}"),
+        };
+        match assistant_block.content {
+            Some(steer_proto::agent::v1::assistant_content::Content::Image(image)) => {
+                assert_eq!(image.mime_type, "image/jpeg");
+                match image.source {
+                    Some(steer_proto::agent::v1::image_content::Source::DataUrl(source)) => {
+                        assert_eq!(source.data_url, "data:image/jpeg;base64,Zm9v");
+                    }
+                    other => panic!("Expected data url source, got {other:?}"),
+                }
+            }
+            other => panic!("Expected image content block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_session_event_to_proto_preserves_user_image_content() {
+        let event = SessionEvent::UserMessageAdded {
+            message: Message {
+                timestamp: 123,
+                id: "msg-img".to_string(),
+                parent_message_id: None,
+                data: MessageData::User {
+                    content: vec![UserContent::Image {
+                        image: ImageContent {
+                            mime_type: "image/webp".to_string(),
+                            source: ImageSource::Url {
+                                url: "https://example.com/image.webp".to_string(),
+                            },
+                            width: Some(64),
+                            height: Some(64),
+                            bytes: None,
+                            sha256: None,
+                        },
+                    }],
+                },
+            },
+        };
+
+        let proto = session_event_to_proto(event, 7).unwrap();
+        let event_variant = proto.event.expect("event");
+        let user_message = match event_variant {
+            steer_proto::agent::v1::session_event::Event::UserMessageAdded(event) => {
+                event.message.expect("message")
+            }
+            other => panic!("Expected user message added event, got {other:?}"),
+        };
+
+        let content_block = user_message
+            .content
+            .into_iter()
+            .next()
+            .expect("content block");
+        match content_block.content {
+            Some(steer_proto::agent::v1::user_content::Content::Image(image)) => {
+                assert_eq!(image.mime_type, "image/webp");
+                assert_eq!(image.width, Some(64));
+                assert_eq!(image.height, Some(64));
+                match image.source {
+                    Some(steer_proto::agent::v1::image_content::Source::Url(source)) => {
+                        assert_eq!(source.url, "https://example.com/image.webp");
+                    }
+                    other => panic!("Expected url source, got {other:?}"),
+                }
+            }
+            other => panic!("Expected image content block, got {other:?}"),
         }
     }
 

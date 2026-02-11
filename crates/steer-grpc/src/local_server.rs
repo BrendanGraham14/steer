@@ -622,6 +622,7 @@ mod tests {
             .send_message(tonic::Request::new(SendMessageRequest {
                 session_id: session_id.to_string(),
                 message: "first".to_string(),
+                content: Vec::new(),
                 model: Some(model_spec.clone()),
             }))
             .await
@@ -633,6 +634,7 @@ mod tests {
             .send_message(tonic::Request::new(SendMessageRequest {
                 session_id: session_id.to_string(),
                 message: "second".to_string(),
+                content: Vec::new(),
                 model: Some(model_spec.clone()),
             }))
             .await
@@ -727,6 +729,7 @@ mod tests {
             .send_message(tonic::Request::new(SendMessageRequest {
                 session_id: session_id.to_string(),
                 message: "first".to_string(),
+                content: Vec::new(),
                 model: Some(model_spec.clone()),
             }))
             .await
@@ -738,6 +741,7 @@ mod tests {
             .send_message(tonic::Request::new(SendMessageRequest {
                 session_id: session_id.to_string(),
                 message: "second".to_string(),
+                content: Vec::new(),
                 model: Some(model_spec.clone()),
             }))
             .await
@@ -830,6 +834,7 @@ persisted_new={new_events:?} (before_len={before_len}, after_len={after_len})"
         let request = tonic::Request::new(SendMessageRequest {
             session_id: session_id.to_string(),
             message: "hello".to_string(),
+            content: Vec::new(),
             model: None,
         });
 

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 pub use steer_core::app::conversation::{
-    AssistantContent, Message, MessageData, ThoughtContent, UserContent,
+    AssistantContent, ImageContent, ImageSource, Message, MessageData, ThoughtContent, UserContent,
 };
 
 pub use steer_core::app::domain::types::{
