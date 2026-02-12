@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-workspace-v0.8.2...steer-workspace-v0.9.0) - 2026-02-12
+
+### Added
+
+- *(workspace)* add git worktree orchestration
+- *(subagent)* support workspace target
+- *(workspace)* add repo tracking and repo APIs
+- *(grpc)* add workspace/environment management RPCs
+- *(workspace)* add workspace registry
+- *(workspace)* add workspace manager abstractions
+- *(workspace)* add VCS info and jj support
+
+### Fixed
+
+- lints
+- resolve lints
+- preserve workspace snapshot cleanup
+- mimic jj snapshot options
+- *(dispatch_agent)* align workspace target plumbing
+- *(agent)* process outputs FIFO to avoid stepper deadlock
+
+### Other
+
+- just fix
+- just fix
+- *(steer-workspace)* split utils modules
+- *(steer-workspace)* pass env id in list workspaces
+- *(steer-workspace)* extract workspace layout
+- *(steer-workspace)* split manager jj helpers
+- *(steer-workspace)* split local module
+- *(workspace)* move tool ops into workspace
+- add jj snapshot option coverage
+- *(workspace)* remove soft-delete support
+- *(workspace)* cover registry and manager
+- prefer agents.md over claude.md
+
 ## [0.6.0](https://github.com/BrendanGraham14/steer/compare/steer-workspace-v0.5.0...steer-workspace-v0.6.0) - 2025-08-19
 
 ### Other

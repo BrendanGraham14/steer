@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.8.2...steer-tui-v0.9.0) - 2026-02-12
+
+### Added
+
+- *(notifications)* centralize focus-aware OSC9 notifications
+- *(tui)* auto-scroll on view toggle and session restore
+- rename planner agent to plan
+- *(tui)* show agent in status bar
+- *(tui)* add ctrl+d cancel/exit binding
+- *(tui)* style input panel background
+- *(queue)* add durable queued work and UI preview
+- add create session params dto
+- mark custom primary agents in tui
+- improve scrolling
+- add primary agent mode switching
+- *(tui)* add edit-mode styling and cancel keybind
+- *(tui)* add edit selection overlay
+- tweak tui styling
+- *(tools)* align contracts and typed execution errors
+- *(auth)* integrate auth plugins
+- *(auth)* add grpc auth flow endpoints
+- *(agents)* add dispatch session reuse
+- *(subagent)* support workspace target
+- *(workspace)* add repo tracking and repo APIs
+- *(workspace)* add status commands in cli and tui
+- *(workspace)* add orchestration managers and lineage
+- *(auth)* codex oauth flow wiring
+- add session default model support
+- implement MCP server lifecycle effects
+- split message added events by role
+- *(core,proto,grpc)* add compact result event and drop model_changed
+- *(steer-tui)* replace /clear with /new command for session reset
+- *(tools)* migrate all tools to static tool system with ModelCaller
+- *(tui)* migrate TUI to use ClientEvent from client_api
+
+### Fixed
+
+- make queued input editable again on cancel
+- lints
+- *(compaction)* persist results and simplify UI output
+- resolve lints
+- clean grpc error notices and reducer validation
+- *(tui)* align non-accent chat row indentation
+- *(tui)* smooth scrolling bounds and gaps
+- *(tui)* remove system/tool accent bars
+- *(tui)* inset user message background
+- esc to escape edit mode
+- *(tui)* free ctrl+e in edit mode
+- *(tui)* prioritize confirm-exit border and allow bash edits
+- make it more clear that a message was edited
+- ensure event resubscribe after session switch
+- roundtrip gemini thought signatures
+- *(dispatch_agent)* align workspace target plumbing
+- *(agent)* process outputs FIFO to avoid stepper deadlock
+- *(dispatch_agent)* reconcile formatter/executor output shape
+- add resume_session to AgentClient for session resumption
+- lints, tests
+- restore typed bash command flow
+- render standalone tool results
+- stabilize deltas and drop legacy content
+- *(tui,grpc)* refresh delta rendering and add compaction e2e test
+- *(runtime/grpc)* align compact-result action and conversion flow
+
+### Other
+
+- just fix
+- decouple tui from core
+- add client api auth types and migrate tui
+- use tool contracts in tui
+- *(tui)* cover scroll gaps and clamping
+- *(tui)* remove input panel edit selection widget
+- just fix
+- make ModelId a struct
+- *(workspace)* allow overriding local workspace root
+- drop service host default model
+- update model catalog
+- *(proto,grpc,core)* drop stream delta is_first and make models explicit
+- *(core)* add AgentInterpreter with EventStore dependency and parent_session_id support
+- migrate OneShotRunner to RuntimeService architecture
+
 ## [0.8.1](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.8.0...steer-tui-v0.8.1) - 2025-11-30
 
 ### Fixed
