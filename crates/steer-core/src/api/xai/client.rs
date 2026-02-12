@@ -444,13 +444,11 @@ impl XAIClient {
 
                     // Only add the message if it has content after filtering
                     if !content_parts.is_empty() {
-                        let content = if content_parts.len() == 1 {
-                            match content_parts.into_iter().next().expect("single part") {
-                                XAIUserContentPart::Text { text } => XAIUserContent::Text(text),
-                                part => XAIUserContent::Parts(vec![part]),
+                        let content = match content_parts.as_slice() {
+                            [XAIUserContentPart::Text { text }] => {
+                                XAIUserContent::Text(text.clone())
                             }
-                        } else {
-                            XAIUserContent::Parts(content_parts)
+                            _ => XAIUserContent::Parts(content_parts),
                         };
 
                         xai_messages.push(XAIMessage::User {

@@ -110,15 +110,15 @@ impl Tui {
             }
 
             (KeyCode::Char('x'), KeyModifiers::CONTROL) => {
-                if !self.pending_attachments.is_empty() {
+                if self.pending_attachments.is_empty() {
+                    Ok(false)
+                } else {
                     self.pending_attachments.clear();
                     self.push_notice(
                         crate::tui::model::NoticeLevel::Info,
                         "Cleared pending image attachments.".to_string(),
                     );
                     Ok(true)
-                } else {
-                    Ok(false)
                 }
             }
 

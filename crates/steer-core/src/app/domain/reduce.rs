@@ -2541,7 +2541,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("Queued message").expect("non-empty"),
+                content: vec![UserContent::Text {
+                    text: "Queued message".to_string(),
+                }],
                 op_id: queued_op,
                 message_id: queued_message_id.clone(),
                 model: builtin::claude_sonnet_4_5(),

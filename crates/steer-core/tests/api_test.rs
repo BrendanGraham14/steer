@@ -3,7 +3,9 @@ use futures::StreamExt;
 use rstest::rstest;
 use steer_core::api::{ApiError, Client, Provider, StreamChunk};
 use steer_core::app::SystemContext;
-use steer_core::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+use steer_core::app::conversation::{
+    AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
+};
 use steer_core::config::model::{ModelId, builtin};
 
 use serde_json::json;
@@ -43,6 +45,36 @@ fn fresh_tool_use_id() -> String {
     format!("tool_use_{}", Uuid::new_v4())
 }
 
+fn tiny_png_data_url() -> &'static str {
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Y9YkAAAAASUVORK5CYII="
+}
+
+fn build_image_message(source: ImageSource) -> Message {
+    let timestamp = Message::current_timestamp();
+    Message {
+        data: MessageData::User {
+            content: vec![
+                UserContent::Text {
+                    text: "Please describe this image in one short sentence.".to_string(),
+                },
+                UserContent::Image {
+                    image: ImageContent {
+                        mime_type: "image/png".to_string(),
+                        source,
+                        width: Some(1),
+                        height: Some(1),
+                        bytes: None,
+                        sha256: None,
+                    },
+                },
+            ],
+        },
+        timestamp,
+        id: Message::generate_id("user", timestamp),
+        parent_message_id: None,
+    }
+}
+
 fn test_client() -> Client {
     dotenv().ok();
     let app_config = test_utils::test_app_config();
@@ -70,6 +102,24 @@ async fn default_tool_schemas() -> Vec<Tool> {
     registry.register_static(FetchTool);
 
     registry.available_schemas(Capabilities::all()).await
+}
+
+async fn run_api_with_data_url_image(client: &Client, model: &ModelId) -> ApiTestResult<()> {
+    let messages = vec![build_image_message(ImageSource::DataUrl {
+        data_url: tiny_png_data_url().to_string(),
+    })];
+
+    let response = client
+        .complete(model, messages, None, None, None, CancellationToken::new())
+        .await?;
+
+    let final_text = response.extract_text();
+    assert!(
+        !final_text.trim().is_empty(),
+        "Image response text should not be empty for model {model:?}"
+    );
+
+    Ok(())
 }
 
 async fn run_api_with_tool_response(client: &Client, model: &ModelId) -> ApiTestResult<()> {
@@ -624,6 +674,146 @@ async fn test_openai_responses_stream_tool_call_ids_non_empty() {
     );
     assert!(!saw_empty_id, "Tool call id should never be empty");
     assert!(!saw_empty_name, "Tool call name should never be empty");
+}
+
+#[tokio::test]
+async fn test_openai_provider_rejects_session_file_image_input() {
+    let provider = steer_core::api::openai::OpenAIClient::with_mode(
+        "test-key".to_string(),
+        steer_core::api::openai::OpenAIMode::Responses,
+    )
+    .expect("openai client should build");
+
+    let messages = vec![build_image_message(ImageSource::SessionFile {
+        relative_path: "session-1/image.png".to_string(),
+    })];
+
+    let err = provider
+        .complete(
+            &builtin::gpt_5_nano_2025_08_07(),
+            messages,
+            None,
+            None,
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("session-file image should be rejected before request send");
+
+    assert!(matches!(
+        err,
+        ApiError::UnsupportedFeature {
+            provider,
+            feature,
+            ..
+        } if provider == "openai" && feature == "image input source"
+    ));
+}
+
+#[tokio::test]
+async fn test_anthropic_provider_rejects_session_file_image_input() {
+    let provider =
+        steer_core::api::claude::AnthropicClient::new("test-key").expect("anthropic client");
+
+    let messages = vec![build_image_message(ImageSource::SessionFile {
+        relative_path: "session-1/image.png".to_string(),
+    })];
+
+    let err = provider
+        .complete(
+            &builtin::claude_haiku_4_5(),
+            messages,
+            None,
+            None,
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("session-file image should be rejected before request send");
+
+    assert!(matches!(
+        err,
+        ApiError::UnsupportedFeature {
+            provider,
+            feature,
+            ..
+        } if provider == "anthropic" && feature == "image input source"
+    ));
+}
+
+#[tokio::test]
+async fn test_gemini_provider_rejects_session_file_image_input() {
+    let provider = steer_core::api::gemini::GeminiClient::new("test-key");
+
+    let messages = vec![build_image_message(ImageSource::SessionFile {
+        relative_path: "session-1/image.png".to_string(),
+    })];
+
+    let err = provider
+        .complete(
+            &builtin::gemini_3_flash_preview(),
+            messages,
+            None,
+            None,
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("session-file image should be rejected before request send");
+
+    assert!(matches!(
+        err,
+        ApiError::UnsupportedFeature {
+            provider,
+            feature,
+            ..
+        } if provider == "google" && feature == "image input source"
+    ));
+}
+
+#[tokio::test]
+async fn test_xai_provider_rejects_session_file_image_input() {
+    let provider =
+        steer_core::api::xai::XAIClient::new("test-key".to_string()).expect("xai client");
+
+    let messages = vec![build_image_message(ImageSource::SessionFile {
+        relative_path: "session-1/image.png".to_string(),
+    })];
+
+    let err = provider
+        .complete(
+            &builtin::grok_4_1_fast_reasoning(),
+            messages,
+            None,
+            None,
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("session-file image should be rejected before request send");
+
+    assert!(matches!(
+        err,
+        ApiError::UnsupportedFeature {
+            provider,
+            feature,
+            ..
+        } if provider == "xai" && feature == "image input source"
+    ));
+}
+
+#[rstest]
+#[case::claude_haiku_4_5(builtin::claude_haiku_4_5())]
+#[case::gpt_5_nano_2025_08_07(builtin::gpt_5_nano_2025_08_07())]
+#[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
+#[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
+#[tokio::test]
+#[ignore = "requires external API credentials"]
+async fn test_api_with_image_input(#[case] model: ModelId) {
+    let client = test_client();
+    run_api_with_data_url_image(&client, &model)
+        .await
+        .unwrap_or_else(|err| panic!("image input test failed for {model:?}: {err:?}"));
 }
 
 #[rstest]

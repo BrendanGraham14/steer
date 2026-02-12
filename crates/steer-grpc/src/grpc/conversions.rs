@@ -1776,9 +1776,11 @@ fn core_image_to_proto(image: &steer_core::app::conversation::ImageContent) -> p
 fn proto_image_to_core(image: proto::ImageContent) -> steer_core::app::conversation::ImageContent {
     use steer_core::app::conversation::{ImageContent, ImageSource};
 
-    let source = image
-        .source
-        .map(|source| match source {
+    let source = image.source.map_or(
+        ImageSource::DataUrl {
+            data_url: String::new(),
+        },
+        |source| match source {
             proto::image_content::Source::SessionFile(file) => ImageSource::SessionFile {
                 relative_path: file.relative_path,
             },
@@ -1786,10 +1788,8 @@ fn proto_image_to_core(image: proto::ImageContent) -> steer_core::app::conversat
                 data_url: data_url.data_url,
             },
             proto::image_content::Source::Url(url) => ImageSource::Url { url: url.url },
-        })
-        .unwrap_or(ImageSource::DataUrl {
-            data_url: String::new(),
-        });
+        },
+    );
 
     ImageContent {
         mime_type: image.mime_type,

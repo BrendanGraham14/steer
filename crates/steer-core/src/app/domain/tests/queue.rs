@@ -281,12 +281,13 @@ mod tests {
 
         let queued_op = OpId::new();
         let queued_message_id = MessageId::from_string("queued_msg");
-        let text = NonEmptyString::new("Queued".to_string()).expect("non-empty");
         let _ = reduce_ok(
             &mut state,
             Action::UserInput {
                 session_id,
-                text,
+                content: vec![UserContent::Text {
+                    text: "Queued".to_string(),
+                }],
                 op_id: queued_op,
                 message_id: queued_message_id.clone(),
                 model,

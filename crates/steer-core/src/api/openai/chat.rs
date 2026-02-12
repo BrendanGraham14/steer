@@ -257,7 +257,9 @@ impl Client {
                     content: if content_parts.len() == 1 {
                         match &content_parts[0] {
                             OpenAIContentPart::Text { text } => OpenAIContent::String(text.clone()),
-                            _ => OpenAIContent::Array(content_parts),
+                            OpenAIContentPart::ImageUrl { .. } => {
+                                OpenAIContent::Array(content_parts)
+                            }
                         }
                     } else {
                         OpenAIContent::Array(content_parts)

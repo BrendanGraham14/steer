@@ -835,18 +835,19 @@ impl Tui {
                     }
 
                     if self.input_mode == InputMode::Setup {
-                        if let Some(setup_state) = &mut self.setup_state {
-                            if let crate::tui::state::SetupStep::Authentication(_) =
-                                &setup_state.current_step
-                            {
-                                setup_state.auth_input.push_str(&data);
-                                debug!(
-                                    target:"tui.run",
-                                    "Pasted {} chars in Setup mode",
-                                    data.len()
-                                );
-                                needs_redraw = true;
-                            }
+                        if let Some(setup_state) = &mut self.setup_state
+                            && matches!(
+                                &setup_state.current_step,
+                                crate::tui::state::SetupStep::Authentication(_)
+                            )
+                        {
+                            setup_state.auth_input.push_str(&data);
+                            debug!(
+                                target:"tui.run",
+                                "Pasted {} chars in Setup mode",
+                                data.len()
+                            );
+                            needs_redraw = true;
                         }
                         continue;
                     }

@@ -210,15 +210,15 @@ impl SqliteEventStore {
 
         match event {
             SessionEvent::UserMessageAdded { message } => {
-                let message = self.persist_message_images(session_id, message, &session_root)?;
+                let message = Self::persist_message_images(session_id, message, &session_root)?;
                 Ok(SessionEvent::UserMessageAdded { message })
             }
             SessionEvent::MessageUpdated { message } => {
-                let message = self.persist_message_images(session_id, message, &session_root)?;
+                let message = Self::persist_message_images(session_id, message, &session_root)?;
                 Ok(SessionEvent::MessageUpdated { message })
             }
             SessionEvent::AssistantMessageAdded { message, model } => {
-                let message = self.persist_message_images(session_id, message, &session_root)?;
+                let message = Self::persist_message_images(session_id, message, &session_root)?;
                 Ok(SessionEvent::AssistantMessageAdded {
                     message,
                     model: model.clone(),
@@ -229,7 +229,6 @@ impl SqliteEventStore {
     }
 
     fn persist_message_images(
-        &self,
         session_id: SessionId,
         message: &Message,
         session_root: &Path,
@@ -241,8 +240,12 @@ impl SqliteEventStore {
                 for block in content {
                     match block {
                         UserContent::Image { image } => {
-                            let persisted =
-                                self.persist_image_content(session_id, &message.id, image, session_root)?;
+                            let persisted = Self::persist_image_content(
+                                session_id,
+                                &message.id,
+                                image,
+                                session_root,
+                            )?;
                             changed |= persisted != *image;
                             updated.push(UserContent::Image { image: persisted });
                         }
@@ -260,8 +263,12 @@ impl SqliteEventStore {
                 for block in content {
                     match block {
                         AssistantContent::Image { image } => {
-                            let persisted =
-                                self.persist_image_content(session_id, &message.id, image, session_root)?;
+                            let persisted = Self::persist_image_content(
+                                session_id,
+                                &message.id,
+                                image,
+                                session_root,
+                            )?;
                             changed |= persisted != *image;
                             updated.push(AssistantContent::Image { image: persisted });
                         }
@@ -285,7 +292,6 @@ impl SqliteEventStore {
     }
 
     fn persist_image_content(
-        &self,
         session_id: SessionId,
         message_id: &str,
         image: &ImageContent,
@@ -862,8 +868,10 @@ fn decode_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
     let mime_type = segments
         .next()
         .filter(|value| !value.trim().is_empty())
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "application/octet-stream".to_string());
+        .map_or_else(
+            || "application/octet-stream".to_string(),
+            |value| value.to_string(),
+        );
 
     let mut is_base64 = false;
     for segment in segments {
