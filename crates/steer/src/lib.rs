@@ -3,6 +3,7 @@ pub mod commands;
 pub mod error;
 pub mod model_resolver;
 pub mod session_config;
+pub mod telemetry;
 
 pub use steer_core::{api, app, config, runners, session, tools, utils, workspace};
 

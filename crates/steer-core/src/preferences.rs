@@ -29,6 +29,9 @@ pub struct Preferences {
 
     #[serde(default)]
     pub tools: ToolPreferences,
+
+    #[serde(default)]
+    pub telemetry: TelemetryPreferences,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -53,10 +56,30 @@ pub struct ToolPreferences {
     pub pre_approved: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryPreferences {
+    #[serde(default = "default_telemetry_enabled")]
+    pub enabled: bool,
+    pub endpoint: Option<String>,
+}
+
+fn default_telemetry_enabled() -> bool {
+    true
+}
+
 impl Default for NotificationPreferences {
     fn default() -> Self {
         Self {
             transport: NotificationTransport::Auto,
+        }
+    }
+}
+
+impl Default for TelemetryPreferences {
+    fn default() -> Self {
+        Self {
+            enabled: default_telemetry_enabled(),
+            endpoint: None,
         }
     }
 }
@@ -108,5 +131,17 @@ impl Preferences {
         std::fs::write(&path, contents)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_preferences_default_to_enabled_and_no_endpoint() {
+        let telemetry = TelemetryPreferences::default();
+        assert!(telemetry.enabled);
+        assert_eq!(telemetry.endpoint, None);
     }
 }

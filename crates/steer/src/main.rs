@@ -10,7 +10,9 @@ use steer::commands::{
 };
 use steer::model_resolver::resolve_model_selection;
 use steer::session_config::{SessionConfigLoader, SessionConfigOverrides};
+use steer::telemetry::{StartupCommand as TelemetryStartupCommand, StartupTelemetryContext};
 use tracing::{debug, warn};
+use uuid::Uuid;
 
 /// Parameters for running the TUI
 struct TuiParams {
@@ -67,6 +69,17 @@ async fn main() -> Result<()> {
     let cli_model = cli.model.clone();
     let preference_model = preferences.default_model.clone();
     let preferred_model = cli_model.clone().or(preference_model.clone());
+
+    let telemetry_context = StartupTelemetryContext {
+        command: map_startup_command(cli.command.as_ref()),
+        session_id: parse_session_uuid(cli.session.as_deref()),
+        provider: provider_from_model(preferred_model.as_deref()),
+        model: preferred_model.clone(),
+    };
+    let telemetry_preferences = preferences.telemetry.clone();
+    tokio::spawn(async move {
+        steer::telemetry::emit_startup_event(telemetry_context, telemetry_preferences).await;
+    });
 
     // Set up signal handlers for terminal cleanup if using TUI
     #[cfg(feature = "ui")]
@@ -531,6 +544,54 @@ async fn setup_signal_handlers() {
     }
 }
 
+fn map_startup_command(command: Option<&Commands>) -> TelemetryStartupCommand {
+    match command {
+        None | Some(Commands::Tui { .. }) => TelemetryStartupCommand::Tui,
+        Some(Commands::Headless { .. }) => TelemetryStartupCommand::Headless,
+        Some(Commands::Server { .. }) => TelemetryStartupCommand::Server,
+        Some(
+            Commands::Preferences { .. }
+            | Commands::Session { .. }
+            | Commands::Workspace { .. },
+        ) => TelemetryStartupCommand::Unknown,
+    }
+}
+
+fn parse_session_uuid(session: Option<&str>) -> Option<Uuid> {
+    session.and_then(|value| Uuid::parse_str(value).ok())
+}
+
+fn provider_from_model(model: Option<&str>) -> Option<String> {
+    let model = model?.trim();
+    if model.is_empty() {
+        return None;
+    }
+
+    if let Some((provider, _)) = model.split_once('/') {
+        let provider = provider.trim().to_ascii_lowercase();
+        if !provider.is_empty() {
+            return Some(provider);
+        }
+    }
+
+    let lower = model.to_ascii_lowercase();
+    if lower.starts_with("claude") {
+        Some("anthropic".to_string())
+    } else if lower.starts_with("gpt")
+        || lower.starts_with("o1")
+        || lower.starts_with("o3")
+        || lower.starts_with("o4")
+    {
+        Some("openai".to_string())
+    } else if lower.starts_with("gemini") {
+        Some("gemini".to_string())
+    } else if lower.starts_with("grok") {
+        Some("xai".to_string())
+    } else {
+        None
+    }
+}
+
 /// Normalize catalog paths: canonicalize when possible and warn on missing or invalid paths
 fn normalize_catalogs(paths: &[PathBuf]) -> Vec<String> {
     let mut out = Vec::with_capacity(paths.len());
@@ -599,5 +660,37 @@ mod tests {
         let res = resolve_model_locally("opus", &[]);
         // Should resolve using embedded + discovered catalogs
         assert!(res.is_some());
+    }
+
+    #[test]
+    fn map_startup_command_defaults_to_tui() {
+        assert!(matches!(
+            map_startup_command(None),
+            TelemetryStartupCommand::Tui
+        ));
+    }
+
+    #[test]
+    fn provider_from_model_extracts_custom_provider_prefix() {
+        let provider = provider_from_model(Some("openai/custom-model"));
+        assert_eq!(provider.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn provider_from_model_maps_builtin_aliases() {
+        assert_eq!(provider_from_model(Some("opus")).as_deref(), None);
+        assert_eq!(
+            provider_from_model(Some("claude-sonnet-4")).as_deref(),
+            Some("anthropic")
+        );
+        assert_eq!(
+            provider_from_model(Some("gpt-5")).as_deref(),
+            Some("openai")
+        );
+        assert_eq!(
+            provider_from_model(Some("gemini-2.5-pro")).as_deref(),
+            Some("gemini")
+        );
+        assert_eq!(provider_from_model(Some("grok-4")).as_deref(), Some("xai"));
     }
 }

@@ -101,14 +101,12 @@ comfy-table = "7.1.4"
 rpassword = "7.4.0"
 zeroize = "1.8.1"
 
-[build-dependencies]
+[dev-dependencies]
+tempfile = "3.19.1"
 
 [features]
 default = ["ui"]
 ui = ["steer-tui"]
-
-[dev-dependencies]
-tempfile = "3.19.1"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/steer-v{ version }/steer-{ target }.tar.xz"
