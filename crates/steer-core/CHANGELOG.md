@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.10.0...steer-core-v0.10.1) - 2026-02-12
+
+### Fixed
+
+- *(dispatch-agent)* clarify sub-agent workspace context in prompts
+
 ## [0.10.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.9.0...steer-core-v0.10.0) - 2026-02-12
 
 ### Added
