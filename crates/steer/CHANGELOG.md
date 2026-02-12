@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.8.2...steer-v0.9.0) - 2026-02-12
+
+### Added
+
+- *(notifications)* centralize focus-aware OSC9 notifications
+- add gpt-5.3-codex and opus-4.6
+- add create session params dto
+- reject system_prompt in session config
+- add server default model rpc and model resolution integration tests
+- add dispatch agent approval patterns
+- tweak tui styling
+- *(workspace)* add repo tracking and repo APIs
+- *(workspace)* add status commands in cli and tui
+- *(agent)* support new workspaces in dispatch
+- *(workspace)* add orchestration managers and lineage
+- *(grpc)* add workspace/environment management RPCs
+- *(auth)* codex oauth flow wiring
+- allow remote session create
+- add session default model support
+- redesign tool approval policy to struct-based system
+- *(tools)* migrate all tools to static tool system with ModelCaller
+- *(grpc)* integrate RuntimeAgentService into service_host and local_server
+
+### Fixed
+
+- lints
+- resolve lints
+- add resume_session to AgentClient for session resumption
+- resolve session model via catalogs
+
+### Other
+
+- just fix
+- decouple tui from core
+- cover planner and dispatch approvals
+- just fix
+- *(workspace)* move tool ops into workspace
+- make ModelId a struct
+- *(workspace)* remove soft-delete support
+- *(workspace)* allow overriding local workspace root
+- create session via local grpc
+- drop service host default model
+- drop session create model flag
+- remove unused runtime paths
+- *(proto,grpc,core)* drop stream delta is_first and make models explicit
+- *(core)* remove legacy session/event infrastructure
+- *(tools)* remove LocalBackend in favor of static tool system
+- *(core)* add AgentInterpreter with EventStore dependency and parent_session_id support
+- migrate OneShotRunner to RuntimeService architecture
+- migrate CLI session commands to new domain types and delete legacy gRPC code
+
 ## [0.8.2](https://github.com/BrendanGraham14/steer/compare/steer-v0.8.1...steer-v0.8.2) - 2025-12-02
 
 ### Fixed

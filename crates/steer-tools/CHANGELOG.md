@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-tools-v0.8.2...steer-tools-v0.9.0) - 2026-02-12
+
+### Added
+
+- persist session todos in database
+- *(tools)* enforce tool error mapping
+- *(tools)* add ToolSpec contract and display names
+- *(tools)* align contracts and typed execution errors
+- *(agents)* add dispatch session reuse
+- redesign tool approval policy to struct-based system
+- *(tools)* migrate all tools to static tool system with ModelCaller
+
+### Fixed
+
+- lints
+- resolve lints
+- *(serialization)* avoid tool error tag collisions
+- internally tag dispatch agent workspace target
+- align tool schemas with OpenAI format
+- preserve full input schemas
+- *(tools)* restore ToolResult conversions
+- *(dispatch_agent)* align workspace target plumbing
+- *(dispatch_agent)* reconcile formatter/executor output shape
+
+### Other
+
+- just fix
+- make dispatch_agent params partialeq
+- rename dispatch agent tags
+- cover dispatch_agent schema
+- rename todo read / write tools to snake_case
+- just fix
+- *(workspace)* move tool ops into workspace
+
 ## [0.1.8](https://github.com/BrendanGraham14/steer/compare/steer-tools-v0.1.7...steer-tools-v0.1.8) - 2025-07-24
 
 ### Added

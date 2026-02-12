@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-workspace-client-v0.8.2...steer-workspace-client-v0.9.0) - 2026-02-12
+
+### Added
+
+- *(workspace)* add VCS info and jj support
+- redesign tool approval policy to struct-based system
+
+### Fixed
+
+- lints
+
+### Other
+
+- *(workspace)* move tool ops into workspace
+- prefer agents.md over claude.md
+
 ## [0.6.0](https://github.com/BrendanGraham14/steer/compare/steer-workspace-client-v0.5.0...steer-workspace-client-v0.6.0) - 2025-08-19
 
 ### Other

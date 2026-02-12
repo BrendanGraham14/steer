@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-grpc-v0.8.2...steer-grpc-v0.9.0) - 2026-02-12
+
+### Added
+
+- *(notifications)* centralize focus-aware OSC9 notifications
+- *(tui)* show agent in status bar
+- *(queue)* add durable queued work and UI preview
+- add create session params dto
+- add policy overrides to grpc
+- add server default model rpc and model resolution integration tests
+- add dispatch agent approval patterns
+- add primary agent mode switching
+- persist session config updates
+- add allow tool approval behavior
+- *(core)* introduce typed system context
+- *(workspace)* add git worktree orchestration
+- *(tools)* add ToolSpec contract and display names
+- *(tools)* align contracts and typed execution errors
+- *(auth)* integrate auth plugins
+- *(auth)* add grpc auth flow endpoints
+- *(agents)* add dispatch session reuse
+- *(workspace)* add repo tracking and repo APIs
+- *(workspace)* add status commands in cli and tui
+- *(agent)* support new workspaces in dispatch
+- *(workspace)* add orchestration managers and lineage
+- *(grpc)* add workspace/environment management RPCs
+- *(auth)* codex oauth flow wiring
+- move last_event_sequence to GetSession header for early subscription
+- add session default model support
+- redesign tool approval policy to struct-based system
+- implement MCP server lifecycle effects
+- split message added events by role
+- *(core,proto,grpc)* add compact result event and drop model_changed
+- *(steer-core)* implement slash command reducer and add compaction types
+- *(steer-tui)* replace /clear with /new command for session reset
+- *(streaming)* implement true SSE streaming for Anthropic provider
+- *(core)* implement command handlers, MCP lifecycle, and remove legacy modules
+- *(tools)* migrate all tools to static tool system with ModelCaller
+- *(grpc)* add client_api module with ClientEvent and ClientCommand
+- *(grpc)* integrate RuntimeAgentService into service_host and local_server
+- *(core)* add SessionCatalog and SessionCreated event for session metadata
+
+### Fixed
+
+- make queued input editable again on cancel
+- lints
+- *(compaction)* persist results and simplify UI output
+- resolve lints
+- clean grpc error notices and reducer validation
+- preserve full input schemas
+- ensure event resubscribe after session switch
+- roundtrip gemini thought signatures
+- *(dispatch_agent)* align workspace target plumbing
+- *(dispatch_agent)* reconcile formatter/executor output shape
+- add resume_session to AgentClient for session resumption
+- order stream deltas with events
+- resolve clippy warnings
+- lints, tests
+- restore typed bash command flow
+- stabilize deltas and drop legacy content
+- *(rpc)* resolve tool approvals and simplify cancel
+- *(tui,grpc)* refresh delta rendering and add compaction e2e test
+- *(runtime/grpc)* align compact-result action and conversion flow
+
+### Other
+
+- just fix
+- decouple tui from core
+- add client api auth types and migrate tui
+- cover planner and dispatch approvals
+- just fix
+- *(steer-workspace)* pass env id in list workspaces
+- make ModelId a struct
+- *(workspace)* remove soft-delete support
+- *(workspace)* allow overriding local workspace root
+- drop service host default model
+- remove unused attachments field from SendMessageRequest
+- rename conversation -> message_graph
+- remove unused runtime paths
+- update model catalog
+- *(proto,grpc,core)* drop stream delta is_first and make models explicit
+- *(core)* remove legacy session/event infrastructure
+- *(tools)* remove LocalBackend in favor of static tool system
+- *(core)* add AgentInterpreter with EventStore dependency and parent_session_id support
+- *(grpc)* restrict conversions module to pub(crate)
+- remove dead code and unused fields
+- migrate CLI session commands to new domain types and delete legacy gRPC code
+- *(core)* remove global OnceCell for tool approval channel
+- *(grpc)* restrict conversion functions to pub(crate)
+
 ## [0.5.0](https://github.com/BrendanGraham14/steer/compare/steer-grpc-v0.4.0...steer-grpc-v0.5.0) - 2025-08-19
 
 ### Added

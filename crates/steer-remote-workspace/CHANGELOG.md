@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-remote-workspace-v0.8.2...steer-remote-workspace-v0.9.0) - 2026-02-12
+
+### Added
+
+- *(workspace)* add VCS info and jj support
+- redesign tool approval policy to struct-based system
+
+### Fixed
+
+- resolve lints
+
+### Other
+
+- just fix
+- *(workspace)* move tool ops into workspace
+- prefer agents.md over claude.md
+- *(grpc)* restrict conversions module to pub(crate)
+
 ## [0.6.0](https://github.com/BrendanGraham14/steer/compare/steer-remote-workspace-v0.5.0...steer-remote-workspace-v0.6.0) - 2025-08-19
 
 ### Other

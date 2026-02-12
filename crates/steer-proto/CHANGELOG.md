@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.8.2...steer-proto-v0.9.0) - 2026-02-12
+
+### Added
+
+- *(queue)* add durable queued work and UI preview
+- add create session params dto
+- add policy overrides to grpc
+- add server default model rpc and model resolution integration tests
+- add dispatch agent approval patterns
+- add primary agent mode switching
+- add allow tool approval behavior
+- *(workspace)* add git worktree orchestration
+- *(tools)* add ToolSpec contract and display names
+- *(auth)* add grpc auth flow endpoints
+- *(agents)* add dispatch session reuse
+- *(workspace)* add repo tracking and repo APIs
+- *(workspace)* add orchestration managers and lineage
+- *(grpc)* add workspace/environment management RPCs
+- *(workspace)* add VCS info and jj support
+- move last_event_sequence to GetSession header for early subscription
+- add session default model support
+- redesign tool approval policy to struct-based system
+- implement MCP server lifecycle effects
+- split message added events by role
+- *(core,proto,grpc)* add compact result event and drop model_changed
+- *(steer-core)* implement slash command reducer and add compaction types
+- *(steer-tui)* replace /clear with /new command for session reset
+- *(streaming)* implement true SSE streaming for Anthropic provider
+- *(core)* implement command handlers, MCP lifecycle, and remove legacy modules
+
+### Fixed
+
+- make queued input editable again on cancel
+- resolve lints
+- *(dispatch_agent)* align workspace target plumbing
+- *(dispatch_agent)* reconcile formatter/executor output shape
+- restore typed bash command flow
+- stabilize deltas and drop legacy content
+- *(rpc)* resolve tool approvals and simplify cancel
+- *(runtime/grpc)* align compact-result action and conversion flow
+
+### Other
+
+- remove expects/unwraps from build.rs
+- clippy configs
+- cover planner and dispatch approvals
+- *(workspace)* move tool ops into workspace
+- *(workspace)* remove soft-delete support
+- prefer agents.md over claude.md
+- remove unused attachments field from SendMessageRequest
+- *(proto)* drop cancel operation_id field
+- *(proto,grpc,core)* drop stream delta is_first and make models explicit
+
 ## [0.6.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.5.0...steer-proto-v0.6.0) - 2025-08-19
 
 ### Other
