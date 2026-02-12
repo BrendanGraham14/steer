@@ -609,6 +609,7 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: self.response.clone(),
                 }],
+                usage: None,
             })
         }
     }
@@ -723,12 +724,14 @@ mod tests {
                         tool_call: self.tool_call.clone(),
                         thought_signature: None,
                     }],
+                    usage: None,
                 }
             } else {
                 CompletionResponse {
                     content: vec![AssistantContent::Text {
                         text: self.final_text.clone(),
                     }],
+                    usage: None,
                 }
             };
             *count += 1;

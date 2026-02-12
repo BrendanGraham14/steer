@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 use crate::api::error::{ApiError, SseParseError, StreamError};
-use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
+use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk, TokenUsage};
 use crate::api::sse::parse_sse_stream;
 use crate::app::SystemContext;
 use crate::app::conversation::{
@@ -211,7 +211,10 @@ impl Client {
         })?;
 
         if let Some(choice) = parsed.choices.first() {
-            Ok(Self::convert_response_message(&choice.message))
+            Ok(Self::convert_response_message(
+                &choice.message,
+                parsed.usage.as_ref(),
+            ))
         } else {
             Err(ApiError::ResponseParsingError {
                 provider: super::PROVIDER_NAME.to_string(),
@@ -336,7 +339,14 @@ impl Client {
         }
     }
 
-    fn convert_response_message(message: &OpenAIResponseMessage) -> CompletionResponse {
+    fn map_usage(usage: &OpenAIUsage) -> TokenUsage {
+        TokenUsage::new(usage.prompt, usage.completion, usage.total)
+    }
+
+    fn convert_response_message(
+        message: &OpenAIResponseMessage,
+        usage: Option<&OpenAIUsage>,
+    ) -> CompletionResponse {
         let mut content = Vec::new();
 
         if let Some(msg_content) = &message.content {
@@ -394,7 +404,10 @@ impl Client {
             }
         }
 
-        CompletionResponse { content }
+        CompletionResponse {
+            content,
+            usage: usage.map(Self::map_usage),
+        }
     }
 
     pub(super) async fn stream_complete(
@@ -477,7 +490,9 @@ impl Client {
             response_format: None,
             reasoning_effort,
             audio: None,
-            stream_options: None,
+            stream_options: Some(StreamOptions {
+                include_usage: Some(true),
+            }),
             service_tier: None,
             user: None,
         };
@@ -530,6 +545,7 @@ impl Client {
             let mut tool_calls_started: std::collections::HashSet<usize> =
                 std::collections::HashSet::new();
             let mut tool_call_positions: HashMap<usize, usize> = HashMap::new();
+            let mut latest_usage: Option<TokenUsage> = None;
             loop {
                 if token.is_cancelled() {
                     yield StreamChunk::Error(StreamError::Cancelled);
@@ -591,7 +607,10 @@ impl Client {
                         }
                     }
 
-                    yield StreamChunk::MessageComplete(CompletionResponse { content: final_content });
+                    yield StreamChunk::MessageComplete(CompletionResponse {
+                        content: final_content,
+                        usage: latest_usage,
+                    });
                     break;
                 }
 
@@ -602,6 +621,10 @@ impl Client {
                         continue;
                     }
                 };
+
+                if let Some(usage) = chunk.usage.as_ref() {
+                    latest_usage = Some(Self::map_usage(usage));
+                }
 
                 if let Some(choice) = chunk.choices.first() {
                     if let Some(text_delta) = &choice.delta.content {
@@ -885,7 +908,6 @@ struct OpenAIResponseMessage {
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
 struct OpenAIUsage {
     #[serde(rename = "prompt_tokens")]
     prompt: u32,
@@ -902,6 +924,8 @@ struct OpenAIStreamChunk {
     #[expect(dead_code)]
     object: String,
     choices: Vec<OpenAIStreamChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<OpenAIUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1024,6 +1048,69 @@ mod tests {
             assert!(
                 matches!(&response.content[1], AssistantContent::Text { text } if text == "The answer is 42")
             );
+        } else {
+            panic!("Expected MessageComplete");
+        }
+    }
+
+    #[test]
+    fn test_convert_response_message_maps_usage() {
+        let message = OpenAIResponseMessage {
+            role: "assistant".to_string(),
+            content: Some(OpenAIContent::String("Hello".to_string())),
+            tool_calls: None,
+            reasoning_content: None,
+        };
+        let usage = OpenAIUsage {
+            prompt: 12,
+            completion: 8,
+            total: 20,
+        };
+
+        let response = Client::convert_response_message(&message, Some(&usage));
+
+        assert_eq!(response.usage, Some(TokenUsage::new(12, 8, 20)));
+        assert_eq!(response.content.len(), 1);
+        assert!(matches!(
+            response.content.first(),
+            Some(AssistantContent::Text { text }) if text == "Hello"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_convert_openai_stream_captures_final_usage() {
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: "[DONE]".to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_openai_stream(sse_stream, token));
+
+        let text_delta = stream.next().await.unwrap();
+        assert!(matches!(text_delta, StreamChunk::TextDelta(ref t) if t == "Hello"));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.usage, Some(TokenUsage::new(11, 7, 18)));
+            assert!(matches!(
+                response.content.first(),
+                Some(AssistantContent::Text { text }) if text == "Hello"
+            ));
         } else {
             panic!("Expected MessageComplete");
         }

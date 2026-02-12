@@ -18,7 +18,7 @@ use crate::model_registry::ModelRegistry;
 pub use error::{ApiError, SseParseError, StreamError};
 pub use factory::{create_provider, create_provider_with_directive};
 use futures::StreamExt;
-pub use provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
+pub use provider::{CompletionResponse, CompletionStream, Provider, StreamChunk, TokenUsage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -83,6 +83,12 @@ impl Client {
             provider_registry,
             model_registry,
         }
+    }
+
+    pub fn model_context_window_tokens(&self, model_id: &ModelId) -> Option<u32> {
+        self.model_registry
+            .get(model_id)
+            .and_then(|model| model.context_window_tokens)
     }
 
     #[cfg(any(test, feature = "test-utils"))]

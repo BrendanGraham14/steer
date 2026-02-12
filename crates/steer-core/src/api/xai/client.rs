@@ -7,7 +7,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
 use crate::api::error::{ApiError, SseParseError, StreamError};
-use crate::api::provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
+use crate::api::provider::{
+    CompletionResponse, CompletionStream, Provider, StreamChunk, TokenUsage,
+};
 use crate::api::sse::parse_sse_stream;
 use crate::api::util::normalize_chat_url;
 use crate::app::SystemContext;
@@ -307,6 +309,8 @@ struct XAIStreamChunk {
     #[expect(dead_code)]
     id: String,
     choices: Vec<XAIStreamChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<XAIUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -564,6 +568,75 @@ impl XAIClient {
     }
 }
 
+fn saturating_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn map_xai_usage(usage: &XAIUsage) -> TokenUsage {
+    TokenUsage::new(
+        saturating_u32(usage.prompt_tokens),
+        saturating_u32(usage.completion_tokens),
+        saturating_u32(usage.total_tokens),
+    )
+}
+
+fn convert_xai_completion_response(
+    xai_response: XAICompletionResponse,
+) -> Result<CompletionResponse, ApiError> {
+    let usage = xai_response.usage.as_ref().map(map_xai_usage);
+
+    let Some(choice) = xai_response.choices.first() else {
+        return Err(ApiError::NoChoices {
+            provider: "xai".to_string(),
+        });
+    };
+
+    let mut content_blocks = Vec::new();
+
+    // Add reasoning content (thinking) first if present
+    if let Some(reasoning) = &choice.message.reasoning_content
+        && !reasoning.trim().is_empty()
+    {
+        content_blocks.push(AssistantContent::Thought {
+            thought: crate::app::conversation::ThoughtContent::Simple {
+                text: reasoning.clone(),
+            },
+        });
+    }
+
+    // Add regular content
+    if let Some(content) = &choice.message.content
+        && !content.trim().is_empty()
+    {
+        content_blocks.push(AssistantContent::Text {
+            text: content.clone(),
+        });
+    }
+
+    // Add tool calls
+    if let Some(tool_calls) = &choice.message.tool_calls {
+        for tool_call in tool_calls {
+            // Parse the arguments JSON string
+            let parameters = serde_json::from_str(&tool_call.function.arguments)
+                .unwrap_or(serde_json::Value::Null);
+
+            content_blocks.push(AssistantContent::ToolCall {
+                tool_call: steer_tools::ToolCall {
+                    id: tool_call.id.clone(),
+                    name: tool_call.function.name.clone(),
+                    parameters,
+                },
+                thought_signature: None,
+            });
+        }
+    }
+
+    Ok(CompletionResponse {
+        content: content_blocks,
+        usage,
+    })
+}
+
 #[async_trait]
 impl Provider for XAIClient {
     fn name(&self) -> &'static str {
@@ -698,56 +771,12 @@ impl Provider for XAIClient {
                 }
             })?;
 
-        // Convert xAI response to our CompletionResponse
-        if let Some(choice) = xai_response.choices.first() {
-            let mut content_blocks = Vec::new();
-
-            // Add reasoning content (thinking) first if present
-            if let Some(reasoning) = &choice.message.reasoning_content
-                && !reasoning.trim().is_empty()
-            {
-                content_blocks.push(AssistantContent::Thought {
-                    thought: crate::app::conversation::ThoughtContent::Simple {
-                        text: reasoning.clone(),
-                    },
-                });
-            }
-
-            // Add regular content
-            if let Some(content) = &choice.message.content
-                && !content.trim().is_empty()
-            {
-                content_blocks.push(AssistantContent::Text {
-                    text: content.clone(),
-                });
-            }
-
-            // Add tool calls
-            if let Some(tool_calls) = &choice.message.tool_calls {
-                for tool_call in tool_calls {
-                    // Parse the arguments JSON string
-                    let parameters = serde_json::from_str(&tool_call.function.arguments)
-                        .unwrap_or(serde_json::Value::Null);
-
-                    content_blocks.push(AssistantContent::ToolCall {
-                        tool_call: steer_tools::ToolCall {
-                            id: tool_call.id.clone(),
-                            name: tool_call.function.name.clone(),
-                            parameters,
-                        },
-                        thought_signature: None,
-                    });
-                }
-            }
-
-            Ok(crate::api::provider::CompletionResponse {
-                content: content_blocks,
-            })
-        } else {
-            Err(ApiError::NoChoices {
+        convert_xai_completion_response(xai_response).map_err(|err| match err {
+            ApiError::NoChoices { .. } => ApiError::NoChoices {
                 provider: self.name().to_string(),
-            })
-        }
+            },
+            other => other,
+        })
     }
 
     async fn stream_complete(
@@ -799,7 +828,9 @@ impl Provider for XAIClient {
             seed: None,
             stop: None,
             stream: Some(true),
-            stream_options: None,
+            stream_options: Some(StreamOptions {
+                include_usage: Some(true),
+            }),
             temperature: call_options
                 .as_ref()
                 .and_then(|o| o.temperature)
@@ -880,6 +911,7 @@ impl XAIClient {
             let mut tool_calls_started: std::collections::HashSet<usize> =
                 std::collections::HashSet::new();
             let mut tool_call_positions: HashMap<usize, usize> = HashMap::new();
+            let mut latest_usage: Option<TokenUsage> = None;
             loop {
                 if token.is_cancelled() {
                     yield StreamChunk::Error(StreamError::Cancelled);
@@ -941,7 +973,10 @@ impl XAIClient {
                         }
                     }
 
-                    yield StreamChunk::MessageComplete(CompletionResponse { content: final_content });
+                    yield StreamChunk::MessageComplete(CompletionResponse {
+                        content: final_content,
+                        usage: latest_usage,
+                    });
                     break;
                 }
 
@@ -952,6 +987,10 @@ impl XAIClient {
                         continue;
                     }
                 };
+
+                if let Some(usage) = chunk.usage.as_ref() {
+                    latest_usage = Some(map_xai_usage(usage));
+                }
 
                 if let Some(choice) = chunk.choices.first() {
                     if let Some(text_delta) = &choice.delta.content {
@@ -1064,7 +1103,15 @@ impl XAIClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::conversation::{ImageContent, ImageSource, Message, MessageData, UserContent};
+    use crate::api::provider::StreamChunk;
+    use crate::api::sse::SseEvent;
+    use crate::app::conversation::{
+        AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
+    };
+    use futures::StreamExt;
+    use futures::stream;
+    use std::pin::pin;
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn test_convert_messages_includes_data_url_image_part() {
@@ -1151,6 +1198,99 @@ mod tests {
                 assert!(details.contains("session file"));
             }
             other => panic!("Expected UnsupportedFeature, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_map_xai_usage() {
+        let usage = XAIUsage {
+            prompt_tokens: 15,
+            completion_tokens: 9,
+            total_tokens: 24,
+            num_sources_used: None,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+        };
+
+        assert_eq!(map_xai_usage(&usage), TokenUsage::new(15, 9, 24));
+    }
+
+    #[test]
+    fn test_non_stream_completion_maps_usage() {
+        let usage = XAIUsage {
+            prompt_tokens: 6,
+            completion_tokens: 4,
+            total_tokens: 10,
+            num_sources_used: None,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+        };
+        let choice = Choice {
+            index: 0,
+            message: AssistantMessage {
+                content: Some("hello".to_string()),
+                tool_calls: None,
+                reasoning_content: None,
+            },
+            finish_reason: Some("stop".to_string()),
+        };
+        let response = XAICompletionResponse {
+            id: "resp_1".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1,
+            model: "grok-test".to_string(),
+            choices: vec![choice],
+            usage: Some(usage),
+            system_fingerprint: None,
+            citations: None,
+            debug_output: None,
+        };
+
+        let converted = convert_xai_completion_response(response).expect("response should map");
+
+        assert_eq!(converted.usage, Some(TokenUsage::new(6, 4, 10)));
+        assert!(matches!(
+            converted.content.first(),
+            Some(AssistantContent::Text { text }) if text == "hello"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_convert_xai_stream_captures_final_usage() {
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: "[DONE]".to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(XAIClient::convert_xai_stream(sse_stream, token));
+
+        let first_delta = stream.next().await.unwrap();
+        assert!(matches!(first_delta, StreamChunk::TextDelta(ref t) if t == "Hello"));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.usage, Some(TokenUsage::new(12, 5, 17)));
+            assert!(matches!(
+                response.content.first(),
+                Some(AssistantContent::Text { text }) if text == "Hello"
+            ));
+        } else {
+            panic!("Expected MessageComplete");
         }
     }
 }

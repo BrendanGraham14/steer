@@ -207,8 +207,9 @@ impl AgentInterpreter {
                     let timestamp = current_timestamp();
 
                     let input = match result {
-                        Ok(content) => {
-                            let tool_calls: Vec<_> = content
+                        Ok(response) => {
+                            let tool_calls: Vec<_> = response
+                                .content
                                 .iter()
                                 .filter_map(|c| {
                                     if let crate::app::conversation::AssistantContent::ToolCall {
@@ -224,7 +225,7 @@ impl AgentInterpreter {
                                 .collect();
 
                             AgentInput::ModelResponse {
-                                content,
+                                content: response.content,
                                 tool_calls,
                                 message_id,
                                 timestamp,
@@ -474,6 +475,7 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "ok".to_string(),
                 }],
+                usage: None,
             })
         }
     }

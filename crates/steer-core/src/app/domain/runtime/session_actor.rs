@@ -817,6 +817,7 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "summary".to_string(),
                 }],
+                usage: None,
             })
         }
     }

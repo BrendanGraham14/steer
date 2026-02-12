@@ -7,7 +7,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::api::error::{ApiError, SseParseError, StreamError};
-use crate::api::provider::{CompletionResponse, CompletionStream, Provider, StreamChunk};
+use crate::api::provider::{
+    CompletionResponse, CompletionStream, Provider, StreamChunk, TokenUsage,
+};
 use crate::api::sse::parse_sse_stream;
 use crate::app::SystemContext;
 use crate::app::conversation::{
@@ -381,6 +383,34 @@ struct GeminiExecutableCode {
 struct GeminiContentResponse {
     role: String,
     parts: Vec<GeminiResponsePart>,
+}
+
+fn map_gemini_usage(usage: &GeminiUsageMetadata) -> Option<TokenUsage> {
+    let prompt = usage.prompt.map(i64::from);
+    let candidates = usage.candidates.map(i64::from);
+    let total = usage.total.map(i64::from);
+
+    let input_tokens = prompt.or_else(|| match (total, candidates) {
+        (Some(total_tokens), Some(output_tokens)) if total_tokens >= output_tokens => {
+            Some(total_tokens - output_tokens)
+        }
+        _ => None,
+    })?;
+
+    let output_tokens = candidates.or_else(|| match (total, prompt) {
+        (Some(total_tokens), Some(input_tokens)) if total_tokens >= input_tokens => {
+            Some(total_tokens - input_tokens)
+        }
+        _ => None,
+    })?;
+
+    let total_tokens = total.or_else(|| input_tokens.checked_add(output_tokens))?;
+
+    Some(TokenUsage::new(
+        u32::try_from(input_tokens).ok()?,
+        u32::try_from(output_tokens).ok()?,
+        u32::try_from(total_tokens).ok()?,
+    ))
 }
 
 fn user_image_to_request_part(
@@ -1099,6 +1129,7 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
         debug!(target: "gemini::convert_response", "Usage - Prompt Tokens: {:?}, Candidates Tokens: {:?}, Total Tokens: {:?}",
                usage.prompt, usage.candidates, usage.total);
     }
+    let usage = response.usage_metadata.as_ref().and_then(map_gemini_usage);
 
     let content: Vec<AssistantContent> = candidate
         .content // GeminiContentResponse
@@ -1164,7 +1195,7 @@ fn convert_response(response: GeminiResponse) -> Result<CompletionResponse, ApiE
         })
         .collect();
 
-    Ok(CompletionResponse { content })
+    Ok(CompletionResponse { content, usage })
 }
 
 #[async_trait]
@@ -1416,6 +1447,7 @@ impl GeminiClient {
     ) -> impl futures::Stream<Item = StreamChunk> + Send + 'static {
         async_stream::stream! {
             let mut content: Vec<AssistantContent> = Vec::new();
+            let mut latest_usage: Option<TokenUsage> = None;
             loop {
                 if token.is_cancelled() {
                     yield StreamChunk::Error(StreamError::Cancelled);
@@ -1433,7 +1465,10 @@ impl GeminiClient {
 
                 let Some(event_result) = event_result else {
                     let content = std::mem::take(&mut content);
-                    yield StreamChunk::MessageComplete(CompletionResponse { content });
+                    yield StreamChunk::MessageComplete(CompletionResponse {
+                        content,
+                        usage: latest_usage,
+                    });
                     break;
                 };
 
@@ -1452,6 +1487,11 @@ impl GeminiClient {
                         continue;
                     }
                 };
+
+                if let Some(usage) = chunk.usage_metadata.as_ref()
+                    && let Some(mapped) = map_gemini_usage(usage) {
+                        latest_usage = Some(mapped);
+                    }
 
                 if let Some(candidates) = chunk.candidates {
                     for candidate in candidates {
@@ -1829,6 +1869,63 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_map_gemini_usage_derives_missing_counter() {
+        let usage = GeminiUsageMetadata {
+            prompt: None,
+            candidates: Some(7),
+            total: Some(19),
+        };
+
+        assert_eq!(map_gemini_usage(&usage), Some(TokenUsage::new(12, 7, 19)));
+    }
+
+    #[test]
+    fn test_map_gemini_usage_returns_none_when_counters_not_derivable() {
+        let usage = GeminiUsageMetadata {
+            prompt: Some(9),
+            candidates: None,
+            total: None,
+        };
+
+        assert_eq!(map_gemini_usage(&usage), None);
+    }
+
+    #[test]
+    fn test_convert_response_maps_usage_metadata() {
+        let response = GeminiResponse {
+            candidates: Some(vec![GeminiCandidate {
+                content: GeminiContentResponse {
+                    role: "model".to_string(),
+                    parts: vec![GeminiResponsePart {
+                        thought: false,
+                        thought_signature: None,
+                        data: GeminiResponsePartData::Text {
+                            text: "Hello".to_string(),
+                        },
+                    }],
+                },
+                finish_reason: Some(GeminiFinishReason::Stop),
+                safety_ratings: None,
+                citation_metadata: None,
+            }]),
+            prompt_feedback: None,
+            usage_metadata: Some(GeminiUsageMetadata {
+                prompt: Some(11),
+                candidates: Some(5),
+                total: Some(16),
+            }),
+        };
+
+        let converted = convert_response(response).expect("response should convert");
+
+        assert_eq!(converted.usage, Some(TokenUsage::new(11, 5, 16)));
+        assert!(matches!(
+            converted.content.first(),
+            Some(AssistantContent::Text { text }) if text == "Hello"
+        ));
+    }
+
     #[tokio::test]
     async fn test_convert_gemini_stream_text_deltas() {
         use crate::api::provider::StreamChunk;
@@ -1866,6 +1963,49 @@ mod tests {
 
         let complete = stream.next().await.unwrap();
         assert!(matches!(complete, StreamChunk::MessageComplete(_)));
+    }
+
+    #[tokio::test]
+    async fn test_convert_gemini_stream_captures_final_usage() {
+        use crate::api::provider::StreamChunk;
+        use crate::api::sse::SseEvent;
+        use futures::StreamExt;
+        use futures::stream;
+        use std::pin::pin;
+        use tokio_util::sync::CancellationToken;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]}}]}"#
+                    .to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4,"totalTokenCount":14}}"#
+                    .to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(GeminiClient::convert_gemini_stream(sse_stream, token));
+
+        let first_delta = stream.next().await.unwrap();
+        assert!(matches!(first_delta, StreamChunk::TextDelta(ref t) if t == "Hello"));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.usage, Some(TokenUsage::new(10, 4, 14)));
+            assert!(matches!(
+                response.content.first(),
+                Some(AssistantContent::Text { text }) if text == "Hello"
+            ));
+        } else {
+            panic!("Expected MessageComplete");
+        }
     }
 
     #[tokio::test]

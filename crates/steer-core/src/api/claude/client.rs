@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::api::error::StreamError;
-use crate::api::provider::{CompletionStream, StreamChunk};
+use crate::api::provider::{CompletionStream, StreamChunk, TokenUsage};
 use crate::api::sse::parse_sse_stream;
 use crate::api::{CompletionResponse, Provider, error::ApiError};
 use crate::app::SystemContext;
@@ -565,6 +565,9 @@ fn default_cache_type() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::error::SseParseError;
+    use crate::api::sse::{SseEvent, SseStream};
+    use futures_util::{StreamExt, stream};
     use serde_json::json;
 
     #[test]
@@ -782,6 +785,115 @@ mod tests {
             other => panic!("Expected UnsupportedFeature, got {other:?}"),
         }
     }
+
+    #[test]
+    fn map_claude_usage_computes_total_when_missing() {
+        let usage = ClaudeUsage {
+            input: 11,
+            output: 7,
+            total: None,
+            cache_creation_input: None,
+            cache_read_input: None,
+        };
+
+        assert_eq!(map_claude_usage(&usage), TokenUsage::new(11, 7, 18));
+    }
+
+    #[test]
+    fn convert_claude_completion_includes_usage() {
+        let claude_completion = ClaudeCompletionResponse {
+            id: "msg_1".to_string(),
+            content: vec![ClaudeContentBlock::Text {
+                text: "hi".to_string(),
+                cache_control: None,
+                extra: Default::default(),
+            }],
+            model: "claude-test".to_string(),
+            role: "assistant".to_string(),
+            stop_reason: Some("end_turn".to_string()),
+            stop_sequence: None,
+            usage: ClaudeUsage {
+                input: 12,
+                output: 4,
+                total: Some(22),
+                cache_creation_input: None,
+                cache_read_input: None,
+            },
+            extra: Default::default(),
+        };
+
+        let response = convert_claude_completion(claude_completion);
+
+        assert_eq!(response.usage, Some(TokenUsage::new(12, 4, 22)));
+        assert!(matches!(
+            response.content.first(),
+            Some(AssistantContent::Text { text }) if text == "hi"
+        ));
+    }
+
+    #[tokio::test]
+    async fn convert_claude_stream_attaches_latest_usage_on_message_stop() {
+        let events = vec![
+            Ok::<SseEvent, SseParseError>(SseEvent {
+                event_type: None,
+                data: r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hello"}}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"type":"content_block_stop","index":0}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"type":"message_delta","delta":{"stop_reason":null},"usage":{"input_tokens":9,"output_tokens":3}}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":10,"output_tokens":5}}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: None,
+                data: r#"{"type":"message_stop"}"#.to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream: SseStream = Box::pin(stream::iter(events));
+        let token = CancellationToken::new();
+        let mut stream = std::pin::pin!(convert_claude_stream(sse_stream, token));
+
+        let mut full_text = String::new();
+        let mut completion = None;
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                StreamChunk::TextDelta(delta) => full_text.push_str(&delta),
+                StreamChunk::ContentBlockStop { .. } => {}
+                StreamChunk::MessageComplete(response) => {
+                    completion = Some(response);
+                    break;
+                }
+                unexpected => panic!("unexpected chunk: {unexpected:?}"),
+            }
+        }
+
+        assert_eq!(full_text, "Hello world");
+
+        let response = completion.expect("expected final message completion chunk");
+        assert_eq!(response.usage, Some(TokenUsage::new(10, 5, 15)));
+        assert!(matches!(
+            response.content.first(),
+            Some(AssistantContent::Text { text }) if text == "Hello world"
+        ));
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -857,6 +969,9 @@ struct ClaudeUsage {
     input: usize,
     #[serde(rename = "output_tokens")]
     output: usize,
+    #[serde(rename = "total_tokens")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total: Option<usize>,
     #[serde(rename = "cache_creation_input_tokens")]
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_creation_input: Option<usize>,
@@ -886,7 +1001,6 @@ enum ClaudeStreamEvent {
     MessageDelta {
         #[expect(dead_code)]
         delta: ClaudeMessageDeltaData,
-        #[expect(dead_code)]
         #[serde(default)]
         usage: Option<ClaudeUsage>,
     },
@@ -1420,6 +1534,28 @@ fn convert_claude_content(claude_blocks: Vec<ClaudeContentBlock>) -> Vec<Assista
         .collect()
 }
 
+fn saturating_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn map_claude_usage(usage: &ClaudeUsage) -> TokenUsage {
+    let total = usage
+        .total
+        .unwrap_or_else(|| usage.input.saturating_add(usage.output));
+    TokenUsage::new(
+        saturating_u32(usage.input),
+        saturating_u32(usage.output),
+        saturating_u32(total),
+    )
+}
+
+fn convert_claude_completion(claude_completion: ClaudeCompletionResponse) -> CompletionResponse {
+    CompletionResponse {
+        content: convert_claude_content(claude_completion.content),
+        usage: Some(map_claude_usage(&claude_completion.usage)),
+    }
+}
+
 #[async_trait]
 impl Provider for AnthropicClient {
     fn name(&self) -> &'static str {
@@ -1641,9 +1777,7 @@ impl Provider for AnthropicClient {
                     provider: self.name().to_string(),
                     details: format!("Error: {e}, Body: {response_text}"),
                 })?;
-            let completion = CompletionResponse {
-                content: convert_claude_content(claude_completion.content),
-            };
+            let completion = convert_claude_completion(claude_completion);
 
             return Ok(completion);
         }
@@ -2015,6 +2149,7 @@ fn convert_claude_stream(
         let mut block_states: std::collections::HashMap<usize, BlockState> =
             std::collections::HashMap::new();
         let mut completed_content: Vec<AssistantContent> = Vec::new();
+        let mut latest_usage: Option<TokenUsage> = None;
 
         tokio::pin!(sse_stream);
 
@@ -2143,7 +2278,10 @@ fn convert_claude_stream(
                         );
                     }
                     let content = std::mem::take(&mut completed_content);
-                    yield StreamChunk::MessageComplete(CompletionResponse { content });
+                    yield StreamChunk::MessageComplete(CompletionResponse {
+                        content,
+                        usage: latest_usage,
+                    });
                     break;
                 }
                 ClaudeStreamEvent::Error { error } => {
@@ -2153,9 +2291,12 @@ fn convert_claude_stream(
                         message: error.message,
                     });
                 }
-                ClaudeStreamEvent::MessageStart { .. }
-                | ClaudeStreamEvent::MessageDelta { .. }
-                | ClaudeStreamEvent::Ping => {}
+                ClaudeStreamEvent::MessageDelta { usage, .. } => {
+                    if let Some(usage) = usage.as_ref() {
+                        latest_usage = Some(map_claude_usage(usage));
+                    }
+                }
+                ClaudeStreamEvent::MessageStart { .. } | ClaudeStreamEvent::Ping => {}
             }
         }
     }

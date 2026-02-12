@@ -227,6 +227,7 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: self.response.clone(),
                 }],
+                usage: None,
             })
         }
     }

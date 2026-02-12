@@ -8,10 +8,10 @@ use crate::api::error::{ApiError, SseParseError, StreamError};
 use crate::api::openai::responses_types::{
     ExtraValue, InputContentPart, InputItem, InputType, MessageContentPart, ReasoningConfig,
     ReasoningSummary, ReasoningSummaryPart, ResponseError, ResponseErrorEvent, ResponseFailedEvent,
-    ResponseOutputItem, ResponsesApiResponse, ResponsesFunctionTool, ResponsesHttpErrorEnvelope,
-    ResponsesRequest, ResponsesToolChoice,
+    ResponseOutputItem, ResponseUsage, ResponsesApiResponse, ResponsesFunctionTool,
+    ResponsesHttpErrorEnvelope, ResponsesRequest, ResponsesToolChoice,
 };
-use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk};
+use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk, TokenUsage};
 use crate::api::sse::parse_sse_stream;
 use crate::app::SystemContext;
 use crate::app::conversation::{
@@ -511,9 +511,14 @@ impl Client {
         }
     }
 
+    fn map_usage(usage: &ResponseUsage) -> TokenUsage {
+        TokenUsage::new(usage.input_tokens, usage.output_tokens, usage.total_tokens)
+    }
+
     /// Convert a Responses API response to an app CompletionResponse
     pub(super) fn convert_response(response: ResponsesApiResponse) -> CompletionResponse {
         let content = Self::convert_output(response.output);
+        let usage = response.usage.as_ref().map(Self::map_usage);
 
         // Note: The top-level `reasoning` field in the response is just metadata
         // about reasoning configuration. The actual reasoning content comes through
@@ -521,8 +526,8 @@ impl Client {
         // in convert_output above.
 
         // Check for reasoning tokens in usage to verify reasoning happened
-        if let Some(usage) = response.usage
-            && let Some(details) = usage.output_tokens_details
+        if let Some(raw_usage) = response.usage.as_ref()
+            && let Some(details) = raw_usage.output_tokens_details.as_ref()
             && let Some(reasoning_tokens) = details.reasoning_tokens
             && reasoning_tokens > 0
             && !content
@@ -537,7 +542,7 @@ impl Client {
             );
         }
 
-        CompletionResponse { content }
+        CompletionResponse { content, usage }
     }
 }
 
@@ -1036,6 +1041,7 @@ impl Client {
                                     }
                             }
                             Some("response.completed") => {
+                                let usage = extract_response_completed_usage(&event.data);
                                 let tool_calls = std::mem::take(&mut tool_calls);
                                 let mut final_content = Vec::new();
 
@@ -1068,7 +1074,10 @@ impl Client {
                                     }
                                 }
 
-                                yield StreamChunk::MessageComplete(CompletionResponse { content: final_content });
+                                yield StreamChunk::MessageComplete(CompletionResponse {
+                                    content: final_content,
+                                    usage,
+                                });
                                 break;
                             }
                             Some("error") => {
@@ -1151,6 +1160,16 @@ impl Client {
                     }
                 }
     }
+}
+
+fn extract_response_completed_usage(event_data: &str) -> Option<TokenUsage> {
+    let payload = serde_json::from_str::<serde_json::Value>(event_data).ok()?;
+    let usage = payload
+        .get("response")
+        .and_then(|response| response.get("usage"))
+        .or_else(|| payload.get("usage"))?;
+    let usage = serde_json::from_value::<ResponseUsage>(usage.clone()).ok()?;
+    Some(Client::map_usage(&usage))
 }
 
 fn extract_non_empty_str(value: &serde_json::Value, key: &str) -> Option<String> {
@@ -2298,9 +2317,49 @@ mod tests {
                     text: "The answer is 42.".to_string(),
                 },
             ],
+            usage: None,
         };
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_convert_response_maps_usage() {
+        let response = ResponsesApiResponse {
+            id: "resp_usage".to_string(),
+            object: "response".to_string(),
+            created_at: 1,
+            status: "completed".to_string(),
+            error: None,
+            incomplete_details: None,
+            output: Some(vec![ResponseOutputItem::Message {
+                id: "msg_usage".to_string(),
+                status: "completed".to_string(),
+                role: "assistant".to_string(),
+                content: vec![MessageContentPart::OutputText {
+                    text: "Done".to_string(),
+                    annotations: vec![],
+                }],
+            }]),
+            model: Some("gpt-5".to_string()),
+            reasoning: None,
+            usage: Some(ResponseUsage {
+                input_tokens: 19,
+                output_tokens: 7,
+                total_tokens: 26,
+                input_tokens_details: None,
+                output_tokens_details: None,
+            }),
+            extra: Default::default(),
+        };
+
+        let converted = Client::convert_response(response);
+
+        assert_eq!(converted.usage, Some(TokenUsage::new(19, 7, 26)));
+        assert!(matches!(
+            converted.content.first(),
+            Some(AssistantContent::Text { text }) if text == "Done"
+        ));
     }
 
     #[test]
@@ -2527,6 +2586,45 @@ mod tests {
 
         let complete = stream.next().await.unwrap();
         assert!(matches!(complete, StreamChunk::MessageComplete(_)));
+    }
+
+    #[tokio::test]
+    async fn test_convert_responses_stream_extracts_usage_from_response_completed() {
+        use crate::api::sse::SseEvent;
+        use futures::stream;
+        use std::pin::pin;
+
+        let events = vec![
+            Ok(SseEvent {
+                event_type: Some("response.output_text.delta".to_string()),
+                data: r#"{"delta":"Hello"}"#.to_string(),
+                id: None,
+            }),
+            Ok(SseEvent {
+                event_type: Some("response.completed".to_string()),
+                data: r#"{"response":{"usage":{"input_tokens":11,"output_tokens":5,"total_tokens":16}}}"#
+                    .to_string(),
+                id: None,
+            }),
+        ];
+
+        let sse_stream = stream::iter(events);
+        let token = CancellationToken::new();
+        let mut stream = pin!(Client::convert_responses_stream(sse_stream, token));
+
+        let delta = stream.next().await.unwrap();
+        assert!(matches!(delta, StreamChunk::TextDelta(ref t) if t == "Hello"));
+
+        let complete = stream.next().await.unwrap();
+        if let StreamChunk::MessageComplete(response) = complete {
+            assert_eq!(response.usage, Some(TokenUsage::new(11, 5, 16)));
+            assert!(matches!(
+                response.content.first(),
+                Some(AssistantContent::Text { text }) if text == "Hello"
+            ));
+        } else {
+            panic!("Expected MessageComplete");
+        }
     }
 
     #[tokio::test]

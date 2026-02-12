@@ -401,12 +401,14 @@ mod tests {
                         tool_call: self.tool_call.clone(),
                         thought_signature: None,
                     }],
+                    usage: None,
                 }
             } else {
                 CompletionResponse {
                     content: vec![AssistantContent::Text {
                         text: self.final_text.clone(),
                     }],
+                    usage: None,
                 }
             };
             *count += 1;

@@ -26,12 +26,51 @@ pub enum StreamChunk {
 
 pub type CompletionStream = Pin<Box<dyn Stream<Item = StreamChunk> + Send>>;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub total_tokens: u32,
+}
+
+impl TokenUsage {
+    pub const fn new(input_tokens: u32, output_tokens: u32, total_tokens: u32) -> Self {
+        Self {
+            input_tokens,
+            output_tokens,
+            total_tokens,
+        }
+    }
+
+    pub const fn from_input_output(input_tokens: u32, output_tokens: u32) -> Self {
+        Self::new(
+            input_tokens,
+            output_tokens,
+            input_tokens.saturating_add(output_tokens),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompletionResponse {
     pub content: Vec<AssistantContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TokenUsage>,
 }
 
 impl CompletionResponse {
+    pub fn new(content: Vec<AssistantContent>) -> Self {
+        Self {
+            content,
+            usage: None,
+        }
+    }
+
+    pub fn with_usage(mut self, usage: TokenUsage) -> Self {
+        self.usage = Some(usage);
+        self
+    }
+
     /// Extract all text content from the response
     pub fn extract_text(&self) -> String {
         self.content
