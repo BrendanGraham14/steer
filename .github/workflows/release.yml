@@ -351,8 +351,12 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24.x'
-          registry-url: 'https://registry.npmjs.org'
-      - run: |
+      # Do not set registry-url here; that config writes token auth to .npmrc.
+      - name: Publish npm packages (OIDC-only)
+        env:
+          # Force trusted publishing and prevent token-based fallback auth.
+          NODE_AUTH_TOKEN: ""
+        run: |
           for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith("-npm-package.tar.gz")] | any)'); do
             pkg=$(echo "$release" | jq '.artifacts[] | select(endswith("-npm-package.tar.gz"))' --raw-output)
             npm publish --provenance --access public "./npm/${pkg}"
