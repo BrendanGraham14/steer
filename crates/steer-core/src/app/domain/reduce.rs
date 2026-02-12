@@ -1,11 +1,12 @@
 use crate::agents::default_agent_spec_id;
+use crate::api::provider::TokenUsage;
 use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
 
 use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory, McpServerState};
 
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::{
-    CancellationInfo, QueuedWorkItemSnapshot, QueuedWorkKind, SessionEvent,
+    CancellationInfo, ContextWindowUsage, QueuedWorkItemSnapshot, QueuedWorkKind, SessionEvent,
 };
 use crate::app::domain::state::{
     AppState, OperationKind, PendingApproval, QueuedApproval, QueuedWorkItem,
@@ -46,6 +47,29 @@ fn invalid_action(kind: InvalidActionKind, message: impl Into<String>) -> Reduce
         message: message.into(),
         kind,
     }
+}
+
+fn derive_context_window_usage(
+    total_tokens: u32,
+    context_window_tokens: Option<u32>,
+) -> Option<ContextWindowUsage> {
+    context_window_tokens.map(|max_context_tokens| {
+        let remaining_tokens = max_context_tokens.saturating_sub(total_tokens);
+        let (utilization_ratio, estimated) = if max_context_tokens > 0 {
+            let ratio =
+                (f64::from(total_tokens) / f64::from(max_context_tokens)).clamp(0.0, 1.0);
+            (Some(ratio), false)
+        } else {
+            (None, true)
+        };
+
+        ContextWindowUsage {
+            max_context_tokens: Some(max_context_tokens),
+            remaining_tokens: Some(remaining_tokens),
+            utilization_ratio,
+            estimated,
+        }
+    })
 }
 
 pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, ReduceError> {
@@ -130,9 +154,20 @@ pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, Reduc
             op_id,
             message_id,
             content,
+            usage,
+            context_window_tokens,
             timestamp,
         } => Ok(handle_model_response_complete(
-            state, session_id, op_id, message_id, content, timestamp,
+            state,
+            session_id,
+            ModelResponseCompleteParams {
+                op_id,
+                message_id,
+                content,
+                usage,
+                context_window_tokens,
+                timestamp,
+            },
         )),
 
         Action::ModelResponseError {
@@ -1146,14 +1181,28 @@ fn handle_tool_result(
     effects
 }
 
-fn handle_model_response_complete(
-    state: &mut AppState,
-    session_id: crate::app::domain::types::SessionId,
+struct ModelResponseCompleteParams {
     op_id: crate::app::domain::types::OpId,
     message_id: crate::app::domain::types::MessageId,
     content: Vec<AssistantContent>,
+    usage: Option<TokenUsage>,
+    context_window_tokens: Option<u32>,
     timestamp: u64,
+}
+
+fn handle_model_response_complete(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    params: ModelResponseCompleteParams,
 ) -> Vec<Effect> {
+    let ModelResponseCompleteParams {
+        op_id,
+        message_id,
+        content,
+        usage,
+        context_window_tokens,
+        timestamp,
+    } = params;
     let mut effects = Vec::new();
 
     if state.cancelled_ops.contains(&op_id) {
@@ -1200,8 +1249,25 @@ fn handle_model_response_complete(
 
     effects.push(Effect::EmitEvent {
         session_id,
-        event: SessionEvent::AssistantMessageAdded { message, model },
+        event: SessionEvent::AssistantMessageAdded {
+            message,
+            model: model.clone(),
+        },
     });
+
+    if let Some(usage) = usage {
+        let context_window = derive_context_window_usage(usage.total_tokens, context_window_tokens);
+        state.record_llm_usage(op_id, model.clone(), usage, context_window.clone());
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::LlmUsageUpdated {
+                op_id,
+                model: model.clone(),
+                usage,
+                context_window,
+            },
+        });
+    }
 
     if tool_calls.is_empty() {
         state.complete_operation(op_id);
@@ -1799,6 +1865,14 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
             state.record_cancelled_op(*op_id);
             state.complete_operation(*op_id);
         }
+        SessionEvent::LlmUsageUpdated {
+            op_id,
+            model,
+            usage,
+            context_window,
+        } => {
+            state.record_llm_usage(*op_id, model.clone(), *usage, context_window.clone());
+        }
         SessionEvent::McpServerStateChanged {
             server_name,
             state: mcp_state,
@@ -2027,6 +2101,8 @@ fn emit_mcp_connect_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::provider::TokenUsage;
+    use crate::app::domain::event::ContextWindowUsage;
     use crate::app::domain::state::{OperationState, PendingApproval};
     use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
     use crate::config::model::builtin;
@@ -2901,6 +2977,8 @@ mod tests {
                 op_id,
                 message_id,
                 content,
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 12345,
             },
         );
@@ -2941,6 +3019,8 @@ mod tests {
                 op_id,
                 message_id,
                 content,
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 12345,
             },
         );
@@ -2953,6 +3033,237 @@ mod tests {
                 ..
             }
         )));
+        assert!(!effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::LlmUsageUpdated { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_model_response_with_usage_emits_usage_event_and_updates_state() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+        let model = builtin::claude_sonnet_4_5();
+        let usage = TokenUsage::new(10, 20, 30);
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state.operation_models.insert(op_id, model.clone());
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id,
+                content: vec![AssistantContent::Text {
+                    text: "Done".to_string(),
+                }],
+                usage: Some(usage),
+                context_window_tokens: None,
+                timestamp: 12345,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::AssistantMessageAdded { .. },
+                ..
+            }
+        )));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::LlmUsageUpdated {
+                    op_id: usage_op_id,
+                    model: usage_model,
+                    usage: usage_payload,
+                    context_window,
+                },
+                ..
+            } if *usage_op_id == op_id && usage_model == &model && *usage_payload == usage && context_window.is_none()
+        )));
+
+        let snapshot = state
+            .llm_usage_by_op
+            .get(&op_id)
+            .expect("usage snapshot should be recorded");
+        assert_eq!(snapshot.model, model);
+        assert_eq!(snapshot.usage, usage);
+        assert!(snapshot.context_window.is_none());
+        assert_eq!(state.llm_usage_totals, usage);
+    }
+
+    #[test]
+    fn test_model_response_with_usage_and_context_window_emits_utilization() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+        let model = builtin::claude_sonnet_4_5();
+        let usage = TokenUsage::new(10, 20, 30);
+        let context_window_tokens = Some(100u32);
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state.operation_models.insert(op_id, model.clone());
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id,
+                content: vec![AssistantContent::Text {
+                    text: "Done".to_string(),
+                }],
+                usage: Some(usage),
+                context_window_tokens,
+                timestamp: 12345,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::LlmUsageUpdated {
+                    op_id: usage_op_id,
+                    model: usage_model,
+                    usage: usage_payload,
+                    context_window,
+                },
+                ..
+            } if *usage_op_id == op_id
+                && usage_model == &model
+                && *usage_payload == usage
+                && matches!(context_window, Some(ContextWindowUsage {
+                    max_context_tokens: Some(100),
+                    remaining_tokens: Some(70),
+                    utilization_ratio: Some(ratio),
+                    estimated: false,
+                }) if (*ratio - 0.3).abs() < 1e-9)
+        )));
+
+        let snapshot = state
+            .llm_usage_by_op
+            .get(&op_id)
+            .expect("usage snapshot should be recorded");
+        assert_eq!(snapshot.model, model);
+        assert_eq!(snapshot.usage, usage);
+        assert_eq!(
+            snapshot.context_window,
+            Some(ContextWindowUsage {
+                max_context_tokens: Some(100),
+                remaining_tokens: Some(70),
+                utilization_ratio: Some(0.3),
+                estimated: false,
+            })
+        );
+        assert_eq!(state.llm_usage_totals, usage);
+    }
+
+    #[test]
+    fn test_model_response_with_zero_context_window_marks_estimated() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+        let model = builtin::claude_sonnet_4_5();
+        let usage = TokenUsage::new(10, 20, 30);
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state.operation_models.insert(op_id, model);
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id,
+                content: vec![AssistantContent::Text {
+                    text: "Done".to_string(),
+                }],
+                usage: Some(usage),
+                context_window_tokens: Some(0),
+                timestamp: 12345,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::LlmUsageUpdated {
+                    context_window,
+                    ..
+                },
+                ..
+            } if matches!(context_window, Some(ContextWindowUsage {
+                max_context_tokens: Some(0),
+                remaining_tokens: Some(0),
+                utilization_ratio: None,
+                estimated: true,
+            }))
+        )));
+    }
+
+    #[test]
+    fn test_apply_usage_event_updates_replay_state_and_totals() {
+        let mut state = test_state();
+        let op_a = OpId::new();
+        let op_b = OpId::new();
+        let model = builtin::claude_sonnet_4_5();
+
+        apply_event_to_state(
+            &mut state,
+            &SessionEvent::LlmUsageUpdated {
+                op_id: op_a,
+                model: model.clone(),
+                usage: TokenUsage::new(3, 5, 8),
+                context_window: None,
+            },
+        );
+
+        assert_eq!(state.llm_usage_totals, TokenUsage::new(3, 5, 8));
+
+        apply_event_to_state(
+            &mut state,
+            &SessionEvent::LlmUsageUpdated {
+                op_id: op_a,
+                model: model.clone(),
+                usage: TokenUsage::new(7, 11, 18),
+                context_window: None,
+            },
+        );
+
+        assert_eq!(state.llm_usage_totals, TokenUsage::new(7, 11, 18));
+
+        apply_event_to_state(
+            &mut state,
+            &SessionEvent::LlmUsageUpdated {
+                op_id: op_b,
+                model,
+                usage: TokenUsage::new(2, 4, 6),
+                context_window: None,
+            },
+        );
+
+        assert_eq!(state.llm_usage_totals, TokenUsage::new(9, 15, 24));
     }
 
     #[test]
@@ -3001,6 +3312,8 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "done A".to_string(),
                 }],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 3,
             },
         );
@@ -3023,6 +3336,8 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "done B".to_string(),
                 }],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 4,
             },
         );

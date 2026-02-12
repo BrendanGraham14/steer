@@ -530,6 +530,7 @@ recommended = true
             display_name: Some("NiceName".to_string()),
             aliases: vec!["alias1".into()],
             recommended: false,
+            context_window_tokens: None,
             parameters: None,
         };
         let m2 = ModelConfig {
@@ -538,6 +539,7 @@ recommended = true
             display_name: Some("Other".to_string()),
             aliases: vec!["alias2".into()],
             recommended: false,
+            context_window_tokens: None,
             parameters: None,
         };
         let id1 = ModelId::new(prov.clone(), m1.id.clone());
@@ -573,6 +575,7 @@ recommended = true
             display_name: Some("Same".into()),
             aliases: vec![],
             recommended: false,
+            context_window_tokens: None,
             parameters: None,
         };
         let m2 = ModelConfig {
@@ -581,6 +584,7 @@ recommended = true
             display_name: Some("Same".into()),
             aliases: vec![],
             recommended: false,
+            context_window_tokens: None,
             parameters: None,
         };
         let id1 = ModelId::new(prov.clone(), m1.id.clone());

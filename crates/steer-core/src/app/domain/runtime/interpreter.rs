@@ -5,9 +5,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
-use crate::api::provider::StreamChunk;
+use crate::api::provider::{CompletionResponse, StreamChunk};
 use crate::app::SystemContext;
-use crate::app::conversation::{AssistantContent, Message};
+use crate::app::conversation::Message;
 use crate::app::domain::delta::{StreamDelta, ToolCallDelta};
 use crate::app::domain::types::{MessageId, OpId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
@@ -53,6 +53,10 @@ impl EffectInterpreter {
         self
     }
 
+    pub fn model_context_window_tokens(&self, model: &ModelId) -> Option<u32> {
+        self.api_client.model_context_window_tokens(model)
+    }
+
     pub async fn call_model(
         &self,
         model: ModelId,
@@ -60,7 +64,7 @@ impl EffectInterpreter {
         system_context: Option<SystemContext>,
         tools: Vec<ToolSchema>,
         cancel_token: CancellationToken,
-    ) -> Result<Vec<AssistantContent>, String> {
+    ) -> Result<CompletionResponse, String> {
         self.call_model_with_deltas(model, messages, system_context, tools, cancel_token, None)
             .await
     }
@@ -73,7 +77,7 @@ impl EffectInterpreter {
         tools: Vec<ToolSchema>,
         cancel_token: CancellationToken,
         delta_stream: Option<DeltaStreamContext>,
-    ) -> Result<Vec<AssistantContent>, String> {
+    ) -> Result<CompletionResponse, String> {
         let tools_option = if tools.is_empty() { None } else { Some(tools) };
 
         let mut stream = self
@@ -89,7 +93,7 @@ impl EffectInterpreter {
             .await
             .map_err(|e| e.to_string())?;
 
-        let mut final_content: Option<Vec<AssistantContent>> = None;
+        let mut final_response = None;
         while let Some(chunk) = stream.next().await {
             match chunk {
                 StreamChunk::TextDelta(text) => {
@@ -127,7 +131,7 @@ impl EffectInterpreter {
                     }
                 }
                 StreamChunk::MessageComplete(response) => {
-                    final_content = Some(response.content);
+                    final_response = Some(response);
                 }
                 StreamChunk::Error(err) => {
                     return Err(err.to_string());
@@ -136,7 +140,7 @@ impl EffectInterpreter {
             }
         }
 
-        final_content.ok_or_else(|| "Stream ended without MessageComplete".to_string())
+        final_response.ok_or_else(|| "Stream ended without MessageComplete".to_string())
     }
 
     pub async fn execute_tool(
@@ -169,5 +173,89 @@ impl EffectInterpreter {
         self.tool_executor
             .get_tool_schemas_with_resolver(resolver)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::error::ApiError;
+    use crate::api::provider::{CompletionResponse, Provider, TokenUsage};
+    use crate::app::conversation::AssistantContent;
+    use crate::app::validation::ValidatorRegistry;
+    use crate::auth::ProviderRegistry;
+    use crate::config::model::{ModelId, ModelParameters};
+    use crate::config::provider::ProviderId;
+    use crate::model_registry::ModelRegistry;
+    use crate::tools::BackendRegistry;
+    use async_trait::async_trait;
+
+    #[derive(Clone)]
+    struct StubProvider;
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: "ok".to_string(),
+                }],
+                usage: Some(TokenUsage::new(5, 7, 12)),
+            })
+        }
+    }
+
+    async fn create_test_deps() -> (Arc<ApiClient>, Arc<ToolExecutor>) {
+        let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
+        let provider_registry = Arc::new(ProviderRegistry::load(&[]).expect("provider registry"));
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider().unwrap(),
+            provider_registry,
+            model_registry,
+        ));
+
+        let tool_executor = Arc::new(ToolExecutor::with_components(
+            Arc::new(BackendRegistry::new()),
+            Arc::new(ValidatorRegistry::new()),
+        ));
+
+        (api_client, tool_executor)
+    }
+
+    #[tokio::test]
+    async fn call_model_preserves_completion_usage() {
+        let (api_client, tool_executor) = create_test_deps().await;
+        let provider_id = ProviderId("stub".to_string());
+        api_client.insert_test_provider(provider_id.clone(), Arc::new(StubProvider));
+
+        let interpreter = EffectInterpreter::new(api_client, tool_executor);
+        let result = interpreter
+            .call_model(
+                ModelId::new(provider_id, "stub-model"),
+                vec![],
+                None,
+                vec![],
+                CancellationToken::new(),
+            )
+            .await
+            .expect("model call should succeed");
+
+        assert_eq!(result.usage, Some(TokenUsage::new(5, 7, 12)));
+        assert!(matches!(
+            result.content.as_slice(),
+            [AssistantContent::Text { text }] if text == "ok"
+        ));
     }
 }

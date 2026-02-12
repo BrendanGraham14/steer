@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod tests {
+    use crate::api::provider::TokenUsage;
     use crate::app::conversation::{AssistantContent, UserContent};
     use crate::app::domain::action::{Action, ApprovalDecision, ApprovalMemory};
     use crate::app::domain::effect::Effect;
-    use crate::app::domain::event::SessionEvent;
+    use crate::app::domain::event::{ContextWindowUsage, SessionEvent};
     use crate::app::domain::reduce::{apply_event_to_state, reduce};
     use crate::app::domain::state::{AppState, OperationKind, OperationState};
     use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId};
@@ -133,6 +134,8 @@ mod tests {
                         thought_signature: None,
                     },
                 ],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 1001,
             },
         );
@@ -311,6 +314,8 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "Hello!".to_string(),
                 }],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 1001,
             },
         );
@@ -376,6 +381,8 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "First response".to_string(),
                 }],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 1001,
             },
         );
@@ -538,6 +545,8 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "Hi!".to_string(),
                 }],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 1001,
             },
         );
@@ -553,5 +562,46 @@ mod tests {
             partial_state.message_graph.messages.len(),
             "Incremental replay should produce same state"
         );
+    }
+
+    #[test]
+    fn hydrate_action_applies_llm_usage_update() {
+        let session_id = deterministic_session_id();
+        let op_id = deterministic_op_id(42);
+        let model = test_model();
+        let usage = TokenUsage::new(9, 13, 22);
+        let context_window = Some(ContextWindowUsage {
+            max_context_tokens: Some(200_000),
+            remaining_tokens: Some(199_978),
+            utilization_ratio: Some(0.00011),
+            estimated: false,
+        });
+
+        let events = vec![SessionEvent::LlmUsageUpdated {
+            op_id,
+            model: model.clone(),
+            usage,
+            context_window: context_window.clone(),
+        }];
+
+        let mut hydrated_state = AppState::new(session_id);
+        let _ = reduce_ok(
+            &mut hydrated_state,
+            Action::Hydrate {
+                session_id,
+                events,
+                starting_sequence: 1,
+            },
+        );
+
+        let snapshot = hydrated_state
+            .llm_usage_by_op
+            .get(&op_id)
+            .expect("expected usage snapshot for hydrated op");
+        assert_eq!(snapshot.model, model);
+        assert_eq!(snapshot.usage, usage);
+        assert_eq!(snapshot.context_window, context_window);
+        assert_eq!(hydrated_state.llm_usage_totals, usage);
+        assert_eq!(hydrated_state.event_sequence, 1);
     }
 }

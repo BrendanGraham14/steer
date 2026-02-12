@@ -79,6 +79,10 @@ pub struct ModelConfig {
     #[serde(default)]
     pub recommended: bool,
 
+    /// Optional advertised maximum context window size for this model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window_tokens: Option<u32>,
+
     /// Optional model-specific parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<ModelParameters>,
@@ -113,6 +117,9 @@ impl ModelConfig {
         self.recommended = other.recommended;
         if other.display_name.is_some() {
             self.display_name = other.display_name;
+        }
+        if other.context_window_tokens.is_some() {
+            self.context_window_tokens = other.context_window_tokens;
         }
 
         // Merge parameters
@@ -159,6 +166,7 @@ impl From<ModelData> for ModelConfig {
             display_name: data.display_name,
             aliases: data.aliases,
             recommended: data.recommended,
+            context_window_tokens: data.context_window_tokens,
             parameters: data.parameters,
         }
     }
@@ -177,6 +185,7 @@ mod tests {
             display_name: None,
             aliases: vec!["opus".to_string(), "claude-opus".to_string()],
             recommended: true,
+            context_window_tokens: Some(200_000),
             parameters: Some(ModelParameters {
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
@@ -210,6 +219,7 @@ mod tests {
         assert_eq!(config.display_name, None);
         assert_eq!(config.aliases, Vec::<String>::new());
         assert!(!config.recommended);
+        assert!(config.context_window_tokens.is_none());
         assert!(config.parameters.is_none());
     }
 
@@ -258,6 +268,7 @@ mod tests {
             display_name: None,
             aliases: vec![],
             recommended: true,
+            context_window_tokens: Some(200_000),
             parameters: Some(ModelParameters {
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
@@ -283,5 +294,56 @@ mod tests {
         assert_eq!(effective.temperature, Some(0.9)); // overridden
         assert_eq!(effective.max_tokens, Some(4096)); // kept from config
         assert_eq!(effective.top_p, Some(0.95)); // added
+    }
+
+    #[test]
+    fn test_model_config_merge_with_context_window_tokens() {
+        let mut base = ModelConfig {
+            provider: provider::anthropic(),
+            id: "claude-3-opus".to_string(),
+            display_name: None,
+            aliases: vec![],
+            recommended: false,
+            context_window_tokens: Some(200_000),
+            parameters: None,
+        };
+
+        base.merge_with(ModelConfig {
+            provider: provider::anthropic(),
+            id: "claude-3-opus".to_string(),
+            display_name: None,
+            aliases: vec![],
+            recommended: true,
+            context_window_tokens: None,
+            parameters: None,
+        });
+        assert_eq!(base.context_window_tokens, Some(200_000));
+
+        base.merge_with(ModelConfig {
+            provider: provider::anthropic(),
+            id: "claude-3-opus".to_string(),
+            display_name: None,
+            aliases: vec![],
+            recommended: true,
+            context_window_tokens: Some(400_000),
+            parameters: None,
+        });
+        assert_eq!(base.context_window_tokens, Some(400_000));
+    }
+
+    #[test]
+    fn test_model_config_toml_omits_context_window_tokens_when_none() {
+        let config = ModelConfig {
+            provider: provider::openai(),
+            id: "gpt-4".to_string(),
+            display_name: None,
+            aliases: vec![],
+            recommended: false,
+            context_window_tokens: None,
+            parameters: None,
+        };
+
+        let toml_string = toml::to_string_pretty(&config).expect("Failed to serialize to TOML");
+        assert!(!toml_string.contains("context_window_tokens"));
     }
 }

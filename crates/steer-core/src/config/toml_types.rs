@@ -38,6 +38,8 @@ pub struct ModelData {
     #[serde(default)]
     pub recommended: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<ModelParameters>,
 }
 

@@ -138,6 +138,7 @@ mod tests {
                     SessionEvent::McpServerStateChanged { .. } => {
                         "McpServerStateChanged".to_string()
                     }
+                    SessionEvent::LlmUsageUpdated { .. } => "LlmUsageUpdated".to_string(),
                     SessionEvent::QueueUpdated { .. } => "QueueUpdated".to_string(),
                 },
             },
@@ -215,6 +216,8 @@ mod tests {
                     op_id: deterministic_op_id(*op_id),
                     message_id: deterministic_message_id(message_id),
                     content,
+                    usage: None,
+                    context_window_tokens: None,
                     timestamp: *timestamp,
                 }
             }
@@ -470,6 +473,8 @@ mod tests {
                         thought_signature: None,
                     },
                 ],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 1001,
             },
         );
@@ -526,6 +531,8 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "Found 2 files.".to_string(),
                 }],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 1003,
             },
         );

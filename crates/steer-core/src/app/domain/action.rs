@@ -1,4 +1,5 @@
 use crate::app::conversation::UserContent;
+use crate::api::provider::TokenUsage;
 use crate::app::domain::types::{CompactionId, MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use serde::{Deserialize, Serialize};
@@ -82,6 +83,8 @@ pub enum Action {
         op_id: OpId,
         message_id: MessageId,
         content: Vec<crate::app::conversation::AssistantContent>,
+        usage: Option<TokenUsage>,
+        context_window_tokens: Option<u32>,
         timestamp: u64,
     },
 

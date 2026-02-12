@@ -374,6 +374,7 @@ impl SqliteEventStore {
             SessionEvent::QueueUpdated { .. } => "queue_updated",
             SessionEvent::Error { .. } => "error",
             SessionEvent::McpServerStateChanged { .. } => "mcp_server_state_changed",
+            SessionEvent::LlmUsageUpdated { .. } => "llm_usage_updated",
         }
     }
 }
@@ -894,9 +895,10 @@ fn decode_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::provider::TokenUsage;
     use crate::app::conversation::{ImageContent, ImageSource, Message, MessageData, UserContent};
-    use crate::app::domain::event::SessionEvent;
-    use crate::app::domain::types::ToolCallId;
+    use crate::app::domain::event::{ContextWindowUsage, SessionEvent};
+    use crate::app::domain::types::{OpId, ToolCallId};
     use crate::config::model::builtin;
     use crate::session::state::{SessionConfig, ToolVisibility};
     use std::collections::{HashMap, HashSet};
@@ -960,6 +962,64 @@ mod tests {
         match &events[0].1 {
             SessionEvent::Error { message } => assert_eq!(message, "test error"),
             _ => panic!("Expected Error event"),
+        }
+    }
+
+    #[test]
+    fn test_sqlite_event_type_mapping_for_llm_usage_updated() {
+        let event = SessionEvent::LlmUsageUpdated {
+            op_id: crate::app::domain::types::OpId::new(),
+            model: builtin::claude_sonnet_4_5(),
+            usage: TokenUsage::new(1, 2, 3),
+            context_window: None,
+        };
+
+        assert_eq!(
+            SqliteEventStore::event_type_string(&event),
+            "llm_usage_updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_llm_usage_updated_roundtrip() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+        store.create_session(session_id).await.unwrap();
+
+        let op_id = OpId::new();
+        let model = builtin::claude_sonnet_4_5();
+        let usage = TokenUsage::new(17, 23, 40);
+        let context_window = Some(ContextWindowUsage {
+            max_context_tokens: Some(200_000),
+            remaining_tokens: Some(199_960),
+            utilization_ratio: Some(0.0002),
+            estimated: false,
+        });
+
+        let event = SessionEvent::LlmUsageUpdated {
+            op_id,
+            model: model.clone(),
+            usage,
+            context_window: context_window.clone(),
+        };
+
+        store.append(session_id, &event).await.unwrap();
+        let events = store.load_events(session_id).await.unwrap();
+
+        let loaded_event = events.first().expect("event").1.clone();
+        match loaded_event {
+            SessionEvent::LlmUsageUpdated {
+                op_id: loaded_op_id,
+                model: loaded_model,
+                usage: loaded_usage,
+                context_window: loaded_context_window,
+            } => {
+                assert_eq!(loaded_op_id, op_id);
+                assert_eq!(loaded_model, model);
+                assert_eq!(loaded_usage, usage);
+                assert_eq!(loaded_context_window, context_window);
+            }
+            other => panic!("Expected LlmUsageUpdated event, got {other:?}"),
         }
     }
 

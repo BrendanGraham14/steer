@@ -299,6 +299,8 @@ mod tests {
                 op_id,
                 message_id,
                 content,
+                usage: None,
+                context_window_tokens: None,
                 timestamp,
             })
             .expect("reduce failed");

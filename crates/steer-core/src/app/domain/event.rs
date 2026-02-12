@@ -1,3 +1,4 @@
+use crate::api::provider::TokenUsage;
 use crate::app::conversation::Message;
 use crate::app::domain::action::{ApprovalDecision, ApprovalMemory, McpServerState};
 use crate::app::domain::types::{
@@ -43,6 +44,15 @@ pub enum SessionEvent {
     /// Tool result message; no model attribution.
     ToolMessageAdded {
         message: Message,
+    },
+
+    /// Final normalized usage snapshot for a completed model call.
+    LlmUsageUpdated {
+        op_id: OpId,
+        model: ModelId,
+        usage: TokenUsage,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_window: Option<ContextWindowUsage>,
     },
 
     MessageUpdated {
@@ -187,6 +197,18 @@ impl<'de> Deserialize<'de> for CompactResult {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextWindowUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utilization_ratio: Option<f64>,
+    #[serde(default)]
+    pub estimated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancellationInfo {
     pub pending_tool_calls: usize,
@@ -224,7 +246,8 @@ impl SessionEvent {
         match self {
             SessionEvent::OperationStarted { op_id, .. }
             | SessionEvent::OperationCompleted { op_id }
-            | SessionEvent::OperationCancelled { op_id, .. } => Some(*op_id),
+            | SessionEvent::OperationCancelled { op_id, .. }
+            | SessionEvent::LlmUsageUpdated { op_id, .. } => Some(*op_id),
             _ => None,
         }
     }
@@ -236,5 +259,25 @@ impl SessionEvent {
             | SessionEvent::ToolCallFailed { id, .. } => Some(id),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::model::builtin;
+
+    #[test]
+    fn llm_usage_event_reports_operation_id() {
+        let op_id = OpId::new();
+        let event = SessionEvent::LlmUsageUpdated {
+            op_id,
+            model: builtin::claude_sonnet_4_5(),
+            usage: TokenUsage::new(5, 8, 13),
+            context_window: None,
+        };
+
+        assert_eq!(event.operation_id(), Some(op_id));
+        assert!(!event.is_error());
     }
 }

@@ -202,6 +202,8 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: "done".to_string(),
                 }],
+                usage: None,
+                context_window_tokens: None,
                 timestamp: 11,
             },
         );

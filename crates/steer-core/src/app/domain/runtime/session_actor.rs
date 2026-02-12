@@ -6,6 +6,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
+use crate::api::provider::CompletionResponse;
 use crate::app::domain::action::{Action, McpServerState, SchemaSource};
 use crate::app::domain::delta::StreamDelta;
 use crate::app::domain::effect::{Effect, McpServerConfig};
@@ -349,6 +350,7 @@ impl SessionActor {
                 tools,
                 ..
             } => {
+                let context_window_tokens = self.interpreter.model_context_window_tokens(&model);
                 let cancel_token = self.active_operations.entry(op_id).or_default().clone();
 
                 let interpreter = self.interpreter.clone();
@@ -393,13 +395,17 @@ impl SessionActor {
                     }
 
                     let action = match result {
-                        Ok(content) => Action::ModelResponseComplete {
-                            session_id,
-                            op_id,
-                            message_id,
-                            content,
-                            timestamp: current_timestamp(),
-                        },
+                        Ok(CompletionResponse { content, usage }) => {
+                            Action::ModelResponseComplete {
+                                session_id,
+                                op_id,
+                                message_id,
+                                content,
+                                usage,
+                                context_window_tokens,
+                                timestamp: current_timestamp(),
+                            }
+                        }
                         Err(e) => Action::ModelResponseError {
                             session_id,
                             op_id,
@@ -531,8 +537,9 @@ impl SessionActor {
                         .await;
 
                     let action = match result {
-                        Ok(content) => {
-                            let summary_text = content
+                        Ok(response) => {
+                            let summary_text = response
+                                .content
                                 .iter()
                                 .filter_map(|c| match c {
                                     crate::app::conversation::AssistantContent::Text { text } => {
@@ -778,7 +785,7 @@ fn build_compaction_message() -> crate::app::conversation::Message {
 mod tests {
     use super::*;
     use crate::api::error::ApiError;
-    use crate::api::provider::{CompletionResponse, Provider};
+    use crate::api::provider::{CompletionResponse, Provider, TokenUsage};
     use crate::app::SystemContext;
     use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
     use crate::app::domain::action::Action;
@@ -797,6 +804,9 @@ mod tests {
 
     #[derive(Clone)]
     struct StubProvider;
+
+    #[derive(Clone)]
+    struct StubProviderWithUsage;
 
     #[async_trait]
     impl Provider for StubProvider {
@@ -818,6 +828,30 @@ mod tests {
                     text: "summary".to_string(),
                 }],
                 usage: None,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl Provider for StubProviderWithUsage {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: "reply".to_string(),
+                }],
+                usage: Some(TokenUsage::new(11, 13, 24)),
             })
         }
     }
@@ -903,6 +937,57 @@ mod tests {
         .await;
 
         result.is_ok()
+    }
+
+    #[tokio::test]
+    async fn call_model_effect_dispatches_usage_with_completion_action() {
+        let session_id = SessionId::new();
+        let state = AppState::new(session_id);
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+
+        let provider_id = ProviderId("stub".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
+        api_client.insert_test_provider(provider_id, Arc::new(StubProviderWithUsage));
+
+        let mut actor =
+            SessionActor::new(session_id, state, event_store, api_client, tool_executor);
+        let op_id = OpId::new();
+
+        actor
+            .handle_effect(Effect::CallModel {
+                session_id,
+                op_id,
+                model: model_id,
+                messages: vec![],
+                system_context: None,
+                tools: vec![],
+            })
+            .await
+            .expect("call model effect should succeed");
+
+        let action = timeout(Duration::from_secs(2), actor.internal_action_rx.recv())
+            .await
+            .expect("timed out waiting for internal action")
+            .expect("expected completion action");
+
+        match action {
+            Action::ModelResponseComplete {
+                op_id: completed_op_id,
+                usage,
+                content,
+                context_window_tokens,
+                ..
+            } => {
+                assert_eq!(completed_op_id, op_id);
+                assert_eq!(usage, Some(TokenUsage::new(11, 13, 24)));
+                assert!(context_window_tokens.is_none());
+                assert!(matches!(
+                    content.as_slice(),
+                    [AssistantContent::Text { text }] if text == "reply"
+                ));
+            }
+            other => panic!("expected ModelResponseComplete, got {other:?}"),
+        }
     }
 
     #[tokio::test]

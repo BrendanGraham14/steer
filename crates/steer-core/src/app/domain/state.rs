@@ -1,7 +1,9 @@
+use crate::api::provider::TokenUsage;
 use crate::app::SystemContext;
 use crate::app::conversation::MessageGraph;
 use crate::app::conversation::UserContent;
 use crate::app::domain::action::McpServerState;
+use crate::app::domain::event::ContextWindowUsage;
 use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use crate::prompts::system_prompt_for_model;
@@ -43,6 +45,9 @@ pub struct AppState {
     pub operation_models: HashMap<OpId, ModelId>,
     pub operation_messages: HashMap<OpId, MessageId>,
 
+    pub llm_usage_by_op: HashMap<OpId, LlmUsageSnapshot>,
+    pub llm_usage_totals: TokenUsage,
+
     pub event_sequence: u64,
 }
 
@@ -50,6 +55,13 @@ pub struct AppState {
 pub struct PendingApproval {
     pub request_id: RequestId,
     pub tool_call: ToolCall,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmUsageSnapshot {
+    pub model: ModelId,
+    pub usage: TokenUsage,
+    pub context_window: Option<ContextWindowUsage>,
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +154,8 @@ impl AppState {
             cancelled_ops: HashSet::new(),
             operation_models: HashMap::new(),
             operation_messages: HashMap::new(),
+            llm_usage_by_op: HashMap::new(),
+            llm_usage_totals: TokenUsage::new(0, 0, 0),
             event_sequence: 0,
         }
     }
@@ -276,6 +290,38 @@ impl AppState {
         self.event_sequence
     }
 
+    pub fn record_llm_usage(
+        &mut self,
+        op_id: OpId,
+        model: ModelId,
+        usage: TokenUsage,
+        context_window: Option<ContextWindowUsage>,
+    ) {
+        self.llm_usage_by_op.insert(
+            op_id,
+            LlmUsageSnapshot {
+                model,
+                usage,
+                context_window,
+            },
+        );
+        self.recompute_llm_usage_totals();
+    }
+
+    fn recompute_llm_usage_totals(&mut self) {
+        let mut input_tokens = 0u32;
+        let mut output_tokens = 0u32;
+        let mut total_tokens = 0u32;
+
+        for snapshot in self.llm_usage_by_op.values() {
+            input_tokens = input_tokens.saturating_add(snapshot.usage.input_tokens);
+            output_tokens = output_tokens.saturating_add(snapshot.usage.output_tokens);
+            total_tokens = total_tokens.saturating_add(snapshot.usage.total_tokens);
+        }
+
+        self.llm_usage_totals = TokenUsage::new(input_tokens, output_tokens, total_tokens);
+    }
+
     pub fn apply_session_config(
         &mut self,
         config: &SessionConfig,
@@ -321,5 +367,45 @@ impl AppState {
         if update_base {
             self.base_session_config = Some(config.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::model::builtin;
+
+    #[test]
+    fn record_llm_usage_replaces_snapshot_for_op_and_recomputes_totals() {
+        let mut state = AppState::new(SessionId::new());
+        let model = builtin::claude_sonnet_4_5();
+        let op_a = OpId::new();
+        let op_b = OpId::new();
+
+        state.record_llm_usage(op_a, model.clone(), TokenUsage::new(3, 5, 8), None);
+        assert_eq!(state.llm_usage_totals, TokenUsage::new(3, 5, 8));
+
+        state.record_llm_usage(
+            op_a,
+            model.clone(),
+            TokenUsage::new(7, 11, 18),
+            Some(ContextWindowUsage {
+                max_context_tokens: Some(200_000),
+                remaining_tokens: Some(199_982),
+                utilization_ratio: Some(0.00009),
+                estimated: false,
+            }),
+        );
+
+        let snapshot_a = state
+            .llm_usage_by_op
+            .get(&op_a)
+            .expect("usage for op_a should be present");
+        assert_eq!(snapshot_a.usage, TokenUsage::new(7, 11, 18));
+        assert!(snapshot_a.context_window.is_some());
+        assert_eq!(state.llm_usage_totals, TokenUsage::new(7, 11, 18));
+
+        state.record_llm_usage(op_b, model, TokenUsage::new(2, 4, 6), None);
+        assert_eq!(state.llm_usage_totals, TokenUsage::new(9, 15, 24));
     }
 }
