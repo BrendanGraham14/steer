@@ -63,6 +63,8 @@ fn dispatch_agent_description() -> String {
     6. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
     7. IMPORTANT: New workspaces are preserved (not auto-deleted). Clean them up manually if needed.
     8. If the agent spec omits a model, the parent session's default model is used.
+    9. IMPORTANT: Do NOT include `Repo: <path>`, `CWD: <path>`, or similar path headers in your prompt. The sub-agent already receives its working directory via system instructions.
+    10. IMPORTANT: If `target.session` is `new` and `workspace.location` is `new`, the sub-agent runs in the newly created workspace path, which may differ from the caller's current directory.
 
 Workspace options:
 - `workspace: {{ "location": "current" }}` to run in the current workspace

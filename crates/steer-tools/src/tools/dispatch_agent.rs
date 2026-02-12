@@ -26,18 +26,23 @@ impl ToolSpec for DispatchAgentToolSpec {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(tag = "location", rename_all = "snake_case")]
 pub enum WorkspaceTarget {
+    /// Run the sub-agent in the caller's current workspace.
     Current,
+    /// Create a fresh workspace (jj workspace or git worktree) and run there.
+    /// The resulting path may differ from the caller's current directory.
     New { name: String },
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(tag = "session", rename_all = "snake_case")]
 pub enum DispatchAgentTarget {
+    /// Start a new child session.
     New {
         workspace: WorkspaceTarget,
         #[serde(default)]
         agent: Option<String>,
     },
+    /// Continue an existing child session by id.
     Resume {
         session_id: String,
     },
@@ -45,7 +50,11 @@ pub enum DispatchAgentTarget {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
 pub struct DispatchAgentParams {
+    /// Instructions for the sub-agent.
+    /// Do not prepend synthetic path headers like `Repo: ...` or `CWD: ...`.
+    /// The sub-agent receives its working-directory context automatically.
     pub prompt: String,
+    /// Session/workspace target for the sub-agent call.
     pub target: DispatchAgentTarget,
 }
 
