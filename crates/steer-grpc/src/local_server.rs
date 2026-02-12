@@ -226,7 +226,7 @@ mod tests {
     use steer_core::app::domain::types::OpId;
     use steer_core::config::model::ModelId;
     use steer_proto::agent::v1::{
-        CompactSessionRequest, ExecuteBashCommandRequest, SendMessageRequest,
+        CompactSessionRequest, ExecuteBashCommandRequest, ListModelsRequest, SendMessageRequest,
         SubscribeSessionEventsRequest, agent_service_client::AgentServiceClient,
     };
     use tempfile::TempDir;
@@ -258,6 +258,7 @@ mod tests {
                 content: vec![AssistantContent::Text {
                     text: STUB_RESPONSE.to_string(),
                 }],
+                usage: None,
             })
         }
     }
@@ -487,6 +488,7 @@ mod tests {
             Some(Event::McpServerStateChanged(_)) => "McpServerStateChanged",
             Some(Event::SessionConfigUpdated(_)) => "SessionConfigUpdated",
             Some(Event::QueueUpdated(_)) => "QueueUpdated",
+            Some(Event::LlmUsageUpdated(_)) => "LlmUsageUpdated",
             None => "None",
         }
     }
@@ -507,6 +509,7 @@ mod tests {
             SessionEvent::OperationStarted { .. } => "OperationStarted",
             SessionEvent::OperationCompleted { .. } => "OperationCompleted",
             SessionEvent::OperationCancelled { .. } => "OperationCancelled",
+            SessionEvent::LlmUsageUpdated { .. } => "LlmUsageUpdated",
             SessionEvent::CompactResult { .. } => "CompactResult",
             SessionEvent::ConversationCompacted { .. } => "ConversationCompacted",
             SessionEvent::WorkspaceChanged => "WorkspaceChanged",
@@ -882,6 +885,38 @@ persisted_new={new_events:?} (before_len={before_len}, after_len={after_len})"
             .await
             .expect_err("compact_session should fail without model");
         assert_eq!(err.code(), Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn test_list_models_sets_context_window_tokens_field() {
+        let workspace_root = test_workspace_root();
+        let setup = setup_local_grpc_with_catalog(
+            steer_core::config::model::builtin::claude_sonnet_4_5(),
+            None,
+            CatalogConfig::default(),
+            Some(workspace_root.path().to_path_buf()),
+        )
+        .await
+        .expect("local grpc setup");
+
+        let mut client = AgentServiceClient::new(setup.channel.clone());
+        let response = client
+            .list_models(tonic::Request::new(ListModelsRequest { provider_id: None }))
+            .await
+            .expect("list_models should succeed")
+            .into_inner();
+
+        assert!(
+            !response.models.is_empty(),
+            "Expected at least one recommended model"
+        );
+        assert!(
+            response
+                .models
+                .iter()
+                .all(|model| model.context_window_tokens.is_some()),
+            "expected context_window_tokens to be populated for all listed models"
+        );
     }
 
     #[tokio::test]

@@ -192,7 +192,7 @@ mod tests {
     use crate::notifications::NotificationManager;
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::events::processors::message::MessageEventProcessor;
-    use crate::tui::state::{ChatStore, ToolCallRegistry};
+    use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
     use crate::tui::widgets::ChatListState;
     use steer_grpc::client_api::{AssistantContent, ModelId, OpId, Preferences, builtin};
 
@@ -221,6 +221,7 @@ mod tests {
         in_flight_operations: HashSet<OpId>,
         queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
         queued_count: usize,
+        llm_usage: LlmUsageState,
         _workspace_root: tempfile::TempDir,
     }
     async fn create_test_context() -> TestContext {
@@ -260,6 +261,7 @@ mod tests {
             in_flight_operations,
             queued_head,
             queued_count,
+            llm_usage: LlmUsageState::default(),
             _workspace_root: workspace_root,
         }
     }
@@ -308,6 +310,7 @@ mod tests {
                 in_flight_operations: &mut ctx.in_flight_operations,
                 queued_head: &mut ctx.queued_head,
                 queued_count: &mut ctx.queued_count,
+                llm_usage: &mut ctx.llm_usage,
             };
             let _ = msg_proc
                 .process(
@@ -338,6 +341,7 @@ mod tests {
                 in_flight_operations: &mut ctx.in_flight_operations,
                 queued_head: &mut ctx.queued_head,
                 queued_count: &mut ctx.queued_count,
+                llm_usage: &mut ctx.llm_usage,
             };
             let _ = tool_proc
                 .process(

@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::client_api::{
     ApiKeyOrigin as ClientApiKeyOrigin, AuthMethod as ClientAuthMethod,
     AuthProgress as ClientAuthProgress, AuthSource as ClientAuthSource, ProviderAuthStatus,
-    ProviderInfo, StartAuthResponse,
+    ProviderInfo, StartAuthResponse, UsageUpdateKind,
 };
 
 /// Convert a core ModelId to proto ModelSpec
@@ -1914,6 +1914,65 @@ fn compact_result_from_proto(
     })
 }
 
+fn usage_to_proto(usage: steer_core::api::provider::TokenUsage) -> proto::Usage {
+    proto::Usage {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.total_tokens,
+        cost_usd: None,
+    }
+}
+
+fn proto_to_usage(usage: proto::Usage) -> steer_core::api::provider::TokenUsage {
+    steer_core::api::provider::TokenUsage {
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        total_tokens: usage.total_tokens,
+    }
+}
+
+fn context_window_usage_to_proto(
+    context_window: steer_core::app::domain::event::ContextWindowUsage,
+) -> proto::ContextWindowUtilization {
+    proto::ContextWindowUtilization {
+        max_tokens: context_window.max_context_tokens,
+        remaining_tokens: context_window.remaining_tokens,
+        utilization_ratio: context_window.utilization_ratio,
+        estimated: context_window.estimated,
+    }
+}
+
+fn proto_to_context_window_usage(
+    context_window: proto::ContextWindowUtilization,
+) -> steer_core::app::domain::event::ContextWindowUsage {
+    steer_core::app::domain::event::ContextWindowUsage {
+        max_context_tokens: context_window.max_tokens,
+        remaining_tokens: context_window.remaining_tokens,
+        utilization_ratio: context_window.utilization_ratio,
+        estimated: context_window.estimated,
+    }
+}
+
+fn usage_update_kind_to_proto(kind: UsageUpdateKind) -> i32 {
+    match kind {
+        UsageUpdateKind::Unspecified => proto::UsageUpdateKind::Unspecified as i32,
+        UsageUpdateKind::Partial => proto::UsageUpdateKind::Partial as i32,
+        UsageUpdateKind::Final => proto::UsageUpdateKind::Final as i32,
+    }
+}
+
+fn proto_to_usage_update_kind(kind: i32) -> Result<UsageUpdateKind, ConversionError> {
+    match proto::UsageUpdateKind::try_from(kind) {
+        Ok(proto::UsageUpdateKind::Unspecified) => Ok(UsageUpdateKind::Unspecified),
+        Ok(proto::UsageUpdateKind::Partial) => Ok(UsageUpdateKind::Partial),
+        Ok(proto::UsageUpdateKind::Final) => Ok(UsageUpdateKind::Final),
+        Err(_) => Err(ConversionError::InvalidEnumValue {
+            value: kind,
+            enum_name: "UsageUpdateKind".to_string(),
+        }),
+    }
+}
+
 /// Convert domain SessionEvent to protobuf SessionEvent
 ///
 /// This is used by the new RuntimeService architecture to convert events
@@ -2032,6 +2091,20 @@ pub(crate) fn session_event_to_proto(
                 },
             ))
         }
+        SessionEvent::LlmUsageUpdated {
+            op_id,
+            model,
+            usage,
+            context_window,
+        } => Some(proto::session_event::Event::LlmUsageUpdated(
+            proto::LlmUsageUpdatedEvent {
+                op_id: op_id.to_string(),
+                model: Some(model_to_proto(model)),
+                usage: Some(usage_to_proto(usage)),
+                context_window: context_window.map(context_window_usage_to_proto),
+                kind: usage_update_kind_to_proto(UsageUpdateKind::Final),
+            },
+        )),
         SessionEvent::MessageUpdated { message } => {
             let proto_message = message_to_proto(message)?;
             Some(proto::session_event::Event::MessageUpdated(
@@ -2601,6 +2674,26 @@ pub(crate) fn proto_to_client_event(
             })?;
             let message = proto_tool_message_to_core(e.id, tool_message)?;
             ClientEvent::ToolMessageAdded { message }
+        }
+        proto::session_event::Event::LlmUsageUpdated(e) => {
+            let op_id = parse_op_id(&e.op_id)?;
+            let model = e
+                .model
+                .ok_or_else(|| ConversionError::MissingField {
+                    field: "llm_usage_updated.model".to_string(),
+                })
+                .and_then(|spec| proto_to_model(&spec))?;
+            let usage = e.usage.ok_or_else(|| ConversionError::MissingField {
+                field: "llm_usage_updated.usage".to_string(),
+            })?;
+            let kind = proto_to_usage_update_kind(e.kind)?;
+            ClientEvent::LlmUsageUpdated {
+                op_id,
+                model,
+                usage: proto_to_usage(usage),
+                context_window: e.context_window.map(proto_to_context_window_usage),
+                kind,
+            }
         }
         proto::session_event::Event::MessageUpdated(e) => {
             let proto_message = e.message.ok_or_else(|| ConversionError::MissingField {

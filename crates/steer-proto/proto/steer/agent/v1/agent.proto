@@ -85,6 +85,7 @@ message SessionEvent {
     McpServerStateChangedEvent mcp_server_state_changed = 22;
     SessionConfigUpdatedEvent session_config_updated = 23;
     QueueUpdatedEvent queue_updated = 24;
+    LlmUsageUpdatedEvent llm_usage_updated = 25;
   }
 
   reserved 13;
@@ -153,6 +154,20 @@ message ProcessingStartedEvent {
 
 message ProcessingCompletedEvent {
   string op_id = 1;  // Operation ID (UUID)
+}
+
+enum UsageUpdateKind {
+  USAGE_UPDATE_KIND_UNSPECIFIED = 0;
+  USAGE_UPDATE_KIND_PARTIAL = 1;
+  USAGE_UPDATE_KIND_FINAL = 2;
+}
+
+message LlmUsageUpdatedEvent {
+  string op_id = 1;  // Operation ID (UUID)
+  ModelSpec model = 2;
+  Usage usage = 3;
+  optional ContextWindowUtilization context_window = 4;
+  UsageUpdateKind kind = 5;
 }
 
 message ErrorEvent {
@@ -893,6 +908,13 @@ message Usage {
   optional double cost_usd = 4;
 }
 
+message ContextWindowUtilization {
+  optional uint32 max_tokens = 1;
+  optional uint32 remaining_tokens = 2;
+  optional double utilization_ratio = 3;
+  bool estimated = 4;
+}
+
 message ActiveToolInfo {
   string name = 1;
   string id = 2;
@@ -1131,6 +1153,7 @@ message ProviderModel {
   string display_name = 3;  // User-friendly name
   bool supports_thinking = 4;  // Whether model supports thinking/reasoning
   repeated string aliases = 5;  // Short aliases like "sonnet", "opus"
+  optional uint32 context_window_tokens = 6;
 }
 
 message ModelSpec {

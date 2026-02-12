@@ -309,7 +309,7 @@ impl Default for MessageEventProcessor {
 mod tests {
     use super::*;
     use crate::tui::events::processor::ProcessingContext;
-    use crate::tui::state::{ChatStore, ToolCallRegistry};
+    use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
     use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
 
     use serde_json::json;
@@ -335,6 +335,7 @@ mod tests {
         messages_updated: bool,
         queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
         queued_count: usize,
+        llm_usage: LlmUsageState,
         _workspace_root: tempfile::TempDir,
     }
 
@@ -373,6 +374,7 @@ mod tests {
             messages_updated,
             queued_head,
             queued_count,
+            llm_usage: LlmUsageState::default(),
             _workspace_root: workspace_root,
         }
     }
@@ -458,6 +460,7 @@ mod tests {
             in_flight_operations: &mut in_flight_operations,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
         };
 
         // Process the Assistant message

@@ -1,7 +1,15 @@
 use super::types::{
-    CompactResult, CompactionRecord, McpServerState, Message, MessageId, ModelId, OpId,
-    QueuedWorkItem, RequestId, SessionConfig, ToolCall, ToolCallDelta, ToolCallId, ToolResult,
+    CompactResult, CompactionRecord, ContextWindowUsage, McpServerState, Message, MessageId,
+    ModelId, OpId, QueuedWorkItem, RequestId, SessionConfig, TokenUsage, ToolCall, ToolCallDelta,
+    ToolCallId, ToolResult,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsageUpdateKind {
+    Unspecified,
+    Partial,
+    Final,
+}
 
 #[derive(Debug, Clone)]
 pub enum ClientEvent {
@@ -14,6 +22,13 @@ pub enum ClientEvent {
     },
     ToolMessageAdded {
         message: Message,
+    },
+    LlmUsageUpdated {
+        op_id: OpId,
+        model: ModelId,
+        usage: TokenUsage,
+        context_window: Option<ContextWindowUsage>,
+        kind: UsageUpdateKind,
     },
     MessageUpdated {
         message: Message,

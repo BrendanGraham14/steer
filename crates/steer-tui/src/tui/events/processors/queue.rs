@@ -45,7 +45,7 @@ mod tests {
     use super::*;
     use crate::tui::events::processor::PendingToolApproval;
     use crate::tui::events::processor::ProcessingContext;
-    use crate::tui::state::{ChatStore, ToolCallRegistry};
+    use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
     use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
     use steer_grpc::AgentClient;
     use steer_grpc::client_api::{
@@ -68,6 +68,7 @@ mod tests {
         in_flight_operations: std::collections::HashSet<steer_grpc::client_api::OpId>,
         queued_head: Option<QueuedWorkItem>,
         queued_count: usize,
+        llm_usage: LlmUsageState,
         _workspace_root: tempfile::TempDir,
     }
 
@@ -106,6 +107,7 @@ mod tests {
             in_flight_operations,
             queued_head: None,
             queued_count: 0,
+            llm_usage: LlmUsageState::default(),
             _workspace_root: workspace_root,
         }
     }
@@ -147,6 +149,7 @@ mod tests {
             in_flight_operations: &mut ctx.in_flight_operations,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
         };
 
         let result = processor

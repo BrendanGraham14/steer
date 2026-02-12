@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::notifications::NotificationManagerHandle;
-use crate::tui::state::{ChatStore, ToolCallRegistry};
+use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
 use crate::tui::widgets::ChatListState;
 use steer_grpc::AgentClient;
 use steer_grpc::client_api::{ClientEvent, ModelId, OpId, RequestId, ToolCall};
@@ -36,6 +36,7 @@ pub struct ProcessingContext<'a> {
     pub in_flight_operations: &'a mut std::collections::HashSet<OpId>,
     pub queued_head: &'a mut Option<steer_grpc::client_api::QueuedWorkItem>,
     pub queued_count: &'a mut usize,
+    pub llm_usage: &'a mut LlmUsageState,
 }
 
 #[async_trait]

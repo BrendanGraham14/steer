@@ -1320,6 +1320,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     .and_then(|p| p.thinking_config.as_ref())
                     .is_some_and(|tc| tc.enabled),
                 aliases: model.aliases.clone(),
+                context_window_tokens: model.context_window_tokens,
             });
         }
 

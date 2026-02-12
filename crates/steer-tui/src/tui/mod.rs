@@ -261,9 +261,10 @@ use crate::tui::events::processors::message::MessageEventProcessor;
 use crate::tui::events::processors::processing_state::ProcessingStateProcessor;
 use crate::tui::events::processors::system::SystemEventProcessor;
 use crate::tui::events::processors::tool::ToolEventProcessor;
+use crate::tui::events::processors::usage::UsageEventProcessor;
 use crate::tui::state::RemoteProviderRegistry;
 use crate::tui::state::SetupState;
-use crate::tui::state::{ChatStore, ToolCallRegistry};
+use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
 
 use crate::tui::chat_viewport::ChatViewport;
 use crate::tui::terminal::{SetupGuard, cleanup};
@@ -410,6 +411,8 @@ pub struct Tui {
     queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
     /// Count of queued items
     queued_count: usize,
+    /// Latest and per-operation LLM usage snapshots for display paths
+    llm_usage: LlmUsageState,
     /// Command registry for slash commands
     command_registry: CommandRegistry,
     /// User preferences
@@ -784,6 +787,7 @@ impl Tui {
             in_flight_operations: HashSet::new(),
             queued_head: None,
             queued_count: 0,
+            llm_usage: LlmUsageState::default(),
             command_registry: CommandRegistry::new(),
             preferences,
             notification_manager,
@@ -985,6 +989,7 @@ impl Tui {
         self.tool_registry = ToolCallRegistry::new();
         self.chat_viewport = ChatViewport::new();
         self.in_flight_operations.clear();
+        self.llm_usage.clear();
         self.input_panel_state =
             crate::tui::widgets::input_panel::InputPanelState::new(new_session_id.clone());
         self.is_processing = false;
@@ -1672,6 +1677,7 @@ impl Tui {
             .add_processor(Box::new(
                 crate::tui::events::processors::queue::QueueEventProcessor::new(),
             ))
+            .add_processor(Box::new(UsageEventProcessor::new()))
             .add_processor(Box::new(ToolEventProcessor::new(
                 notification_manager.clone(),
             )))
@@ -1730,6 +1736,7 @@ impl Tui {
             in_flight_operations: &mut self.in_flight_operations,
             queued_head: &mut self.queued_head,
             queued_count: &mut self.queued_count,
+            llm_usage: &mut self.llm_usage,
         };
 
         if let Err(e) = self.event_pipeline.process_event(event, &mut ctx).await {
