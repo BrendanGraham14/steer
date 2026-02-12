@@ -23,6 +23,7 @@ pub struct StatusBar<'a> {
     current_agent: Option<&'a str>,
     theme: &'a Theme,
     update: UpdateBadge<'a>,
+    context_remaining_percent: Option<f64>,
 }
 
 impl<'a> StatusBar<'a> {
@@ -37,6 +38,7 @@ impl<'a> StatusBar<'a> {
             current_agent,
             theme,
             update: UpdateBadge::None,
+            context_remaining_percent: None,
         }
     }
 
@@ -44,6 +46,19 @@ impl<'a> StatusBar<'a> {
         self.update = update;
         self
     }
+
+    pub fn with_context_remaining_percent(
+        mut self,
+        context_remaining_percent: Option<f64>,
+    ) -> Self {
+        self.context_remaining_percent = context_remaining_percent;
+        self
+    }
+}
+
+fn format_context_remaining_percent(context_remaining_percent: f64) -> String {
+    let clamped = context_remaining_percent.clamp(0.0, 100.0);
+    format!("ctx {clamped:.1}%")
 }
 
 impl Widget for StatusBar<'_> {
@@ -69,16 +84,34 @@ impl Widget for StatusBar<'_> {
             .alignment(Alignment::Left);
         left_para.render(area, buf);
 
-        // Right: current model
-        let model_string = format!(
-            " {}/{} ",
+        // Right: context remaining (if any) + current model
+        let mut right_spans = Vec::new();
+        right_spans.push(Span::raw(" "));
+        if let Some(context_remaining_percent) = self.context_remaining_percent {
+            right_spans.push(Span::raw(format_context_remaining_percent(context_remaining_percent)));
+            right_spans.push(Span::styled(" │ ", self.theme.style(Component::DimText)));
+        }
+        right_spans.push(Span::raw(format!(
+            "{}/{} ",
             self.current_model.provider.storage_key(),
             self.current_model.id
-        );
-        let right_line = Line::from(vec![Span::raw(model_string)]);
+        )));
+        let right_line = Line::from(right_spans);
         let right_para = Paragraph::new(right_line)
             .style(style)
             .alignment(Alignment::Right);
         right_para.render(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_context_remaining_percent;
+
+    #[test]
+    fn format_context_remaining_percent_clamps_and_formats() {
+        assert_eq!(format_context_remaining_percent(88.126), "ctx 88.1%");
+        assert_eq!(format_context_remaining_percent(101.0), "ctx 100.0%");
+        assert_eq!(format_context_remaining_percent(-5.0), "ctx 0.0%");
     }
 }

@@ -1496,10 +1496,21 @@ impl Tui {
                 }
                 _ => crate::tui::widgets::status_bar::UpdateBadge::None,
             };
+            let context_remaining_percent = self
+                .llm_usage
+                .latest()
+                .and_then(|usage| usage.context_window.as_ref())
+                .and_then(|context_window| {
+                    context_window.utilization_ratio.map(|utilization_ratio| {
+                        (1.0 - utilization_ratio.clamp(0.0, 1.0)) * 100.0
+                    })
+                });
+
             layout.render_status_bar(
                 f,
                 &current_model_owned,
                 self.current_agent_label.as_deref(),
+                context_remaining_percent,
                 &self.theme,
                 update_badge,
             );

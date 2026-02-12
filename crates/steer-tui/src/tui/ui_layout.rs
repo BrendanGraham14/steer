@@ -63,11 +63,13 @@ impl UiLayout {
         f: &mut Frame,
         current_model: &ModelId,
         current_agent: Option<&str>,
+        context_remaining_percent: Option<f64>,
         theme: &Theme,
         update_badge: crate::tui::widgets::status_bar::UpdateBadge,
     ) {
-        let status_bar =
-            StatusBar::new(current_model, current_agent, theme).with_update_badge(update_badge);
+        let status_bar = StatusBar::new(current_model, current_agent, theme)
+            .with_context_remaining_percent(context_remaining_percent)
+            .with_update_badge(update_badge);
         f.render_widget(status_bar, self.status);
     }
 }
