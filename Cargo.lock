@@ -6120,7 +6120,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "steer"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6184,7 +6184,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-anthropic"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6201,7 +6201,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-openai"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6222,7 +6222,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-plugin"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "keyring",
@@ -6233,7 +6233,7 @@ dependencies = [
 
 [[package]]
 name = "steer-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -6312,7 +6312,7 @@ dependencies = [
 
 [[package]]
 name = "steer-grpc"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6340,7 +6340,7 @@ dependencies = [
 
 [[package]]
 name = "steer-proto"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "prost 0.13.5",
  "prost-build",
@@ -6352,7 +6352,7 @@ dependencies = [
 
 [[package]]
 name = "steer-remote-workspace"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "clap",
  "gethostname",
@@ -6372,7 +6372,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tools"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "schemars",
  "serde",
@@ -6384,7 +6384,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tui"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6434,7 +6434,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -6469,7 +6469,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace-client"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -6557,9 +6557,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.114"
+version = "2.0.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4d107df263a3013ef9b1879b0df87d706ff80f65a86ea879bd9c31f9b307c2a"
+checksum = "6e614ed320ac28113fa64972c4262d5dbc89deacdfd00c34a3e4cea073243c12"
 dependencies = [
  "proc-macro2",
  "quote",
