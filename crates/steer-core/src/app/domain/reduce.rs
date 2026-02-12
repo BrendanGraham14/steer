@@ -1552,9 +1552,7 @@ fn handle_cancel(
     state.active_streams.remove(&op.op_id);
 
     let dequeued_item = state.pop_next_queued_work();
-    let popped_queued_item = dequeued_item
-        .as_ref()
-        .map(snapshot_queued_work_item);
+    let popped_queued_item = dequeued_item.as_ref().map(snapshot_queued_work_item);
 
     effects.push(Effect::EmitEvent {
         session_id,

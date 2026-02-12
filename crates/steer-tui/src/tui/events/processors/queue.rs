@@ -124,11 +124,10 @@ mod tests {
             message_id: MessageId::from_string("msg_1"),
         };
 
-        let notification_manager = std::sync::Arc::new(
-            crate::notifications::NotificationManager::new(
+        let notification_manager =
+            std::sync::Arc::new(crate::notifications::NotificationManager::new(
                 &steer_grpc::client_api::Preferences::default(),
-            ),
-        );
+            ));
 
         let mut processing_ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,

@@ -550,9 +550,7 @@ fn map_startup_command(command: Option<&Commands>) -> TelemetryStartupCommand {
         Some(Commands::Headless { .. }) => TelemetryStartupCommand::Headless,
         Some(Commands::Server { .. }) => TelemetryStartupCommand::Server,
         Some(
-            Commands::Preferences { .. }
-            | Commands::Session { .. }
-            | Commands::Workspace { .. },
+            Commands::Preferences { .. } | Commands::Session { .. } | Commands::Workspace { .. },
         ) => TelemetryStartupCommand::Unknown,
     }
 }

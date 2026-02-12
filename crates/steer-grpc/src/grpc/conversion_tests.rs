@@ -219,7 +219,9 @@ mod id_preservation_tests {
                     queued_at: 123,
                     model: None,
                     op_id,
-                    message_id: steer_core::app::domain::types::MessageId::from_string("msg_queued"),
+                    message_id: steer_core::app::domain::types::MessageId::from_string(
+                        "msg_queued",
+                    ),
                 }),
             },
         };

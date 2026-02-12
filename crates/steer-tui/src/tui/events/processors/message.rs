@@ -437,11 +437,10 @@ mod tests {
         };
 
         let mut in_flight_operations = std::collections::HashSet::new();
-        let notification_manager = std::sync::Arc::new(
-            crate::notifications::NotificationManager::new(
+        let notification_manager =
+            std::sync::Arc::new(crate::notifications::NotificationManager::new(
                 &steer_grpc::client_api::Preferences::default(),
-            ),
-        );
+            ));
         let mut ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,

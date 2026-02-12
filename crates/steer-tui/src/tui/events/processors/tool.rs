@@ -196,7 +196,6 @@ mod tests {
     use crate::tui::widgets::ChatListState;
     use steer_grpc::client_api::{AssistantContent, ModelId, OpId, Preferences, builtin};
 
-
     use serde_json::json;
     use std::collections::HashSet;
     use std::sync::Arc;

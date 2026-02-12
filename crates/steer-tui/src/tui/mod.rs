@@ -16,9 +16,7 @@ use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
 use futures::{FutureExt, StreamExt};
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{
-    self, Event, EventStream, KeyCode, KeyEventKind, MouseEvent,
-};
+use ratatui::crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, MouseEvent};
 use ratatui::{Frame, Terminal};
 use steer_grpc::AgentClient;
 use steer_grpc::client_api::{
