@@ -87,8 +87,9 @@ jobs:
       - name: Trigger release workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           TAG: ${{ needs.release-plz-release.outputs.steer_tag }}
         run: |
           echo "Dispatching release workflow for tag $TAG"
-          gh workflow run release.yml --ref main -f tag="$TAG"
+          gh workflow run release.yml -R "$REPO" --ref main -f tag="$TAG"
 
