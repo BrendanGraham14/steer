@@ -75,6 +75,31 @@ fn build_image_message(source: ImageSource) -> Message {
     }
 }
 
+fn assert_usage_invariants_if_present(response: &steer_core::api::CompletionResponse, model: &ModelId) {
+    let usage_expected = matches!(
+        model.provider.as_str(),
+        "openai" | "anthropic" | "google" | "xai"
+    );
+
+    if usage_expected {
+        assert!(
+            response.usage.is_some(),
+            "expected usage to be present for model {model:?}"
+        );
+    }
+
+    if let Some(usage) = response.usage {
+        assert!(
+            usage.total_tokens >= usage.input_tokens,
+            "total tokens should be >= input tokens for model {model:?}, usage={usage:?}"
+        );
+        assert!(
+            usage.total_tokens >= usage.output_tokens,
+            "total tokens should be >= output tokens for model {model:?}, usage={usage:?}"
+        );
+    }
+}
+
 fn test_client() -> Client {
     dotenv().ok();
     let app_config = test_utils::test_app_config();
@@ -182,6 +207,8 @@ async fn run_api_with_tool_response(client: &Client, model: &ModelId) -> ApiTest
         .complete(model, messages, None, None, None, CancellationToken::new())
         .await?;
 
+    assert_usage_invariants_if_present(&response, model);
+
     let final_text = response.extract_text();
     assert!(
         !final_text.is_empty(),
@@ -259,6 +286,8 @@ async fn run_api_with_cancelled_tool_execution(
         .complete(model, messages, None, None, None, CancellationToken::new())
         .await?;
 
+    assert_usage_invariants_if_present(&response, model);
+
     let response_text = response.extract_text();
     assert!(
         !response_text.is_empty(),
@@ -303,6 +332,7 @@ async fn run_streaming_basic(client: &Client, model: &ModelId) -> ApiTestResult<
             }
             StreamChunk::ThinkingDelta(_) => {}
             StreamChunk::MessageComplete(response) => {
+                assert_usage_invariants_if_present(&response, model);
                 got_complete = true;
                 final_response = Some(response);
             }
@@ -393,6 +423,7 @@ async fn run_streaming_with_tools(client: &Client, model: &ModelId) -> ApiTestRe
             }
             StreamChunk::TextDelta(_) => {}
             StreamChunk::MessageComplete(response) => {
+                assert_usage_invariants_if_present(&response, model);
                 got_complete = true;
                 final_response = Some(response);
             }
@@ -459,7 +490,8 @@ async fn run_streaming_with_reasoning(client: &Client, model: &ModelId) -> ApiTe
             StreamChunk::TextDelta(text) => {
                 text_chunks.push(text);
             }
-            StreamChunk::MessageComplete(_) => {
+            StreamChunk::MessageComplete(response) => {
+                assert_usage_invariants_if_present(&response, model);
                 got_complete = true;
             }
             StreamChunk::Error(e) => {
@@ -512,6 +544,8 @@ async fn run_api_with_dispatch_agent_tool_call(
             CancellationToken::new(),
         )
         .await?;
+
+    assert_usage_invariants_if_present(&response, model);
 
     assert!(
         response.has_tool_calls(),
@@ -574,6 +608,61 @@ async fn test_tool_schemas_include_object_properties() {
         .and_then(|value| value.as_object())
         .expect("read_todos schema should include properties");
     assert!(todo_properties.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "Requires OPENAI_API_KEY environment variable"]
+async fn test_openai_responses_stream_usage_is_non_zero_when_present() {
+    dotenv().ok();
+    let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set");
+    let client = steer_core::api::openai::OpenAIClient::with_mode(
+        api_key,
+        steer_core::api::openai::OpenAIMode::Responses,
+    )
+    .expect("openai client");
+
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "What is 2+2? Answer in one word.".to_string(),
+            }],
+        },
+        timestamp,
+        id: Message::generate_id("user", timestamp),
+        parent_message_id: None,
+    }];
+
+    let model_id = builtin::gpt_5_nano_2025_08_07();
+
+    let mut stream = client
+        .stream_complete(&model_id, messages, None, None, None, CancellationToken::new())
+        .await
+        .expect("stream_complete should succeed");
+
+    let mut final_response = None;
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            StreamChunk::MessageComplete(response) => {
+                final_response = Some(response);
+                break;
+            }
+            StreamChunk::Error(err) => panic!("stream error: {err:?}"),
+            _ => {}
+        }
+    }
+
+    let response = final_response.expect("expected final response");
+    let usage = response
+        .usage
+        .expect("expected usage for OpenAI Responses completion");
+
+    assert!(usage.input_tokens > 0, "expected non-zero input tokens");
+    assert!(usage.total_tokens > 0, "expected non-zero total tokens");
+    assert!(
+        usage.total_tokens >= usage.input_tokens && usage.total_tokens >= usage.output_tokens,
+        "expected total tokens to be >= input and output tokens"
+    );
 }
 
 #[tokio::test]

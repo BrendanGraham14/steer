@@ -278,15 +278,20 @@ mod id_preservation_tests {
 
 #[cfg(test)]
 mod event_conversion_tests {
-    use crate::client_api::{ClientEvent, MessageId, OpId, ToolCallDelta, ToolCallId};
+    use crate::client_api::{
+        ClientEvent, ContextWindowUsage, MessageId, OpId, ToolCallDelta, ToolCallId,
+        UsageUpdateKind,
+    };
     use crate::grpc::conversions::{
         message_to_proto, proto_to_client_event, session_event_to_proto, stream_delta_to_proto,
     };
     use steer_core::app::conversation::{
         AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
     };
+    use steer_core::api::provider::TokenUsage;
     use steer_core::app::domain::delta::StreamDelta;
     use steer_core::app::domain::event::{CompactResult, SessionEvent};
+    use steer_core::config::model::builtin;
     use uuid::Uuid;
 
     #[test]
@@ -447,6 +452,141 @@ mod event_conversion_tests {
             }
             other => panic!("Expected image content block, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_llm_usage_event_roundtrip() {
+        let op_id = OpId::from(Uuid::new_v4());
+        let model = builtin::claude_sonnet_4_5();
+        let usage = TokenUsage {
+            input_tokens: 123,
+            output_tokens: 45,
+            total_tokens: 168,
+        };
+        let context_window = Some(ContextWindowUsage {
+            max_context_tokens: Some(200_000),
+            remaining_tokens: Some(199_832),
+            utilization_ratio: Some(0.00084),
+            estimated: true,
+        });
+
+        let event = SessionEvent::LlmUsageUpdated {
+            op_id,
+            model: model.clone(),
+            usage,
+            context_window: context_window.clone(),
+        };
+
+        let proto = session_event_to_proto(event, 99).unwrap();
+        let client_event = proto_to_client_event(proto).unwrap().unwrap();
+
+        match client_event {
+            ClientEvent::LlmUsageUpdated {
+                op_id: received_op_id,
+                model: received_model,
+                usage: received_usage,
+                context_window: received_context,
+                kind,
+            } => {
+                assert_eq!(received_op_id, op_id);
+                assert_eq!(received_model, model);
+                assert_eq!(received_usage, usage);
+                assert_eq!(received_context, context_window);
+                assert_eq!(kind, UsageUpdateKind::Final);
+            }
+            other => panic!("Expected LlmUsageUpdated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_llm_usage_event_known_kind_values_map_exhaustively() {
+        let op_id = Uuid::new_v4().to_string();
+        let usage = steer_proto::agent::v1::Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+            total_tokens: 15,
+            cost_usd: None,
+        };
+
+        let cases = [
+            (
+                steer_proto::agent::v1::UsageUpdateKind::Unspecified as i32,
+                UsageUpdateKind::Unspecified,
+            ),
+            (
+                steer_proto::agent::v1::UsageUpdateKind::Partial as i32,
+                UsageUpdateKind::Partial,
+            ),
+            (
+                steer_proto::agent::v1::UsageUpdateKind::Final as i32,
+                UsageUpdateKind::Final,
+            ),
+        ];
+
+        for (kind_value, expected_kind) in cases {
+            let proto = steer_proto::agent::v1::SessionEvent {
+                sequence_num: 7,
+                timestamp: None,
+                event: Some(
+                    steer_proto::agent::v1::session_event::Event::LlmUsageUpdated(
+                        steer_proto::agent::v1::LlmUsageUpdatedEvent {
+                            op_id: op_id.clone(),
+                            model: Some(steer_proto::agent::v1::ModelSpec {
+                                provider_id: "anthropic".to_string(),
+                                model_id: "claude-sonnet-4-5".to_string(),
+                            }),
+                            usage: Some(usage.clone()),
+                            context_window: None,
+                            kind: kind_value,
+                        },
+                    ),
+                ),
+            };
+
+            let event = proto_to_client_event(proto)
+                .expect("known kind values should convert")
+                .expect("session event should not be filtered");
+            match event {
+                ClientEvent::LlmUsageUpdated { kind, .. } => assert_eq!(kind, expected_kind),
+                other => panic!("Expected LlmUsageUpdated, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_llm_usage_event_unknown_kind_rejected() {
+        let proto = steer_proto::agent::v1::SessionEvent {
+            sequence_num: 7,
+            timestamp: None,
+            event: Some(
+                steer_proto::agent::v1::session_event::Event::LlmUsageUpdated(
+                    steer_proto::agent::v1::LlmUsageUpdatedEvent {
+                        op_id: Uuid::new_v4().to_string(),
+                        model: Some(steer_proto::agent::v1::ModelSpec {
+                            provider_id: "anthropic".to_string(),
+                            model_id: "claude-sonnet-4-5".to_string(),
+                        }),
+                        usage: Some(steer_proto::agent::v1::Usage {
+                            input_tokens: 10,
+                            output_tokens: 5,
+                            total_tokens: 15,
+                            cost_usd: None,
+                        }),
+                        context_window: None,
+                        kind: 999,
+                    },
+                ),
+            ),
+        };
+
+        let err = proto_to_client_event(proto).expect_err("expected invalid enum error");
+        assert!(matches!(
+            err,
+            crate::grpc::error::ConversionError::InvalidEnumValue {
+                value: 999,
+                enum_name,
+            } if enum_name == "UsageUpdateKind"
+        ));
     }
 
     #[test]
