@@ -39,6 +39,7 @@ impl Tui {
                     if self.vim_state.pending_operator.is_some() {
                         // Redo when operator pending
                         self.input_panel_state.textarea.redo();
+                        self.sync_attachments_from_input_tokens();
                     } else {
                         // Toggle view mode otherwise
                         self.chat_viewport.state_mut().toggle_view_mode();
@@ -64,6 +65,7 @@ impl Tui {
                 KeyCode::Char('w') => {
                     if operator == VimOperator::Change {
                         self.input_panel_state.textarea.delete_next_word();
+                        self.sync_attachments_from_input_tokens();
                         // Delete trailing whitespace
                         while let Some(line) = self
                             .input_panel_state
@@ -86,6 +88,7 @@ impl Tui {
                         self.set_mode(InputMode::VimInsert);
                     } else if operator == VimOperator::Delete {
                         self.input_panel_state.textarea.delete_next_word();
+                        self.sync_attachments_from_input_tokens();
                         // Delete trailing whitespace
                         while let Some(line) = self
                             .input_panel_state
@@ -110,25 +113,31 @@ impl Tui {
                 KeyCode::Char('b') => {
                     if operator == VimOperator::Change {
                         self.input_panel_state.textarea.delete_word();
+                        self.sync_attachments_from_input_tokens();
                         self.set_mode(InputMode::VimInsert);
                     } else if operator == VimOperator::Delete {
                         self.input_panel_state.textarea.delete_word();
+                        self.sync_attachments_from_input_tokens();
                     }
                 }
                 KeyCode::Char('$') => {
                     if operator == VimOperator::Change {
                         self.input_panel_state.textarea.delete_line_by_end();
+                        self.sync_attachments_from_input_tokens();
                         self.set_mode(InputMode::VimInsert);
                     } else if operator == VimOperator::Delete {
                         self.input_panel_state.textarea.delete_line_by_end();
+                        self.sync_attachments_from_input_tokens();
                     }
                 }
                 KeyCode::Char('0' | '^') => {
                     if operator == VimOperator::Change {
                         self.input_panel_state.textarea.delete_line_by_head();
+                        self.sync_attachments_from_input_tokens();
                         self.set_mode(InputMode::VimInsert);
                     } else if operator == VimOperator::Delete {
                         self.input_panel_state.textarea.delete_line_by_head();
+                        self.sync_attachments_from_input_tokens();
                     }
                 }
                 KeyCode::Esc => { /* Cancel operator */ }
@@ -158,6 +167,7 @@ impl Tui {
                     } else {
                         // Otherwise just clear the buffer
                         self.input_panel_state.clear();
+                        self.sync_attachments_from_input_tokens();
                     }
                     // Clear tracker to avoid triple-tap behaviour
                     self.double_tap_tracker.clear_key(&KeyCode::Esc);
@@ -200,6 +210,7 @@ impl Tui {
                 if self.vim_state.pending_operator == Some(VimOperator::Delete) {
                     // dd - delete line
                     self.input_panel_state.clear();
+                    self.sync_attachments_from_input_tokens();
                     self.vim_state.pending_operator = None;
                 } else {
                     self.vim_state.pending_operator = Some(VimOperator::Delete);
@@ -211,6 +222,7 @@ impl Tui {
                 if self.vim_state.pending_operator == Some(VimOperator::Change) {
                     // cc - change line
                     self.input_panel_state.clear();
+                    self.sync_attachments_from_input_tokens();
                     self.set_mode(InputMode::VimInsert);
                     self.vim_state.pending_operator = None;
                 } else {
@@ -264,22 +276,28 @@ impl Tui {
             // Text manipulation
             KeyCode::Char('x') => {
                 self.input_panel_state.textarea.delete_next_char();
+                self.sync_attachments_from_input_tokens();
             }
             KeyCode::Char('X') => {
                 self.input_panel_state.textarea.delete_char();
+                self.sync_attachments_from_input_tokens();
             }
             KeyCode::Char('D') => {
                 self.input_panel_state.textarea.delete_line_by_end();
+                self.sync_attachments_from_input_tokens();
             }
             KeyCode::Char('C') => {
                 self.input_panel_state.textarea.delete_line_by_end();
+                self.sync_attachments_from_input_tokens();
                 self.set_mode(InputMode::VimInsert);
             }
             KeyCode::Char('p') => {
                 self.input_panel_state.textarea.paste();
+                self.sync_attachments_from_input_tokens();
             }
             KeyCode::Char('u') => {
                 self.input_panel_state.textarea.undo();
+                self.sync_attachments_from_input_tokens();
             }
             KeyCode::Char('~') => {
                 let pos = self.input_panel_state.textarea.cursor();
@@ -294,6 +312,7 @@ impl Tui {
                         ch.to_uppercase().to_string()
                     };
                     self.input_panel_state.textarea.insert_str(&toggled);
+                    self.sync_attachments_from_input_tokens();
                 }
             }
             KeyCode::Char('J') => {
@@ -303,6 +322,7 @@ impl Tui {
                 if pos.0 < lines.len() - 1 {
                     self.input_panel_state.textarea.delete_next_char();
                     self.input_panel_state.textarea.insert_char(' ');
+                    self.sync_attachments_from_input_tokens();
                 }
             }
 
@@ -365,12 +385,14 @@ impl Tui {
             KeyCode::Char(ch) if self.vim_state.replace_mode => {
                 self.input_panel_state.textarea.delete_next_char();
                 self.input_panel_state.textarea.insert_char(ch);
+                self.sync_attachments_from_input_tokens();
                 self.vim_state.replace_mode = false;
             }
 
             KeyCode::Char('/') => {
                 // Switch to command mode with fuzzy finder like Simple/VimInsert modes
                 self.input_panel_state.clear();
+                self.sync_attachments_from_input_tokens();
                 self.input_panel_state.insert_str("/");
                 // Activate command fuzzy finder immediately
                 self.input_panel_state.activate_command_fuzzy();
@@ -392,6 +414,7 @@ impl Tui {
             }
             KeyCode::Char('!') => {
                 self.input_panel_state.clear();
+                self.sync_attachments_from_input_tokens();
                 self.input_panel_state
                     .textarea
                     .set_placeholder_text("Enter bash command...");
@@ -431,6 +454,7 @@ impl Tui {
                 {
                     // Double ESC - clear content
                     self.input_panel_state.clear();
+                    self.sync_attachments_from_input_tokens();
                     self.double_tap_tracker.clear_key(&KeyCode::Esc);
                 } else {
                     // Single ESC - return to normal mode
@@ -457,6 +481,7 @@ impl Tui {
                         _ => head.content.clone(),
                     };
                     self.input_panel_state.replace_content(&content, None);
+                    self.sync_attachments_from_input_tokens();
                 }
             }
 
@@ -483,6 +508,7 @@ impl Tui {
                     let old_editing_mode = self.preferences.ui.editing_mode;
                     self.handle_slash_command(content).await?;
                     self.input_panel_state.clear();
+                    self.sync_attachments_from_input_tokens();
                     self.pending_attachments.clear();
                     // Return to VimNormal only if we're *still* in VimInsert and the
                     // editing mode hasn’t changed (e.g. not switched into Setup).
@@ -495,6 +521,7 @@ impl Tui {
                     // Send as normal message
                     self.send_message(content).await?;
                     self.input_panel_state.clear();
+                    self.sync_attachments_from_input_tokens();
                     self.pending_attachments.clear();
                     self.set_mode(InputMode::VimNormal);
                 }
@@ -511,12 +538,14 @@ impl Tui {
                 } else {
                     // Normal ! character
                     self.input_panel_state.handle_input(Input::from(key));
+                    self.sync_attachments_from_input_tokens();
                 }
             }
 
             KeyCode::Char('@') => {
                 // Activate file fuzzy finder
                 self.input_panel_state.handle_input(Input::from(key));
+                self.sync_attachments_from_input_tokens();
                 self.input_panel_state.activate_fuzzy();
                 self.switch_mode(InputMode::FuzzyFinder);
 
@@ -545,6 +574,7 @@ impl Tui {
                 if content.is_empty() {
                     // Activate command fuzzy finder
                     self.input_panel_state.handle_input(Input::from(key));
+                    self.sync_attachments_from_input_tokens();
                     self.input_panel_state.activate_command_fuzzy();
                     self.switch_mode(InputMode::FuzzyFinder);
 
@@ -564,6 +594,7 @@ impl Tui {
                 } else {
                     // Normal / character
                     self.input_panel_state.handle_input(Input::from(key));
+                    self.sync_attachments_from_input_tokens();
                 }
             }
 
@@ -579,6 +610,7 @@ impl Tui {
             _ => {
                 // Normal text input
                 self.input_panel_state.handle_input(Input::from(key));
+                self.sync_attachments_from_input_tokens();
             }
         }
         Ok(false)

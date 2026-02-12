@@ -10,15 +10,20 @@ impl FuzzyFinderHelper {
         let lines: Vec<&str> = content.split('\n').collect();
         let mut offset = 0;
 
-        // Add up all the bytes from lines before the cursor
+        // Add up all the bytes from lines before the cursor.
+        // `cursor_col` is a character index, not a byte index, so we must
+        // translate columns to UTF-8 byte offsets explicitly.
         for (i, line) in lines.iter().enumerate() {
             match i.cmp(&cursor_row) {
                 std::cmp::Ordering::Less => {
                     offset += line.len() + 1; // +1 for the newline
                 }
                 std::cmp::Ordering::Equal => {
-                    // For the cursor line, only count up to the cursor column
-                    offset += line[..cursor_col.min(line.len())].len();
+                    offset += line
+                        .chars()
+                        .take(cursor_col)
+                        .map(char::len_utf8)
+                        .sum::<usize>();
                     break;
                 }
                 std::cmp::Ordering::Greater => break,

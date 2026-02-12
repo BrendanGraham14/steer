@@ -81,6 +81,21 @@ impl Tui {
                 Ok(true)
             }
 
+            (KeyCode::Backspace, KeyModifiers::NONE) => {
+                if self.handle_atomic_backspace_delete(false) {
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            (KeyCode::Delete, KeyModifiers::NONE) => {
+                if self.handle_atomic_backspace_delete(true) {
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+
             // Text deletion
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
                 self.input_panel_state.textarea.delete_line_by_head();
@@ -111,19 +126,6 @@ impl Tui {
 
             (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
                 Ok(self.try_attach_image_from_clipboard())
-            }
-
-            (KeyCode::Char('x'), KeyModifiers::CONTROL) => {
-                if self.pending_attachments.is_empty() {
-                    Ok(false)
-                } else {
-                    self.pending_attachments.clear();
-                    self.push_notice(
-                        crate::tui::model::NoticeLevel::Info,
-                        "Cleared pending image attachments.".to_string(),
-                    );
-                    Ok(true)
-                }
             }
 
             // Multi-line support

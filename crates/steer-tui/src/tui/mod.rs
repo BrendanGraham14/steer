@@ -9,6 +9,16 @@ use std::time::Duration;
 
 use base64::Engine as _;
 
+const IMAGE_TOKEN_LABEL_PREFIX: &str = "[Image: ";
+const IMAGE_TOKEN_LABEL_SUFFIX: &str = "]";
+const FIRST_ATTACHMENT_TOKEN: u32 = 0xE000;
+
+#[derive(Debug, Clone)]
+struct PendingAttachment {
+    image: ImageContent,
+    token: char,
+}
+
 use crate::tui::update::UpdateStatus;
 
 use crate::error::{Error, Result};
@@ -54,6 +64,117 @@ fn has_any_auth_source(source: Option<&steer_grpc::client_api::AuthSource>) -> b
                 | steer_grpc::client_api::AuthSource::Plugin { .. }
         )
     )
+}
+
+fn format_inline_image_token(mime_type: &str) -> String {
+    format!("{IMAGE_TOKEN_LABEL_PREFIX}{mime_type}{IMAGE_TOKEN_LABEL_SUFFIX}")
+}
+
+fn attachment_spans(content: &str, attachments: &[PendingAttachment]) -> Vec<(char, usize, usize)> {
+    let mut spans = Vec::new();
+
+    for (start, ch) in content.char_indices() {
+        let Some(attachment) = attachments.iter().find(|attachment| attachment.token == ch) else {
+            continue;
+        };
+
+        let mut end = start + ch.len_utf8();
+        let label = format_inline_image_token(&attachment.image.mime_type);
+        if content[end..].starts_with(&label) {
+            end += label.len();
+        }
+
+        spans.push((attachment.token, start, end));
+    }
+
+    spans
+}
+
+fn parse_inline_message_content(content: &str, images: &[PendingAttachment]) -> Vec<UserContent> {
+    if images.is_empty() {
+        let trimmed = content.trim().to_string();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        return vec![UserContent::Text { text: trimmed }];
+    }
+
+    let mut result = Vec::new();
+    let mut text_buf = String::new();
+    let mut cursor = 0;
+
+    while cursor < content.len() {
+        let ch = match content[cursor..].chars().next() {
+            Some(ch) => ch,
+            None => break,
+        };
+
+        if let Some(attachment) = images.iter().find(|attachment| attachment.token == ch) {
+            let trimmed = text_buf.trim().to_string();
+            if !trimmed.is_empty() {
+                result.push(UserContent::Text { text: trimmed });
+            }
+            text_buf.clear();
+            result.push(UserContent::Image {
+                image: attachment.image.clone(),
+            });
+
+            cursor += ch.len_utf8();
+            let label = format_inline_image_token(&attachment.image.mime_type);
+            if content[cursor..].starts_with(&label) {
+                cursor += label.len();
+            }
+            continue;
+        }
+
+        text_buf.push(ch);
+        cursor += ch.len_utf8();
+    }
+
+    let trimmed = text_buf.trim().to_string();
+    if !trimmed.is_empty() {
+        result.push(UserContent::Text { text: trimmed });
+    }
+
+    result
+}
+
+fn strip_image_token_labels(content: &str) -> String {
+    let mut output = String::new();
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        let ch_u32 = ch as u32;
+        if !(FIRST_ATTACHMENT_TOKEN..=0xF8FF).contains(&ch_u32) {
+            output.push(ch);
+            i += 1;
+            continue;
+        }
+
+        output.push(ch);
+        i += 1;
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+
+        let mut j = i;
+        while j < chars.len() && chars[j] != ']' {
+            j += 1;
+        }
+
+        if j < chars.len() {
+            let candidate: String = chars[i..=j].iter().collect();
+            if candidate.starts_with(IMAGE_TOKEN_LABEL_PREFIX)
+                && candidate.ends_with(IMAGE_TOKEN_LABEL_SUFFIX)
+            {
+                i = j + 1;
+            }
+        }
+    }
+
+    output
 }
 
 fn decode_pasted_image(data: &str) -> Option<ImageContent> {
@@ -242,7 +363,8 @@ pub struct Tui {
     /// The ID of the message being edited (if any)
     editing_message_id: Option<String>,
     /// Pending image attachments to include on next send.
-    pending_attachments: Vec<ImageContent>,
+    pending_attachments: Vec<PendingAttachment>,
+    next_attachment_token: u32,
     /// Handle to send commands to the app
     client: AgentClient,
     /// Are we currently processing a request?
@@ -358,15 +480,199 @@ impl Tui {
         self.input_panel_state.has_content() || !self.pending_attachments.is_empty()
     }
 
-    fn add_pending_attachment(&mut self, image: ImageContent, source: &str) {
-        self.pending_attachments.push(image);
-        self.push_notice(
-            NoticeLevel::Info,
-            format!(
-                "Attached image from {source} ({} pending)",
-                self.pending_attachments.len()
-            ),
-        );
+    fn next_attachment_token(&mut self) -> Option<char> {
+        let max = 0x0010_FFFF;
+        while self.next_attachment_token <= max {
+            let candidate = self.next_attachment_token;
+            self.next_attachment_token += 1;
+
+            let Some(token) = char::from_u32(candidate) else {
+                continue;
+            };
+            if token.is_control() || token == '\n' || token == '\r' {
+                continue;
+            }
+            if !((FIRST_ATTACHMENT_TOKEN..=0xF8FF).contains(&(token as u32))) {
+                continue;
+            }
+            if self
+                .pending_attachments
+                .iter()
+                .any(|attachment| attachment.token == token)
+            {
+                continue;
+            }
+            return Some(token);
+        }
+
+        None
+    }
+
+    fn remove_attachment_for_token(&mut self, token: char) {
+        if let Some(index) = self
+            .pending_attachments
+            .iter()
+            .position(|attachment| attachment.token == token)
+        {
+            self.pending_attachments.remove(index);
+        }
+    }
+
+    fn add_pending_attachment(&mut self, image: ImageContent) {
+        let Some(token) = self.next_attachment_token() else {
+            warn!(target: "tui.input", "Ran out of attachment token characters");
+            self.push_notice(
+                NoticeLevel::Warn,
+                "Unable to attach more images in this input.".to_string(),
+            );
+            return;
+        };
+
+        let mime_type = image.mime_type.clone();
+        self.pending_attachments
+            .push(PendingAttachment { image, token });
+        self.input_panel_state.textarea.insert_char(token);
+        self.input_panel_state
+            .textarea
+            .insert_str(&format_inline_image_token(&mime_type));
+    }
+
+    fn cursor_position_from_byte_offset(content: &str, byte_offset: usize) -> (u16, u16) {
+        let offset = byte_offset.min(content.len());
+        let mut row = 0usize;
+        let mut col = 0usize;
+
+        for ch in content[..offset].chars() {
+            if ch == '\n' {
+                row += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+
+        (
+            u16::try_from(row).unwrap_or(u16::MAX),
+            u16::try_from(col).unwrap_or(u16::MAX),
+        )
+    }
+
+    fn replace_input_content_with_cursor_offset(&mut self, content: &str, cursor_offset: usize) {
+        let cursor = Self::cursor_position_from_byte_offset(content, cursor_offset);
+        self.input_panel_state
+            .replace_content(content, Some(cursor));
+    }
+
+    fn replace_input_content_preserving_cursor(&mut self, content: &str) {
+        let current_content = self.input_panel_state.content();
+        let cursor_offset = self
+            .input_panel_state
+            .get_cursor_byte_offset()
+            .min(current_content.len())
+            .min(content.len());
+        self.replace_input_content_with_cursor_offset(content, cursor_offset);
+    }
+
+    fn sync_attachments_from_input_tokens(&mut self) {
+        let content = self.input_panel_state.content();
+
+        if self.pending_attachments.is_empty() {
+            let stripped = strip_image_token_labels(&content);
+            if stripped != content {
+                self.replace_input_content_preserving_cursor(&stripped);
+            }
+            return;
+        }
+
+        let mut normalized = String::new();
+        let mut cursor = 0usize;
+        let mut retained_tokens: HashSet<char> = HashSet::new();
+
+        while cursor < content.len() {
+            let Some(ch) = content[cursor..].chars().next() else {
+                break;
+            };
+
+            if let Some(attachment) = self
+                .pending_attachments
+                .iter()
+                .find(|attachment| attachment.token == ch)
+            {
+                let label = format_inline_image_token(&attachment.image.mime_type);
+                retained_tokens.insert(attachment.token);
+                normalized.push(ch);
+                normalized.push_str(&label);
+
+                cursor += ch.len_utf8();
+                if content[cursor..].starts_with(&label) {
+                    cursor += label.len();
+                } else if content[cursor..].starts_with(IMAGE_TOKEN_LABEL_PREFIX)
+                    && let Some(label_end) = content[cursor..].find(']')
+                {
+                    cursor += label_end + 1;
+                }
+                continue;
+            }
+
+            normalized.push(ch);
+            cursor += ch.len_utf8();
+        }
+
+        self.pending_attachments
+            .retain(|attachment| retained_tokens.contains(&attachment.token));
+
+        let normalized = if self.pending_attachments.is_empty() {
+            strip_image_token_labels(&normalized)
+        } else {
+            normalized
+        };
+
+        if normalized != content {
+            self.replace_input_content_preserving_cursor(&normalized);
+        }
+    }
+
+    fn handle_atomic_backspace_delete(&mut self, delete_forward: bool) -> bool {
+        if self.pending_attachments.is_empty() {
+            return false;
+        }
+
+        let content = self.input_panel_state.content();
+        let cursor_offset = self
+            .input_panel_state
+            .get_cursor_byte_offset()
+            .min(content.len());
+
+        let target_offset = if delete_forward {
+            if cursor_offset >= content.len() {
+                return false;
+            }
+            cursor_offset
+        } else {
+            if cursor_offset == 0 {
+                return false;
+            }
+
+            match content[..cursor_offset].char_indices().next_back() {
+                Some((idx, _)) => idx,
+                None => return false,
+            }
+        };
+
+        let Some((token, start, end)) = attachment_spans(&content, &self.pending_attachments)
+            .into_iter()
+            .find(|(_, start, end)| (*start..*end).contains(&target_offset))
+        else {
+            return false;
+        };
+
+        let mut next_content = String::new();
+        next_content.push_str(&content[..start]);
+        next_content.push_str(&content[end..]);
+
+        self.remove_attachment_for_token(token);
+        self.replace_input_content_with_cursor_offset(&next_content, start);
+        true
     }
 
     fn try_attach_image_from_clipboard(&mut self) -> bool {
@@ -389,7 +695,7 @@ impl Tui {
         if let Some(image_content) =
             encode_clipboard_rgba_image(image.width, image.height, image.bytes.as_ref())
         {
-            self.add_pending_attachment(image_content, "clipboard");
+            self.add_pending_attachment(image_content);
             true
         } else {
             warn!(
@@ -450,6 +756,7 @@ impl Tui {
             ),
             editing_message_id: None,
             pending_attachments: Vec::new(),
+            next_attachment_token: FIRST_ATTACHMENT_TOKEN,
             client,
             is_processing: false,
             progress_message: None,
@@ -933,7 +1240,8 @@ impl Tui {
 
                     let maybe_image = decode_pasted_image(&data);
                     let had_image = maybe_image.is_some();
-                    let normalized_data = data.replace("\r\n", "\n").replace('\r', "\n");
+                    let normalized_data =
+                        strip_image_token_labels(&data.replace("\r\n", "\n").replace('\r', "\n"));
                     let mut text_inserted = false;
                     if !normalized_data.is_empty() {
                         self.input_panel_state.insert_str(&normalized_data);
@@ -947,7 +1255,7 @@ impl Tui {
                     }
 
                     if let Some(image) = maybe_image {
-                        self.add_pending_attachment(image, "paste");
+                        self.add_pending_attachment(image);
                     }
 
                     if text_inserted || had_image {
@@ -1452,16 +1760,7 @@ impl Tui {
             return Ok(());
         }
 
-        let mut content_blocks = Vec::new();
-        if !content.is_empty() {
-            content_blocks.push(UserContent::Text { text: content });
-        }
-        content_blocks.extend(
-            self.pending_attachments
-                .iter()
-                .cloned()
-                .map(|image| UserContent::Image { image }),
-        );
+        let content_blocks = parse_inline_message_content(&content, &self.pending_attachments);
 
         if let Err(e) = self
             .client
@@ -2303,6 +2602,98 @@ mod tests {
         } else {
             panic!("Tool call should be in registry");
         }
+    }
+
+    #[test]
+    fn strip_image_token_labels_removes_rendered_image_marker_text() {
+        let content = format!("hello{IMAGE_TOKEN_CHAR}[Image: image/png] world");
+        assert_eq!(strip_image_token_labels(&content), "hello world");
+    }
+
+    #[test]
+    fn parse_inline_message_content_preserves_text_image_order() {
+        let first = PendingAttachment {
+            image: ImageContent {
+                source: ImageSource::DataUrl {
+                    data_url: "data:image/png;base64,AAAA".to_string(),
+                },
+                mime_type: "image/png".to_string(),
+                width: Some(1),
+                height: Some(1),
+                bytes: Some(4),
+                sha256: None,
+            },
+            token: 'A',
+        };
+        let second = PendingAttachment {
+            image: ImageContent {
+                source: ImageSource::DataUrl {
+                    data_url: "data:image/jpeg;base64,BBBB".to_string(),
+                },
+                mime_type: "image/jpeg".to_string(),
+                width: Some(1),
+                height: Some(1),
+                bytes: Some(4),
+                sha256: None,
+            },
+            token: 'B',
+        };
+
+        let content = format!("before {} middle {} after", first.token, second.token);
+        let parsed = parse_inline_message_content(&content, &[first.clone(), second.clone()]);
+
+        assert_eq!(parsed.len(), 5);
+        assert!(matches!(
+            &parsed[0],
+            UserContent::Text { text } if text == "before"
+        ));
+        assert!(matches!(
+            &parsed[1],
+            UserContent::Image { image } if image.mime_type == first.image.mime_type
+        ));
+        assert!(matches!(
+            &parsed[2],
+            UserContent::Text { text } if text == "middle"
+        ));
+        assert!(matches!(
+            &parsed[3],
+            UserContent::Image { image } if image.mime_type == second.image.mime_type
+        ));
+        assert!(matches!(
+            &parsed[4],
+            UserContent::Text { text } if text == "after"
+        ));
+    }
+
+    #[test]
+    fn parse_inline_message_content_skips_marker_labels_after_tokens() {
+        let attachment = PendingAttachment {
+            image: ImageContent {
+                source: ImageSource::DataUrl {
+                    data_url: "data:image/png;base64,AAAA".to_string(),
+                },
+                mime_type: "image/png".to_string(),
+                width: Some(1),
+                height: Some(1),
+                bytes: Some(4),
+                sha256: None,
+            },
+            token: 'A',
+        };
+
+        let content = format!(
+            "look {}{} done",
+            attachment.token,
+            format_inline_image_token(&attachment.image.mime_type)
+        );
+        let parsed = parse_inline_message_content(&content, &[attachment.clone()]);
+
+        assert_eq!(parsed.len(), 3);
+        assert!(matches!(&parsed[1], UserContent::Image { .. }));
+        assert!(matches!(
+            &parsed[2],
+            UserContent::Text { text } if text == "done"
+        ));
     }
 
     #[test]

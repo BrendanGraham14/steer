@@ -42,16 +42,8 @@ impl Tui {
                 }
                 FuzzyFinderMode::Files | FuzzyFinderMode::Commands => {
                     let content = self.input_panel_state.content();
-                    let (row, col) = self.input_panel_state.textarea.cursor();
-                    // Get absolute byte offset of cursor by summing line lengths + newlines
-                    let mut offset = 0usize;
-                    for (i, line) in self.input_panel_state.textarea.lines().iter().enumerate() {
-                        if i == row {
-                            offset += col;
-                            break;
-                        }
-                        offset += line.len() + 1;
-                    }
+                    let offset = self.input_panel_state.get_cursor_byte_offset();
+
                     // Check if we have a stored trigger position
                     if let Some(trigger_pos) =
                         self.input_panel_state.fuzzy_finder.trigger_position()
@@ -60,22 +52,9 @@ impl Tui {
                         if offset <= trigger_pos {
                             false // Cursor before the trigger
                         } else {
-                            let bytes = content.as_bytes();
-                            // Check for whitespace between trigger and cursor
-                            let mut still_in_word = true;
-                            for idx in trigger_pos + 1..offset {
-                                if idx >= bytes.len() {
-                                    break;
-                                }
-                                match bytes[idx] {
-                                    b' ' | b'\t' | b'\n' => {
-                                        still_in_word = false;
-                                        break;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            still_in_word
+                            content[trigger_pos + 1..offset]
+                                .chars()
+                                .all(|ch| !ch.is_whitespace())
                         }
                     } else {
                         false // No trigger position stored

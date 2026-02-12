@@ -40,6 +40,7 @@ impl Tui {
                     } else {
                         // Has content - clear it
                         self.input_panel_state.clear();
+                        self.pending_attachments.clear();
                     }
                     // Clear to prevent triple-tap
                     self.double_tap_tracker.clear_key(&KeyCode::Esc);
@@ -71,6 +72,7 @@ impl Tui {
                         KeyCode::Char('\n'),
                         KeyModifiers::empty(),
                     )));
+                self.sync_attachments_from_input_tokens();
             }
 
             KeyCode::Enter => {
@@ -110,6 +112,7 @@ impl Tui {
                 } else {
                     // Normal ! character
                     self.input_panel_state.handle_input(Input::from(key));
+                    self.sync_attachments_from_input_tokens();
                 }
             }
 
@@ -137,12 +140,14 @@ impl Tui {
                 } else {
                     // Normal / character
                     self.input_panel_state.handle_input(Input::from(key));
+                    self.sync_attachments_from_input_tokens();
                 }
             }
 
             KeyCode::Char('@') => {
                 // Always activate file fuzzy finder
                 self.input_panel_state.handle_input(Input::from(key));
+                self.sync_attachments_from_input_tokens();
                 self.input_panel_state.activate_fuzzy();
                 self.switch_mode(InputMode::FuzzyFinder);
 
@@ -188,6 +193,7 @@ impl Tui {
                         _ => head.content.clone(),
                     };
                     self.input_panel_state.replace_content(&content, None);
+                    self.sync_attachments_from_input_tokens();
                 }
             }
 
@@ -204,6 +210,7 @@ impl Tui {
 
                 // Normal text input
                 self.input_panel_state.handle_input(Input::from(key));
+                self.sync_attachments_from_input_tokens();
 
                 // Reset placeholder if needed
                 if self.input_panel_state.content().is_empty() {
