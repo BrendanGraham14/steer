@@ -85,6 +85,35 @@ fn decode_pasted_image(data: &str) -> Option<ImageContent> {
     })
 }
 
+fn encode_clipboard_rgba_image(
+    width: usize,
+    height: usize,
+    rgba_bytes: &[u8],
+) -> Option<ImageContent> {
+    let width = u32::try_from(width).ok()?;
+    let height = u32::try_from(height).ok()?;
+    let rgba = image::RgbaImage::from_raw(width, height, rgba_bytes.to_vec())?;
+
+    let mut png_cursor = io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(rgba)
+        .write_to(&mut png_cursor, ImageFormat::Png)
+        .ok()?;
+
+    let png_bytes = png_cursor.into_inner();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+
+    Some(ImageContent {
+        source: ImageSource::DataUrl {
+            data_url: format!("data:image/png;base64,{encoded}"),
+        },
+        mime_type: "image/png".to_string(),
+        width: Some(width),
+        height: Some(height),
+        bytes: u64::try_from(png_bytes.len()).ok(),
+        sha256: None,
+    })
+}
+
 pub(crate) fn format_agent_label(primary_agent_id: &str) -> String {
     let agent_id = if primary_agent_id.is_empty() {
         default_primary_agent_id()
@@ -328,6 +357,56 @@ impl Tui {
     fn has_pending_send_content(&self) -> bool {
         self.input_panel_state.has_content() || !self.pending_attachments.is_empty()
     }
+
+    fn add_pending_attachment(&mut self, image: ImageContent, source: &str) {
+        self.pending_attachments.push(image);
+        self.push_notice(
+            NoticeLevel::Info,
+            format!(
+                "Attached image from {source} ({} pending)",
+                self.pending_attachments.len()
+            ),
+        );
+    }
+
+    fn try_attach_image_from_clipboard(&mut self) -> bool {
+        let mut clipboard = match arboard::Clipboard::new() {
+            Ok(clipboard) => clipboard,
+            Err(err) => {
+                debug!(target: "tui.input", "Clipboard unavailable for Ctrl+V: {err}");
+                return false;
+            }
+        };
+
+        let image = match clipboard.get_image() {
+            Ok(image) => image,
+            Err(err) => {
+                debug!(target: "tui.input", "No clipboard image found for Ctrl+V: {err}");
+                return false;
+            }
+        };
+
+        if let Some(image_content) =
+            encode_clipboard_rgba_image(image.width, image.height, image.bytes.as_ref())
+        {
+            self.add_pending_attachment(image_content, "clipboard");
+            true
+        } else {
+            warn!(
+                target: "tui.input",
+                "Clipboard image had invalid dimensions: {}x{} ({} bytes)",
+                image.width,
+                image.height,
+                image.bytes.len()
+            );
+            self.push_notice(
+                NoticeLevel::Warn,
+                "Clipboard image format is unsupported.".to_string(),
+            );
+            true
+        }
+    }
+
     /// Create a new TUI instance
     pub async fn new(
         client: AgentClient,
@@ -868,14 +947,7 @@ impl Tui {
                     }
 
                     if let Some(image) = maybe_image {
-                        self.pending_attachments.push(image);
-                        self.push_notice(
-                            NoticeLevel::Info,
-                            format!(
-                                "Attached image from paste ({} pending)",
-                                self.pending_attachments.len()
-                            ),
-                        );
+                        self.add_pending_attachment(image, "paste");
                     }
 
                     if text_inserted || had_image {
@@ -2251,5 +2323,30 @@ mod tests {
         let not_image = base64::engine::general_purpose::STANDARD.encode("plain text");
         let decoded = decode_pasted_image(&not_image);
         assert!(decoded.is_none());
+    }
+
+    #[test]
+    fn encode_clipboard_rgba_image_converts_to_png_data_url() {
+        let rgba = [255_u8, 0, 0, 255];
+        let image = encode_clipboard_rgba_image(1, 1, &rgba);
+
+        assert!(image.is_some(), "expected clipboard image to encode");
+        let image = match image {
+            Some(image) => image,
+            None => unreachable!("asserted Some above"),
+        };
+
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(image.width, Some(1));
+        assert_eq!(image.height, Some(1));
+        assert!(matches!(image.bytes, Some(bytes) if bytes > 0));
+        assert!(matches!(image.source, ImageSource::DataUrl { .. }));
+    }
+
+    #[test]
+    fn encode_clipboard_rgba_image_rejects_invalid_pixel_data() {
+        let invalid_rgba = [255_u8, 0, 0];
+        let image = encode_clipboard_rgba_image(1, 1, &invalid_rgba);
+        assert!(image.is_none());
     }
 }

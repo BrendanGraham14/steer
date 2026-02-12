@@ -109,6 +109,10 @@ impl Tui {
                 Ok(true)
             }
 
+            (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
+                Ok(self.try_attach_image_from_clipboard())
+            }
+
             (KeyCode::Char('x'), KeyModifiers::CONTROL) => {
                 if self.pending_attachments.is_empty() {
                     Ok(false)
