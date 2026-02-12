@@ -7,8 +7,8 @@ version = "0.10.0"
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 edition = "2024"
 license = "AGPL-3.0-or-later"
-homepage = "https://github.com/brendangraham14/steer"
-repository = "https://github.com/brendangraham14/steer"
+homepage = "https://github.com/BrendanGraham14/steer"
+repository = "https://github.com/BrendanGraham14/steer"
 
 [workspace.dependencies]
 steer = { version = "0.10.0", path = "crates/steer" }
