@@ -8,7 +8,7 @@ use crate::tui::core_commands::{CommandResponse, CoreCommandType};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::{ChatItemData, NoticeLevel, generate_row_id};
 use async_trait::async_trait;
-use steer_grpc::client_api::ClientEvent;
+use steer_grpc::client_api::{ClientEvent, CompactResult};
 
 /// Processor for system-level events
 pub struct SystemEventProcessor {
@@ -65,6 +65,9 @@ impl EventProcessor for SystemEventProcessor {
                 ProcessingResult::Handled
             }
             ClientEvent::CompactResult { result } => {
+                if matches!(result, CompactResult::Success(_)) {
+                    ctx.llm_usage.clear();
+                }
                 let chat_item = crate::tui::model::ChatItem {
                     parent_chat_item_id: None,
                     data: ChatItemData::CoreCmdResponse {
@@ -106,5 +109,125 @@ impl Default for SystemEventProcessor {
         Self::new(std::sync::Arc::new(NotificationManager::new(
             &steer_grpc::client_api::Preferences::default(),
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::events::processor::{PendingToolApproval, ProcessingContext};
+    use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
+    use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
+    use steer_grpc::AgentClient;
+    use steer_grpc::client_api::{
+        ContextWindowUsage, ModelId, OpId, Preferences, QueuedWorkItem, TokenUsage,
+        UsageUpdateKind, builtin,
+    };
+
+    struct TestContext {
+        chat_store: ChatStore,
+        chat_list_state: ChatListState,
+        tool_registry: ToolCallRegistry,
+        client: AgentClient,
+        input_panel_state: InputPanelState,
+        is_processing: bool,
+        progress_message: Option<String>,
+        spinner_state: usize,
+        current_tool_approval: Option<PendingToolApproval>,
+        current_model: ModelId,
+        current_agent_label: Option<String>,
+        messages_updated: bool,
+        in_flight_operations: std::collections::HashSet<OpId>,
+        queued_head: Option<QueuedWorkItem>,
+        queued_count: usize,
+        llm_usage: LlmUsageState,
+        _workspace_root: tempfile::TempDir,
+    }
+
+    async fn create_test_context() -> TestContext {
+        let chat_store = ChatStore::new();
+        let chat_list_state = ChatListState::new();
+        let tool_registry = ToolCallRegistry::new();
+        let workspace_root = tempfile::TempDir::new().expect("tempdir");
+        let (client, _server_handle) = crate::tui::test_utils::local_client_and_server(
+            None,
+            Some(workspace_root.path().to_path_buf()),
+        )
+        .await;
+
+        TestContext {
+            chat_store,
+            chat_list_state,
+            tool_registry,
+            client,
+            input_panel_state: InputPanelState::new("test_session".to_string()),
+            is_processing: false,
+            progress_message: None,
+            spinner_state: 0,
+            current_tool_approval: None,
+            current_model: builtin::claude_sonnet_4_5(),
+            current_agent_label: None,
+            messages_updated: false,
+            in_flight_operations: std::collections::HashSet::new(),
+            queued_head: None,
+            queued_count: 0,
+            llm_usage: LlmUsageState::default(),
+            _workspace_root: workspace_root,
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_success_clears_ctx_usage() {
+        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
+            &Preferences::default(),
+        )));
+        let mut ctx = create_test_context().await;
+
+        let op_id = OpId::new();
+        ctx.llm_usage.update(
+            op_id,
+            builtin::claude_sonnet_4_5(),
+            TokenUsage::from_input_output(90, 30),
+            Some(ContextWindowUsage {
+                max_context_tokens: Some(128_000),
+                remaining_tokens: Some(100_000),
+                utilization_ratio: Some(0.21875),
+                estimated: false,
+            }),
+            UsageUpdateKind::Final,
+        );
+
+        let notification_manager = std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
+        let mut processing_ctx = ProcessingContext {
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            client: &ctx.client,
+            notification_manager: &notification_manager,
+            input_panel_state: &mut ctx.input_panel_state,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
+            messages_updated: &mut ctx.messages_updated,
+            in_flight_operations: &mut ctx.in_flight_operations,
+            queued_head: &mut ctx.queued_head,
+            queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
+        };
+
+        let result = processor
+            .process(
+                ClientEvent::CompactResult {
+                    result: CompactResult::Success("summarized".to_string()),
+                },
+                &mut processing_ctx,
+            )
+            .await;
+
+        assert!(matches!(result, ProcessingResult::Handled));
+        assert!(processing_ctx.llm_usage.latest().is_none());
     }
 }

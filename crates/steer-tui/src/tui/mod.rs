@@ -901,6 +901,10 @@ impl Tui {
         });
     }
 
+    fn clear_ctx_utilization(&mut self) {
+        self.llm_usage.clear();
+    }
+
     fn format_grpc_error(error: &steer_grpc::GrpcError) -> String {
         match error {
             steer_grpc::GrpcError::CallFailed(status) => status.message().to_string(),
@@ -989,7 +993,7 @@ impl Tui {
         self.tool_registry = ToolCallRegistry::new();
         self.chat_viewport = ChatViewport::new();
         self.in_flight_operations.clear();
-        self.llm_usage.clear();
+        self.clear_ctx_utilization();
         self.input_panel_state =
             crate::tui::widgets::input_panel::InputPanelState::new(new_session_id.clone());
         self.is_processing = false;
@@ -1785,7 +1789,7 @@ impl Tui {
             } else {
                 let content_blocks =
                     parse_inline_message_content(&content, &self.pending_attachments);
-                if let Err(e) = self
+                match self
                     .client
                     .edit_message(
                         message_id_to_edit,
@@ -1794,7 +1798,8 @@ impl Tui {
                     )
                     .await
                 {
-                    self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
+                    Ok(()) => self.clear_ctx_utilization(),
+                    Err(e) => self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e)),
                 }
             }
             self.pending_attachments.clear();
@@ -2095,12 +2100,13 @@ impl Tui {
             }
             TuiAppCommand::Core(core_cmd) => match core_cmd {
                 crate::tui::core_commands::CoreCommandType::Compact => {
-                    if let Err(e) = self
+                    match self
                         .client
                         .compact_session(self.current_model.clone())
                         .await
                     {
-                        self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
+                        Ok(()) => self.clear_ctx_utilization(),
+                        Err(e) => self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e)),
                     }
                 }
                 crate::tui::core_commands::CoreCommandType::Agent { target } => {

@@ -46,8 +46,12 @@ impl EventProcessor for MessageEventProcessor {
     ) -> ProcessingResult {
         match event {
             ClientEvent::AssistantMessageAdded { message, .. }
-            | ClientEvent::UserMessageAdded { message }
             | ClientEvent::ToolMessageAdded { message } => {
+                Self::handle_message_added(message, ctx);
+                ProcessingResult::Handled
+            }
+            ClientEvent::UserMessageAdded { message } => {
+                ctx.llm_usage.clear();
                 Self::handle_message_added(message, ctx);
                 ProcessingResult::Handled
             }
@@ -443,7 +447,7 @@ mod tests {
             std::sync::Arc::new(crate::notifications::NotificationManager::new(
                 &steer_grpc::client_api::Preferences::default(),
             ));
-        let mut ctx = ProcessingContext {
+        let mut processing_ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,
             tool_registry: &mut ctx.tool_registry,
@@ -470,19 +474,87 @@ mod tests {
                     message: assistant_message,
                     model: builtin::claude_sonnet_4_5(),
                 },
-                &mut ctx,
+                &mut processing_ctx,
             )
             .await;
 
         assert!(matches!(result, ProcessingResult::Handled));
 
         // Verify the registry was updated with real params
-        if let Some(stored_call) = ctx.tool_registry.get_tool_call(&tool_id) {
+        if let Some(stored_call) = processing_ctx.tool_registry.get_tool_call(&tool_id) {
             assert_eq!(stored_call.parameters, real_params);
             assert_eq!(stored_call.name, "view");
             assert_eq!(stored_call.id, tool_id);
         } else {
             panic!("Tool call should be in registry");
         }
+    }
+
+    #[tokio::test]
+    async fn user_message_added_clears_ctx_usage() {
+        let mut processor = MessageEventProcessor::new();
+        let mut ctx = create_test_context().await;
+
+        let op_id = steer_grpc::client_api::OpId::new();
+        ctx.llm_usage.update(
+            op_id,
+            builtin::claude_sonnet_4_5(),
+            steer_grpc::client_api::TokenUsage::from_input_output(12, 3),
+            Some(steer_grpc::client_api::ContextWindowUsage {
+                max_context_tokens: Some(200_000),
+                remaining_tokens: Some(150_000),
+                utilization_ratio: Some(0.25),
+                estimated: false,
+            }),
+            steer_grpc::client_api::UsageUpdateKind::Final,
+        );
+
+        let user_message = Message {
+            data: MessageData::User {
+                content: vec![steer_grpc::client_api::UserContent::Text {
+                    text: "edited prompt".to_string(),
+                }],
+            },
+            id: "msg_user_edited".to_string(),
+            timestamp: 1_234_567_891,
+            parent_message_id: None,
+        };
+
+        let notification_manager =
+            std::sync::Arc::new(crate::notifications::NotificationManager::new(
+                &steer_grpc::client_api::Preferences::default(),
+            ));
+        let mut in_flight_operations = std::collections::HashSet::new();
+        let mut processing_ctx = ProcessingContext {
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            client: &ctx.client,
+            notification_manager: &notification_manager,
+            input_panel_state: &mut ctx.input_panel_state,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
+            messages_updated: &mut ctx.messages_updated,
+            in_flight_operations: &mut in_flight_operations,
+            queued_head: &mut ctx.queued_head,
+            queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
+        };
+
+        let result = processor
+            .process(
+                ClientEvent::UserMessageAdded {
+                    message: user_message,
+                },
+                &mut processing_ctx,
+            )
+            .await;
+
+        assert!(matches!(result, ProcessingResult::Handled));
+        assert!(processing_ctx.llm_usage.latest().is_none());
     }
 }
