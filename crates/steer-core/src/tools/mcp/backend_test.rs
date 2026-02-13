@@ -277,9 +277,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_sse_backend_in_session_config() {
-        // Initialize tracing for debugging
         let _ = tracing_subscriber::fmt()
-            .with_env_filter("debug")
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("off")),
+            )
             .try_init();
 
         // Start an SSE test server

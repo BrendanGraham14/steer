@@ -102,7 +102,12 @@ fn unused_port() -> Result<u16> {
 #[tokio::test]
 async fn test_tui_agent_service_file_listing() {
     // Initialize logging
-    let _ = tracing_subscriber::fmt::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("off")),
+        )
+        .try_init();
 
     // Setup test workspace
     let (_temp_dir, workspace_path) = setup_test_workspace()
@@ -263,7 +268,12 @@ async fn test_tui_agent_service_file_listing() {
 
 #[tokio::test]
 async fn test_tui_auth_flow_poll_no_input() -> Result<()> {
-    let _ = tracing_subscriber::fmt::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("off")),
+        )
+        .try_init();
 
     let (_temp_dir, workspace_path) = setup_test_workspace()
         .await
@@ -349,7 +359,12 @@ async fn wait_for_mcp_event(
 
 #[tokio::test]
 async fn test_agent_client_resubscribes_events_on_session_switch() -> Result<()> {
-    let _ = tracing_subscriber::fmt::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("off")),
+        )
+        .try_init();
 
     let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
 
@@ -445,7 +460,12 @@ async fn test_agent_client_resubscribes_events_on_session_switch() -> Result<()>
 
 #[tokio::test]
 async fn test_workspace_changed_event_flow() {
-    let _ = tracing_subscriber::fmt::try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("off")),
+        )
+        .try_init();
 
     // Setup
     let (_temp_dir, workspace_path) = setup_test_workspace().await.unwrap();
