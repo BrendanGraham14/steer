@@ -278,12 +278,12 @@ mod id_preservation_tests {
 
 #[cfg(test)]
 mod event_conversion_tests {
-    use steer_core::app::conversation::{
-        AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
-    };
     use crate::client_api::{ClientEvent, MessageId, OpId, ToolCallDelta, ToolCallId};
     use crate::grpc::conversions::{
         message_to_proto, proto_to_client_event, session_event_to_proto, stream_delta_to_proto,
+    };
+    use steer_core::app::conversation::{
+        AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
     };
     use steer_core::app::domain::delta::StreamDelta;
     use steer_core::app::domain::event::{CompactResult, SessionEvent};

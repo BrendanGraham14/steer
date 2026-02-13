@@ -43,9 +43,7 @@ pub enum DispatchAgentTarget {
         agent: Option<String>,
     },
     /// Continue an existing child session by id.
-    Resume {
-        session_id: String,
-    },
+    Resume { session_id: String },
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq)]

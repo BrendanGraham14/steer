@@ -1,7 +1,5 @@
 use crate::app::conversation::UserContent;
-use crate::app::domain::types::{
-    CompactionId, MessageId, OpId, RequestId, SessionId, ToolCallId,
-};
+use crate::app::domain::types::{CompactionId, MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use serde::{Deserialize, Serialize};
 use steer_tools::result::ToolResult;
