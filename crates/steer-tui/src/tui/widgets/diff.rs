@@ -355,27 +355,27 @@ impl<'a> DiffWidget<'a> {
 }
 
 // Helper function for preview/summary use cases
+fn truncate_summary_preview(text: &str, max_len: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_len {
+        trimmed.to_string()
+    } else {
+        let prefix: String = trimmed.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{prefix}...")
+    }
+}
+
 pub fn diff_summary(old: &str, new: &str, max_len: usize) -> (String, String) {
     let old_preview = if old.is_empty() {
         String::new()
     } else {
-        let trimmed = old.trim();
-        if trimmed.len() <= max_len {
-            trimmed.to_string()
-        } else {
-            format!("{}...", &trimmed[..max_len.saturating_sub(3)])
-        }
+        truncate_summary_preview(old, max_len)
     };
 
     let new_preview = if new.is_empty() {
         String::new()
     } else {
-        let trimmed = new.trim();
-        if trimmed.len() <= max_len {
-            trimmed.to_string()
-        } else {
-            format!("{}...", &trimmed[..max_len.saturating_sub(3)])
-        }
+        truncate_summary_preview(new, max_len)
     };
 
     (old_preview, new_preview)
@@ -580,6 +580,16 @@ mod tests {
 
         assert_eq!(old_preview, "This is a very lo...");
         assert_eq!(new_preview, "Short");
+    }
+
+    #[test]
+    fn test_diff_summary_unicode_boundary() {
+        let input = "// ── Composite type conversions ───────────────────────────────────────";
+        let (old_preview, new_preview) = diff_summary(input, "", 60);
+
+        let expected_prefix: String = input.trim().chars().take(57).collect();
+        assert_eq!(old_preview, format!("{expected_prefix}..."));
+        assert_eq!(new_preview, "");
     }
 
     #[test]
