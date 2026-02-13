@@ -153,8 +153,8 @@ fn strip_image_token_labels(content: &str) -> String {
             continue;
         }
 
-        output.push(ch);
         i += 1;
+        let label_start = i;
         while i < chars.len() && chars[i].is_whitespace() {
             i += 1;
         }
@@ -170,8 +170,12 @@ fn strip_image_token_labels(content: &str) -> String {
                 && candidate.ends_with(IMAGE_TOKEN_LABEL_SUFFIX)
             {
                 i = j + 1;
+                continue;
             }
         }
+
+        output.push(ch);
+        i = label_start;
     }
 
     output
