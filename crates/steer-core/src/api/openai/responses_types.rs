@@ -153,22 +153,18 @@ pub struct ResponseUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
     pub total_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_tokens_details: Option<InputTokensDetails>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_tokens_details: Option<OutputTokensDetails>,
+    pub input_tokens_details: InputTokensDetails,
+    pub output_tokens_details: OutputTokensDetails,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputTokensDetails {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cached_tokens: Option<u32>,
+    pub cached_tokens: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputTokensDetails {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_tokens: Option<u32>,
+    pub reasoning_tokens: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

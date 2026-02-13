@@ -527,9 +527,7 @@ impl Client {
 
         // Check for reasoning tokens in usage to verify reasoning happened
         if let Some(raw_usage) = response.usage.as_ref()
-            && let Some(details) = raw_usage.output_tokens_details.as_ref()
-            && let Some(reasoning_tokens) = details.reasoning_tokens
-            && reasoning_tokens > 0
+            && raw_usage.output_tokens_details.reasoning_tokens > 0
             && !content
                 .iter()
                 .any(|c| matches!(c, AssistantContent::Thought { .. }))
@@ -538,7 +536,7 @@ impl Client {
             debug!(
                 target: "openai::responses",
                 "Model used {} reasoning tokens but no reasoning output provided",
-                reasoning_tokens
+                raw_usage.output_tokens_details.reasoning_tokens
             );
         }
 
@@ -1826,6 +1824,7 @@ fn apply_instruction_policy(
 mod tests {
     use super::*;
 
+    use crate::api::openai::responses_types::{InputTokensDetails, OutputTokensDetails};
     use crate::app::SystemContext;
     use crate::app::conversation::{
         AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
@@ -2347,8 +2346,10 @@ mod tests {
                 input_tokens: 19,
                 output_tokens: 7,
                 total_tokens: 26,
-                input_tokens_details: None,
-                output_tokens_details: None,
+                input_tokens_details: InputTokensDetails { cached_tokens: 0 },
+                output_tokens_details: OutputTokensDetails {
+                    reasoning_tokens: 0,
+                },
             }),
             extra: Default::default(),
         };
@@ -2602,7 +2603,7 @@ mod tests {
             }),
             Ok(SseEvent {
                 event_type: Some("response.completed".to_string()),
-                data: r#"{"response":{"usage":{"input_tokens":11,"output_tokens":5,"total_tokens":16}}}"#
+                data: r#"{"response":{"usage":{"input_tokens":11,"output_tokens":5,"total_tokens":16,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}}"#
                     .to_string(),
                 id: None,
             }),
