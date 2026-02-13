@@ -26,6 +26,7 @@ pub struct QueuedWorkItem {
     pub queued_at: u64,
     pub op_id: OpId,
     pub message_id: MessageId,
+    pub attachment_count: u32,
 }
 
 pub use steer_core::app::domain::delta::ToolCallDelta;

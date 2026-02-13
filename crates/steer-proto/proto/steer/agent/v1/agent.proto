@@ -267,6 +267,7 @@ message EditMessageRequest {
   string message_id = 2;
   string new_content = 3;
   optional ModelSpec model = 4;  // Optional; falls back to session's default_model
+  repeated UserContent content = 5;
 }
 
 message EditMessageResponse {
@@ -343,6 +344,7 @@ message QueuedWorkItem {
   uint64 queued_at = 4;
   string op_id = 5;
   string message_id = 6;
+  uint32 attachment_count = 7;
 }
 
 message QueueUpdatedEvent {

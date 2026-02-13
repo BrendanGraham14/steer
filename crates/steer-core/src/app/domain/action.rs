@@ -23,7 +23,7 @@ pub enum Action {
     UserEditedMessage {
         session_id: SessionId,
         message_id: MessageId,
-        new_content: String,
+        new_content: Vec<UserContent>,
         op_id: OpId,
         new_message_id: MessageId,
         model: ModelId,

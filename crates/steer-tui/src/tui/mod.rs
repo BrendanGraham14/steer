@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 
-const IMAGE_TOKEN_LABEL_PREFIX: &str = "[Image: ";
+const IMAGE_TOKEN_LABEL_PREFIX: &str = "[Image ";
 const IMAGE_TOKEN_LABEL_SUFFIX: &str = "]";
 const FIRST_ATTACHMENT_TOKEN: u32 = 0xE000;
 
@@ -66,25 +66,34 @@ fn has_any_auth_source(source: Option<&steer_grpc::client_api::AuthSource>) -> b
     )
 }
 
-fn format_inline_image_token(mime_type: &str) -> String {
-    format!("{IMAGE_TOKEN_LABEL_PREFIX}{mime_type}{IMAGE_TOKEN_LABEL_SUFFIX}")
+fn format_inline_image_token(n: usize) -> String {
+    format!("{IMAGE_TOKEN_LABEL_PREFIX}{n}{IMAGE_TOKEN_LABEL_SUFFIX}")
+}
+
+/// Returns the byte length of an image label at the start of `s`, if one is present.
+/// Matches any label of the form `[Image ...]`.
+fn image_label_len_at(s: &str) -> Option<usize> {
+    if !s.starts_with(IMAGE_TOKEN_LABEL_PREFIX) {
+        return None;
+    }
+    let end = s.find(IMAGE_TOKEN_LABEL_SUFFIX)?;
+    Some(end + IMAGE_TOKEN_LABEL_SUFFIX.len())
 }
 
 fn attachment_spans(content: &str, attachments: &[PendingAttachment]) -> Vec<(char, usize, usize)> {
     let mut spans = Vec::new();
 
     for (start, ch) in content.char_indices() {
-        let Some(attachment) = attachments.iter().find(|attachment| attachment.token == ch) else {
+        if !attachments.iter().any(|a| a.token == ch) {
             continue;
-        };
-
-        let mut end = start + ch.len_utf8();
-        let label = format_inline_image_token(&attachment.image.mime_type);
-        if content[end..].starts_with(&label) {
-            end += label.len();
         }
 
-        spans.push((attachment.token, start, end));
+        let mut end = start + ch.len_utf8();
+        if let Some(label_len) = image_label_len_at(&content[end..]) {
+            end += label_len;
+        }
+
+        spans.push((ch, start, end));
     }
 
     spans
@@ -120,9 +129,8 @@ fn parse_inline_message_content(content: &str, images: &[PendingAttachment]) -> 
             });
 
             cursor += ch.len_utf8();
-            let label = format_inline_image_token(&attachment.image.mime_type);
-            if content[cursor..].starts_with(&label) {
-                cursor += label.len();
+            if let Some(label_len) = image_label_len_at(&content[cursor..]) {
+                cursor += label_len;
             }
             continue;
         }
@@ -532,13 +540,13 @@ impl Tui {
             return;
         };
 
-        let mime_type = image.mime_type.clone();
         self.pending_attachments
             .push(PendingAttachment { image, token });
+        let image_number = self.pending_attachments.len();
         self.input_panel_state.textarea.insert_char(token);
         self.input_panel_state
             .textarea
-            .insert_str(&format_inline_image_token(&mime_type));
+            .insert_str(format_inline_image_token(image_number));
     }
 
     fn cursor_position_from_byte_offset(content: &str, byte_offset: usize) -> (u16, u16) {
@@ -591,29 +599,27 @@ impl Tui {
         let mut normalized = String::new();
         let mut cursor = 0usize;
         let mut retained_tokens: HashSet<char> = HashSet::new();
+        let mut image_number = 0usize;
 
         while cursor < content.len() {
             let Some(ch) = content[cursor..].chars().next() else {
                 break;
             };
 
-            if let Some(attachment) = self
+            if self
                 .pending_attachments
                 .iter()
-                .find(|attachment| attachment.token == ch)
+                .any(|attachment| attachment.token == ch)
             {
-                let label = format_inline_image_token(&attachment.image.mime_type);
-                retained_tokens.insert(attachment.token);
+                image_number += 1;
+                let label = format_inline_image_token(image_number);
+                retained_tokens.insert(ch);
                 normalized.push(ch);
                 normalized.push_str(&label);
 
                 cursor += ch.len_utf8();
-                if content[cursor..].starts_with(&label) {
-                    cursor += label.len();
-                } else if content[cursor..].starts_with(IMAGE_TOKEN_LABEL_PREFIX)
-                    && let Some(label_end) = content[cursor..].find(']')
-                {
-                    cursor += label_end + 1;
+                if let Some(label_len) = image_label_len_at(&content[cursor..]) {
+                    cursor += label_len;
                 }
                 continue;
             }
@@ -1468,6 +1474,10 @@ impl Tui {
                 editing_preview: editing_preview.as_deref(),
                 queued_count: self.queued_count,
                 queued_preview: queue_preview,
+                queued_attachment_count: self
+                    .queued_head
+                    .as_ref()
+                    .map_or(0, |item| item.attachment_count),
                 attachment_count: self.pending_attachments.len(),
                 theme: &self.theme,
             });
@@ -1754,13 +1764,22 @@ impl Tui {
                 if let Err(e) = self.client.execute_bash_command(command).await {
                     self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                 }
-            } else if let Err(e) = self
-                .client
-                .edit_message(message_id_to_edit, content, self.current_model.clone())
-                .await
-            {
-                self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
+            } else {
+                let content_blocks =
+                    parse_inline_message_content(&content, &self.pending_attachments);
+                if let Err(e) = self
+                    .client
+                    .edit_message(
+                        message_id_to_edit,
+                        content_blocks,
+                        self.current_model.clone(),
+                    )
+                    .await
+                {
+                    self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
+                }
             }
+            self.pending_attachments.clear();
             return Ok(());
         }
 
@@ -2100,17 +2119,33 @@ impl Tui {
             && let crate::tui::model::ChatItemData::Message(message) = &item.data
             && let MessageData::User { content, .. } = &message.data
         {
-            // Extract text content from user blocks
-            let text = content
-                .iter()
-                .filter_map(|block| match block {
-                    UserContent::Text { text } => Some(text.as_str()),
-                    UserContent::Image { .. } | UserContent::CommandExecution { .. } => {
-                        None
+            // Clear any existing pending attachments
+            self.pending_attachments.clear();
+            self.next_attachment_token = FIRST_ATTACHMENT_TOKEN;
+
+            // Build the text content, restoring images as inline attachment tokens
+            let mut text_parts = Vec::new();
+            for block in content {
+                match block {
+                    UserContent::Text { text } => {
+                        text_parts.push(text.clone());
                     }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+                    UserContent::Image { image } => {
+                        let token =
+                            char::from_u32(self.next_attachment_token).unwrap_or('\u{E000}');
+                        self.next_attachment_token += 1;
+                        self.pending_attachments.push(PendingAttachment {
+                            image: image.clone(),
+                            token,
+                        });
+                        let image_number = self.pending_attachments.len();
+                        let label = format_inline_image_token(image_number);
+                        text_parts.push(format!("{token}{label}"));
+                    }
+                    UserContent::CommandExecution { .. } => {}
+                }
+            }
+            let text = text_parts.join("");
 
             // Set up textarea with the message content
             self.input_panel_state
@@ -2382,6 +2417,8 @@ mod tests {
 
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use steer_grpc::client_api::{AssistantContent, Message, MessageData, OpId, QueuedWorkItem};
+
+    const IMAGE_TOKEN_CHAR: char = '\u{E000}';
     use tempfile::tempdir;
 
     /// RAII guard to ensure terminal state is restored after a test, even on panic.
@@ -2405,6 +2442,7 @@ mod tests {
             queued_at: 123,
             op_id: OpId::new(),
             message_id: steer_grpc::client_api::MessageId::from_string("msg_queued"),
+            attachment_count: 0,
         };
 
         Tui::preprocess_client_event_double_tap(
@@ -2610,7 +2648,7 @@ mod tests {
 
     #[test]
     fn strip_image_token_labels_removes_rendered_image_marker_text() {
-        let content = format!("hello{IMAGE_TOKEN_CHAR}[Image: image/png] world");
+        let content = format!("hello{IMAGE_TOKEN_CHAR}[Image 1] world");
         assert_eq!(strip_image_token_labels(&content), "hello world");
     }
 
@@ -2688,7 +2726,7 @@ mod tests {
         let content = format!(
             "look {}{} done",
             attachment.token,
-            format_inline_image_token(&attachment.image.mime_type)
+            format_inline_image_token(1)
         );
         let parsed = parse_inline_message_content(&content, &[attachment.clone()]);
 

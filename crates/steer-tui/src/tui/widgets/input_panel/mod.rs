@@ -282,7 +282,7 @@ impl InputPanelState {
         let line_count = self.textarea.lines().len().max(1);
         let base_height = (line_count + 2).min(max_height as usize) as u16;
         if queued_preview.is_some() {
-            let queued_height = QueuedPreviewWidget::required_height(width, queued_preview);
+            let queued_height = QueuedPreviewWidget::required_height(width, queued_preview, 0);
             base_height.saturating_add(queued_height).min(max_height)
         } else {
             base_height
@@ -314,6 +314,7 @@ pub struct InputPanelParams<'a> {
     pub editing_preview: Option<&'a str>,
     pub queued_count: usize,
     pub queued_preview: Option<&'a str>,
+    pub queued_attachment_count: u32,
     pub attachment_count: usize,
     pub theme: &'a Theme,
 }
@@ -329,6 +330,7 @@ pub struct InputPanel<'a> {
     pub editing_preview: Option<&'a str>,
     pub queued_count: usize,
     pub queued_preview: Option<&'a str>,
+    pub queued_attachment_count: u32,
     pub attachment_count: usize,
     pub theme: &'a Theme,
 }
@@ -344,6 +346,7 @@ impl<'a> InputPanel<'a> {
             editing_preview: params.editing_preview,
             queued_count: params.queued_count,
             queued_preview: params.queued_preview,
+            queued_attachment_count: params.queued_attachment_count,
             attachment_count: params.attachment_count,
             theme: params.theme,
         }
@@ -375,9 +378,12 @@ impl StatefulWidget for InputPanel<'_> {
         let has_queue = self.queued_preview.is_some() || self.queued_count > 0;
         let mut layout = vec![area];
         if has_queue {
-            let queue_height =
-                QueuedPreviewWidget::required_height(area.width, self.queued_preview)
-                    .min(area.height);
+            let queue_height = QueuedPreviewWidget::required_height(
+                area.width,
+                self.queued_preview,
+                self.queued_attachment_count,
+            )
+            .min(area.height);
             let chunks = ratatui::layout::Layout::default()
                 .direction(ratatui::layout::Direction::Vertical)
                 .constraints([
@@ -389,7 +395,12 @@ impl StatefulWidget for InputPanel<'_> {
         }
 
         if has_queue {
-            QueuedPreviewWidget::new(self.queued_preview, self.theme).render(layout[0], buf);
+            QueuedPreviewWidget::new(
+                self.queued_preview,
+                self.queued_attachment_count,
+                self.theme,
+            )
+            .render(layout[0], buf);
         }
 
         let input_rect = if has_queue { layout[1] } else { area };

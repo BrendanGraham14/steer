@@ -122,6 +122,7 @@ mod tests {
             queued_at: 123,
             op_id: OpId::new(),
             message_id: MessageId::from_string("msg_1"),
+            attachment_count: 0,
         };
 
         let notification_manager =

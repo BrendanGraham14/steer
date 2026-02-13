@@ -303,7 +303,7 @@ impl AgentClient {
     pub async fn edit_message(
         &self,
         message_id: String,
-        new_content: String,
+        content: Vec<crate::client_api::UserContent>,
         model: steer_core::config::model::ModelId,
     ) -> GrpcResult<()> {
         let session_id = self
@@ -316,11 +316,72 @@ impl AgentClient {
                 reason: "No active session".to_string(),
             })?;
 
+        let fallback_text = content
+            .iter()
+            .filter_map(|item| match item {
+                crate::client_api::UserContent::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let proto_content: Vec<proto::UserContent> = content
+            .into_iter()
+            .map(|item| {
+                let content = match item {
+                    crate::client_api::UserContent::Text { text } => {
+                        Some(proto::user_content::Content::Text(text))
+                    }
+                    crate::client_api::UserContent::CommandExecution {
+                        command,
+                        stdout,
+                        stderr,
+                        exit_code,
+                    } => Some(proto::user_content::Content::CommandExecution(
+                        proto::CommandExecution {
+                            command,
+                            stdout,
+                            stderr,
+                            exit_code,
+                        },
+                    )),
+                    crate::client_api::UserContent::Image { image } => {
+                        let source = match image.source {
+                            crate::client_api::ImageSource::SessionFile { relative_path } => {
+                                Some(proto::image_content::Source::SessionFile(
+                                    proto::SessionFileSource { relative_path },
+                                ))
+                            }
+                            crate::client_api::ImageSource::DataUrl { data_url } => {
+                                Some(proto::image_content::Source::DataUrl(
+                                    proto::DataUrlSource { data_url },
+                                ))
+                            }
+                            crate::client_api::ImageSource::Url { url } => {
+                                Some(proto::image_content::Source::Url(proto::UrlSource { url }))
+                            }
+                        };
+
+                        Some(proto::user_content::Content::Image(proto::ImageContent {
+                            mime_type: image.mime_type,
+                            source,
+                            width: image.width,
+                            height: image.height,
+                            bytes: image.bytes,
+                            sha256: image.sha256,
+                        }))
+                    }
+                };
+                proto::UserContent { content }
+            })
+            .collect();
+
         let steer_core::config::model::ModelId { provider, id } = model;
         let request = Request::new(proto::EditMessageRequest {
             session_id,
             message_id,
-            new_content,
+            new_content: fallback_text,
+            content: proto_content,
             model: Some(proto::ModelSpec {
                 provider_id: provider.storage_key(),
                 model_id: id,

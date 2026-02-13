@@ -693,7 +693,7 @@ impl RuntimeHandle {
         &self,
         session_id: SessionId,
         original_message_id: String,
-        new_content: String,
+        new_content: Vec<UserContent>,
         model: ModelId,
     ) -> Result<OpId, RuntimeError> {
         let op_id = OpId::new();

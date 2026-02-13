@@ -2530,6 +2530,7 @@ fn queued_work_item_to_proto(
         queued_at: item.queued_at,
         op_id: item.op_id.to_string(),
         message_id: item.message_id.to_string(),
+        attachment_count: item.attachment_count,
     })
 }
 
@@ -2558,6 +2559,7 @@ fn proto_to_queued_work_item(
         queued_at: item.queued_at,
         op_id,
         message_id,
+        attachment_count: item.attachment_count,
     })
 }
 

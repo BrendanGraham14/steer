@@ -652,6 +652,11 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                                     queued_at: message.queued_at,
                                     op_id: message.op_id.to_string(),
                                     message_id: message.message_id.to_string(),
+                                    attachment_count: message
+                                        .content
+                                        .iter()
+                                        .filter(|item| matches!(item, UserContent::Image { .. }))
+                                        .count() as u32,
                                 }
                             }
                             steer_core::app::domain::state::QueuedWorkItem::DirectBash(command) => {
@@ -662,6 +667,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                                     queued_at: command.queued_at,
                                     op_id: command.op_id.to_string(),
                                     message_id: command.message_id.to_string(),
+                                    attachment_count: 0,
                                 }
                             }
                         }),
@@ -867,8 +873,61 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             config.default_model
         };
 
+        let user_content: Vec<UserContent> = req
+            .content
+            .into_iter()
+            .filter_map(|item| match item.content {
+                Some(proto::user_content::Content::Text(text)) => Some(UserContent::Text { text }),
+                Some(proto::user_content::Content::CommandExecution(cmd)) => {
+                    Some(UserContent::CommandExecution {
+                        command: cmd.command,
+                        stdout: cmd.stdout,
+                        stderr: cmd.stderr,
+                        exit_code: cmd.exit_code,
+                    })
+                }
+                Some(proto::user_content::Content::Image(image)) => {
+                    let source = image.source.map(|source| match source {
+                        proto::image_content::Source::SessionFile(file) => {
+                            steer_core::app::conversation::ImageSource::SessionFile {
+                                relative_path: file.relative_path,
+                            }
+                        }
+                        proto::image_content::Source::DataUrl(data_url) => {
+                            steer_core::app::conversation::ImageSource::DataUrl {
+                                data_url: data_url.data_url,
+                            }
+                        }
+                        proto::image_content::Source::Url(url) => {
+                            steer_core::app::conversation::ImageSource::Url { url: url.url }
+                        }
+                    });
+
+                    source.map(|source| UserContent::Image {
+                        image: steer_core::app::conversation::ImageContent {
+                            mime_type: image.mime_type,
+                            source,
+                            width: image.width,
+                            height: image.height,
+                            bytes: image.bytes,
+                            sha256: image.sha256,
+                        },
+                    })
+                }
+                None => None,
+            })
+            .collect();
+
+        let content = if user_content.is_empty() {
+            vec![UserContent::Text {
+                text: req.new_content,
+            }]
+        } else {
+            user_content
+        };
+
         self.runtime
-            .submit_edited_message(session_id, req.message_id, req.new_content, model)
+            .submit_edited_message(session_id, req.message_id, content, model)
             .await
             .map_err(|e| match e {
                 RuntimeError::InvalidInput { message } => Status::failed_precondition(message),

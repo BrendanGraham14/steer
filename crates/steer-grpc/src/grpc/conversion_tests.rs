@@ -222,6 +222,7 @@ mod id_preservation_tests {
                     message_id: steer_core::app::domain::types::MessageId::from_string(
                         "msg_queued",
                     ),
+                    attachment_count: 0,
                 }),
             },
         };

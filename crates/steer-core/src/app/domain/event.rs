@@ -202,6 +202,8 @@ pub struct QueuedWorkItemSnapshot {
     pub model: Option<ModelId>,
     pub op_id: OpId,
     pub message_id: MessageId,
+    #[serde(default)]
+    pub attachment_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

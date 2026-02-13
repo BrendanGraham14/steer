@@ -202,6 +202,7 @@ mod tests {
             queued_at: 123,
             op_id: OpId::new(),
             message_id: MessageId::from_string("msg_queued"),
+            attachment_count: 0,
         };
 
         let notification_manager = std::sync::Arc::new(NotificationManager::new(
@@ -257,6 +258,7 @@ mod tests {
             queued_at: 123,
             op_id: OpId::new(),
             message_id: MessageId::from_string("msg_bash"),
+            attachment_count: 0,
         };
 
         let notification_manager = std::sync::Arc::new(NotificationManager::new(

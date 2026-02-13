@@ -233,7 +233,9 @@ mod tests {
             Action::UserEditedMessage {
                 session_id,
                 message_id: MessageId::from_string("orig"),
-                new_content: "edit".to_string(),
+                new_content: vec![UserContent::Text {
+                    text: "edit".to_string(),
+                }],
                 op_id: OpId::new(),
                 new_message_id: MessageId::from_string("new"),
                 model: builtin::claude_sonnet_4_5(),

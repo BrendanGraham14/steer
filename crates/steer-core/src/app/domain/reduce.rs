@@ -344,7 +344,7 @@ fn handle_user_input(
 
 struct UserEditedMessageParams {
     original_message_id: crate::app::domain::types::MessageId,
-    new_content: String,
+    new_content: Vec<UserContent>,
     op_id: crate::app::domain::types::OpId,
     new_message_id: crate::app::domain::types::MessageId,
     model: crate::config::model::ModelId,
@@ -382,7 +382,7 @@ fn handle_user_edited_message(
 
     let message = Message {
         data: MessageData::User {
-            content: vec![UserContent::Text { text: new_content }],
+            content: new_content,
         },
         timestamp,
         id: new_message_id.0.clone(),
@@ -1424,6 +1424,11 @@ fn snapshot_queued_work_item(item: &QueuedWorkItem) -> QueuedWorkItemSnapshot {
             model: Some(message.model.clone()),
             op_id: message.op_id,
             message_id: message.message_id.clone(),
+            attachment_count: message
+                .content
+                .iter()
+                .filter(|item| matches!(item, UserContent::Image { .. }))
+                .count() as u32,
         },
         QueuedWorkItem::DirectBash(command) => QueuedWorkItemSnapshot {
             kind: Some(QueuedWorkKind::DirectBash),
@@ -1432,6 +1437,7 @@ fn snapshot_queued_work_item(item: &QueuedWorkItem) -> QueuedWorkItemSnapshot {
             model: None,
             op_id: command.op_id,
             message_id: command.message_id.clone(),
+            attachment_count: 0,
         },
     }
 }

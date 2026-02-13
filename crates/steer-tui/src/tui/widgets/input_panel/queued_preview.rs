@@ -7,12 +7,17 @@ use crate::tui::theme::{Component, Theme};
 
 pub struct QueuedPreviewWidget<'a> {
     preview: Option<&'a str>,
+    attachment_count: u32,
     theme: &'a Theme,
 }
 
 impl<'a> QueuedPreviewWidget<'a> {
-    pub fn new(preview: Option<&'a str>, theme: &'a Theme) -> Self {
-        Self { preview, theme }
+    pub fn new(preview: Option<&'a str>, attachment_count: u32, theme: &'a Theme) -> Self {
+        Self {
+            preview,
+            attachment_count,
+            theme,
+        }
     }
 
     fn title(&self) -> Line<'static> {
@@ -22,7 +27,7 @@ impl<'a> QueuedPreviewWidget<'a> {
         ))
     }
 
-    pub fn required_height(width: u16, preview: Option<&str>) -> u16 {
+    pub fn required_height(width: u16, preview: Option<&str>, attachment_count: u32) -> u16 {
         let inner_width = width.saturating_sub(2).max(1) as usize;
         let text = preview.unwrap_or("");
         let mut line_count = 0usize;
@@ -36,6 +41,10 @@ impl<'a> QueuedPreviewWidget<'a> {
             line_count = 1;
         }
 
+        if attachment_count > 0 {
+            line_count += 1;
+        }
+
         (line_count.saturating_add(2)).min(u16::MAX as usize) as u16
     }
 }
@@ -47,7 +56,24 @@ impl Widget for QueuedPreviewWidget<'_> {
             .borders(Borders::ALL)
             .border_style(self.theme.style(Component::QueuedMessageBorder))
             .title(self.title());
-        let paragraph = Paragraph::new(preview)
+
+        let mut lines: Vec<Line> = preview.lines().map(Line::from).collect();
+        if lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        if self.attachment_count > 0 {
+            let label = if self.attachment_count == 1 {
+                "[+1 image]".to_string()
+            } else {
+                format!("[+{} images]", self.attachment_count)
+            };
+            lines.push(Line::from(Span::styled(
+                label,
+                self.theme.style(Component::QueuedMessageLabel),
+            )));
+        }
+
+        let paragraph = Paragraph::new(lines)
             .style(self.theme.style(Component::QueuedMessageText))
             .wrap(Wrap { trim: false });
         let inner = block.inner(area);
