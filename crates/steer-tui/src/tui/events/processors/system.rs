@@ -251,4 +251,133 @@ mod tests {
         assert!(matches!(result, ProcessingResult::Handled));
         assert!(processing_ctx.llm_usage.latest().is_none());
     }
+
+    #[tokio::test]
+    async fn test_auto_compact_success_shows_system_notice() {
+        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
+            &Preferences::default(),
+        )));
+        let mut ctx = create_test_context().await;
+
+        let notification_manager = std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
+        let mut processing_ctx = ProcessingContext {
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            client: &ctx.client,
+            notification_manager: &notification_manager,
+            input_panel_state: &mut ctx.input_panel_state,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
+            messages_updated: &mut ctx.messages_updated,
+            in_flight_operations: &mut ctx.in_flight_operations,
+            queued_head: &mut ctx.queued_head,
+            queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
+        };
+
+        let result = processor
+            .process(
+                ClientEvent::CompactResult {
+                    result: CompactResult::Success("summary".into()),
+                    trigger: CompactTrigger::Auto,
+                },
+                &mut processing_ctx,
+            )
+            .await;
+
+        assert!(matches!(result, ProcessingResult::Handled));
+        assert!(*processing_ctx.messages_updated);
+        assert_eq!(processing_ctx.chat_store.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_auto_compact_cancelled_is_silent() {
+        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
+            &Preferences::default(),
+        )));
+        let mut ctx = create_test_context().await;
+
+        let notification_manager = std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
+        let mut processing_ctx = ProcessingContext {
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            client: &ctx.client,
+            notification_manager: &notification_manager,
+            input_panel_state: &mut ctx.input_panel_state,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
+            messages_updated: &mut ctx.messages_updated,
+            in_flight_operations: &mut ctx.in_flight_operations,
+            queued_head: &mut ctx.queued_head,
+            queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
+        };
+
+        let result = processor
+            .process(
+                ClientEvent::CompactResult {
+                    result: CompactResult::Cancelled,
+                    trigger: CompactTrigger::Auto,
+                },
+                &mut processing_ctx,
+            )
+            .await;
+
+        assert!(matches!(result, ProcessingResult::Handled));
+        assert!(processing_ctx.chat_store.is_empty());
+        assert!(!*processing_ctx.messages_updated);
+    }
+
+    #[tokio::test]
+    async fn test_auto_compact_failed_is_silent() {
+        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
+            &Preferences::default(),
+        )));
+        let mut ctx = create_test_context().await;
+
+        let notification_manager = std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
+        let mut processing_ctx = ProcessingContext {
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            client: &ctx.client,
+            notification_manager: &notification_manager,
+            input_panel_state: &mut ctx.input_panel_state,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
+            messages_updated: &mut ctx.messages_updated,
+            in_flight_operations: &mut ctx.in_flight_operations,
+            queued_head: &mut ctx.queued_head,
+            queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
+        };
+
+        let result = processor
+            .process(
+                ClientEvent::CompactResult {
+                    result: CompactResult::Failed("error".into()),
+                    trigger: CompactTrigger::Auto,
+                },
+                &mut processing_ctx,
+            )
+            .await;
+
+        assert!(matches!(result, ProcessingResult::Handled));
+        assert!(processing_ctx.chat_store.is_empty());
+        assert!(!*processing_ctx.messages_updated);
+    }
 }

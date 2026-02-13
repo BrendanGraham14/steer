@@ -1916,6 +1916,11 @@ fn compact_result_to_proto(
                 proto::CompactInsufficientMessages {},
             )
         }
+        steer_core::app::domain::event::CompactResult::Failed(error) => {
+            proto::compact_result::Result::Failed(proto::CompactFailed {
+                error: error.clone(),
+            })
+        }
     };
 
     proto::CompactResult {
@@ -1941,6 +1946,9 @@ fn compact_result_from_proto(
         }
         proto::compact_result::Result::InsufficientMessages(_) => {
             steer_core::app::domain::event::CompactResult::InsufficientMessages
+        }
+        proto::compact_result::Result::Failed(failed) => {
+            steer_core::app::domain::event::CompactResult::Failed(failed.error)
         }
     })
 }

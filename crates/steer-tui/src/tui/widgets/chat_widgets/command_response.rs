@@ -68,6 +68,12 @@ impl ChatRenderable for CommandResponseWidget {
                                     ),
                                 ]));
                             }
+                            CompactResult::Failed(error) => {
+                                lines.push(Line::from(Span::styled(
+                                    format!("Compaction failed: {error}"),
+                                    theme.style(Component::CommandError),
+                                )));
+                            }
                             CompactResult::Cancelled => {
                                 lines.push(Line::from(Span::styled(
                                     "Compact cancelled.",

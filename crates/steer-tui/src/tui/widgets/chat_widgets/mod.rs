@@ -50,6 +50,7 @@ pub fn format_command_response(resp: &CommandResponse) -> String {
         CommandResponse::Text(text) => text.clone(),
         CommandResponse::Compact(result) => match result {
             CompactResult::Success(_) => "Compaction complete.".to_string(),
+            CompactResult::Failed(error) => format!("Compaction failed: {error}"),
             CompactResult::Cancelled => "Compact cancelled.".to_string(),
             CompactResult::InsufficientMessages => "Not enough messages to compact.".to_string(),
         },

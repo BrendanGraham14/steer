@@ -139,6 +139,7 @@ pub enum CompactTrigger {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompactResult {
     Success(String),
+    Failed(String),
     Cancelled,
     InsufficientMessages,
 }
@@ -155,6 +156,12 @@ impl Serialize for CompactResult {
                 let mut state = serializer.serialize_struct("CompactResult", 2)?;
                 state.serialize_field("result_type", "success")?;
                 state.serialize_field("summary", summary)?;
+                state.end()
+            }
+            CompactResult::Failed(error) => {
+                let mut state = serializer.serialize_struct("CompactResult", 2)?;
+                state.serialize_field("result_type", "failed")?;
+                state.serialize_field("error", error)?;
                 state.end()
             }
             CompactResult::Cancelled => {
@@ -183,6 +190,8 @@ impl<'de> Deserialize<'de> for CompactResult {
             summary: Option<String>,
             #[serde(default)]
             success: Option<String>,
+            #[serde(default)]
+            error: Option<String>,
         }
 
         let payload = CompactResultPayload::deserialize(deserializer)?;
@@ -194,11 +203,17 @@ impl<'de> Deserialize<'de> for CompactResult {
                     .ok_or_else(|| serde::de::Error::missing_field("summary"))?;
                 Ok(CompactResult::Success(summary))
             }
+            "failed" => {
+                let error = payload
+                    .error
+                    .ok_or_else(|| serde::de::Error::missing_field("error"))?;
+                Ok(CompactResult::Failed(error))
+            }
             "cancelled" => Ok(CompactResult::Cancelled),
             "insufficient_messages" => Ok(CompactResult::InsufficientMessages),
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["success", "cancelled", "insufficient_messages"],
+                &["success", "failed", "cancelled", "insufficient_messages"],
             )),
         }
     }

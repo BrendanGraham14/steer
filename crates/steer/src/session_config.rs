@@ -1134,4 +1134,115 @@ project = "test-project"
             ToolRuleOverrides::Bash { .. } => panic!("Unexpected bash rule"),
         }
     }
+
+    #[tokio::test]
+    async fn test_auto_compaction_toml_parsing() {
+        let toml_str = r#"
+[auto_compaction]
+enabled = false
+threshold_percent = 80
+"#;
+        let parsed: PartialSessionConfig = toml::from_str(toml_str).unwrap();
+        let ac = parsed.auto_compaction.expect("auto_compaction should be Some");
+        assert_eq!(ac.enabled, Some(false));
+        assert_eq!(ac.threshold_percent, Some(80));
+    }
+
+    #[tokio::test]
+    async fn test_auto_compaction_defaults_when_omitted() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+[workspace]
+type = "local"
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
+        let config = loader.load().await.unwrap();
+
+        assert_eq!(config.auto_compaction.enabled, true);
+        assert_eq!(config.auto_compaction.threshold_percent, 90);
+    }
+
+    #[tokio::test]
+    async fn test_auto_compaction_partial_overrides() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            r#"
+[auto_compaction]
+enabled = false
+"#
+        )
+        .unwrap();
+
+        let loader = SessionConfigLoader::new(test_model(), Some(temp_file.path().to_path_buf()));
+        let config = loader.load().await.unwrap();
+
+        assert_eq!(config.auto_compaction.enabled, false);
+        assert_eq!(config.auto_compaction.threshold_percent, 90);
+    }
+
+    #[tokio::test]
+    async fn test_auto_compaction_rejects_invalid_threshold() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Test threshold_percent = 0 (below minimum)
+        let mut temp_file_zero = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file_zero,
+            r#"
+[auto_compaction]
+threshold_percent = 0
+"#
+        )
+        .unwrap();
+
+        let result = SessionConfigLoader::new(
+            test_model(),
+            Some(temp_file_zero.path().to_path_buf()),
+        )
+        .load()
+        .await;
+        let err = result.expect_err("threshold_percent = 0 should fail validation");
+        assert!(
+            err.to_string().contains("threshold_percent"),
+            "Error should mention threshold_percent, got: {}",
+            err
+        );
+
+        // Test threshold_percent = 101 (above maximum)
+        let mut temp_file_101 = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file_101,
+            r#"
+[auto_compaction]
+threshold_percent = 101
+"#
+        )
+        .unwrap();
+
+        let result = SessionConfigLoader::new(
+            test_model(),
+            Some(temp_file_101.path().to_path_buf()),
+        )
+        .load()
+        .await;
+        let err = result.expect_err("threshold_percent = 101 should fail validation");
+        assert!(
+            err.to_string().contains("threshold_percent"),
+            "Error should mention threshold_percent, got: {}",
+            err
+        );
+    }
 }

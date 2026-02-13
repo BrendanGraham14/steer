@@ -224,6 +224,7 @@ message CompactResult {
     CompactSuccess success = 1;
     CompactCancelled cancelled = 2;
     CompactInsufficientMessages insufficient_messages = 3;
+    CompactFailed failed = 4;
   }
 }
 
@@ -235,6 +236,10 @@ message CompactCancelled {
 }
 
 message CompactInsufficientMessages {
+}
+
+message CompactFailed {
+  string error = 1;
 }
 
 enum CompactTrigger {

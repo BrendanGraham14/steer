@@ -2136,12 +2136,24 @@ fn handle_compaction_failed(
     op_id: crate::app::domain::types::OpId,
     error: String,
 ) -> Vec<Effect> {
+    let trigger = state
+        .current_operation
+        .as_ref()
+        .and_then(|op| match op.kind {
+            OperationKind::Compact { trigger } => Some(trigger),
+            _ => None,
+        })
+        .unwrap_or(CompactTrigger::Manual);
+
     state.complete_operation(op_id);
 
     let mut effects = vec![
         Effect::EmitEvent {
             session_id,
-            event: SessionEvent::Error { message: error },
+            event: SessionEvent::CompactResult {
+                result: crate::app::domain::event::CompactResult::Failed(error),
+                trigger,
+            },
         },
         Effect::EmitEvent {
             session_id,
@@ -3646,5 +3658,190 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Effect::CallModel { .. }))
         );
+    }
+
+    // ── Auto-compaction reducer tests ──────────────────────────────────
+
+    fn setup_auto_compact_state(
+        enabled: bool,
+        threshold_percent: u32,
+        message_count: usize,
+    ) -> AppState {
+        use crate::session::state::AutoCompactionConfig;
+
+        let mut state = test_state();
+
+        // Apply session config with auto-compaction settings.
+        let mut config = base_session_config();
+        config.auto_compaction = AutoCompactionConfig {
+            enabled,
+            threshold_percent,
+        };
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
+
+        // Add the requested number of messages, linked via parent_message_id so
+        // that `get_thread_messages` returns them all.
+        let mut prev_id: Option<String> = None;
+        for i in 0..message_count {
+            let id = format!("msg_{}", i);
+            state.message_graph.add_message(Message {
+                data: MessageData::User {
+                    content: vec![UserContent::Text {
+                        text: format!("message {}", i),
+                    }],
+                },
+                timestamp: i as u64,
+                id: id.clone(),
+                parent_message_id: prev_id.clone(),
+            });
+            prev_id = Some(id);
+        }
+
+        state
+    }
+
+    #[test]
+    fn test_maybe_auto_compact_triggers_when_all_guards_pass() {
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
+        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+
+        assert!(!effects.is_empty(), "expected non-empty effects");
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. })),
+            "expected Effect::RequestCompaction"
+        );
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::EmitEvent {
+                    event: SessionEvent::OperationStarted { .. },
+                    ..
+                }
+            )),
+            "expected OperationStarted event"
+        );
+    }
+
+    #[test]
+    fn test_maybe_auto_compact_disabled_config() {
+        let mut state = setup_auto_compact_state(false, 90, 4);
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
+        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+
+        assert!(effects.is_empty(), "expected empty effects when auto-compaction is disabled");
+    }
+
+    #[test]
+    fn test_maybe_auto_compact_below_threshold() {
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        // 50% utilization, well below 90% threshold.
+        let usage = Some(TokenUsage::new(40_000, 10_000, 50_000));
+        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+
+        assert!(effects.is_empty(), "expected empty effects when utilization is below threshold");
+    }
+
+    #[test]
+    fn test_maybe_auto_compact_insufficient_messages() {
+        // Only 2 messages — below MIN_MESSAGES_FOR_COMPACT (3).
+        let mut state = setup_auto_compact_state(true, 90, 2);
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
+        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+
+        assert!(effects.is_empty(), "expected empty effects with insufficient messages");
+    }
+
+    #[test]
+    fn test_maybe_auto_compact_queued_work_blocks() {
+        use crate::app::domain::state::QueuedUserMessage;
+
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        // Add queued work so guard 5 fires.
+        state.queue_user_message(QueuedUserMessage {
+            op_id: OpId::new(),
+            message_id: MessageId::new(),
+            content: vec![UserContent::Text { text: "queued msg".to_string() }],
+            model: builtin::claude_sonnet_4_5(),
+            queued_at: 0,
+        });
+
+        let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
+        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+
+        assert!(effects.is_empty(), "expected empty effects when there is queued work");
+    }
+
+    #[test]
+    fn test_handle_compaction_failed_emits_compact_result() {
+        use crate::app::domain::event::{CompactResult, CompactTrigger};
+
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        // Set up an active Compact { trigger: Auto } operation.
+        state.start_operation(
+            op_id,
+            OperationKind::Compact {
+                trigger: CompactTrigger::Auto,
+            },
+        );
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let effects = reduce(
+            &mut state,
+            Action::CompactionFailed {
+                session_id,
+                op_id,
+                error: "test error".into(),
+            },
+        );
+
+        // Should contain CompactResult::Failed with the right trigger.
+        let has_compact_result = effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::EmitEvent {
+                    event: SessionEvent::CompactResult {
+                        result: CompactResult::Failed(msg),
+                        trigger: CompactTrigger::Auto,
+                    },
+                    ..
+                } if msg == "test error"
+            )
+        });
+        assert!(has_compact_result, "expected CompactResult::Failed event with Auto trigger");
+
+        // Should NOT contain a SessionEvent::Error.
+        let has_error_event = effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::EmitEvent {
+                    event: SessionEvent::Error { .. },
+                    ..
+                }
+            )
+        });
+        assert!(!has_error_event, "should not emit SessionEvent::Error for compaction failure");
     }
 }
