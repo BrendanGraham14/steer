@@ -743,6 +743,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             yield GetConversationResponse {
                 chunk: Some(get_conversation_response::Chunk::Footer(GetConversationFooter {
                     approved_tools: state.approved_tools.into_iter().collect(),
+                    compaction_summary_ids: state.compaction_summary_ids.into_iter().collect(),
                 })),
             };
         };

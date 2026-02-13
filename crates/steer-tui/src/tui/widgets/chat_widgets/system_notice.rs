@@ -50,6 +50,7 @@ impl ChatRenderable for SystemNoticeWidget {
 
             // Wrap text and build lines
             let mut lines = vec![];
+
             let wrapped = textwrap::wrap(&full_text, wrap_width);
 
             for (i, wrapped_line) in wrapped.into_iter().enumerate() {

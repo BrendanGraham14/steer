@@ -49,6 +49,9 @@ pub struct AppState {
     pub llm_usage_totals: TokenUsage,
 
     pub event_sequence: u64,
+
+    /// Message IDs that are compaction summaries.
+    pub compaction_summary_ids: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +162,7 @@ impl AppState {
             llm_usage_by_op: HashMap::new(),
             llm_usage_totals: TokenUsage::new(0, 0, 0),
             event_sequence: 0,
+            compaction_summary_ids: HashSet::new(),
         }
     }
 

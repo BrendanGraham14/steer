@@ -442,6 +442,7 @@ message GetConversationResponse {
 
 message GetConversationFooter {
   repeated string approved_tools = 1;
+  repeated string compaction_summary_ids = 2;
 }
 
 message ListFilesRequest {

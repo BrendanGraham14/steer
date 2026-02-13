@@ -30,6 +30,8 @@ pub struct ChatStore {
     active_message_id: Option<String>,
     /// Message key before which items are hidden due to compaction
     compaction_head_key: Option<ChatItemKey>,
+    /// Message IDs that are compaction summaries (for separator rendering)
+    compaction_summary_ids: HashSet<String>,
 }
 
 impl Default for ChatStore {
@@ -43,6 +45,7 @@ impl Default for ChatStore {
             revision: 0,
             active_message_id: None,
             compaction_head_key: None,
+            compaction_summary_ids: HashSet::new(),
         }
     }
 }
@@ -113,6 +116,17 @@ impl ChatStore {
 
     pub fn compaction_head_key(&self) -> Option<ChatItemKey> {
         self.compaction_head_key
+    }
+
+    /// Mark a message as a compaction summary (for separator rendering).
+    pub fn mark_compaction_summary(&mut self, id: String) {
+        self.compaction_summary_ids.insert(id);
+        self.revision += 1;
+    }
+
+    /// Check if a message is a compaction summary.
+    pub fn is_compaction_summary(&self, id: &str) -> bool {
+        self.compaction_summary_ids.contains(id)
     }
 
     /// Push a new item and return its key

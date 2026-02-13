@@ -809,9 +809,14 @@ impl Tui {
     }
 
     /// Restore messages to the TUI, properly populating the tool registry
-    fn restore_messages(&mut self, messages: Vec<Message>) {
+    fn restore_messages(&mut self, messages: Vec<Message>, compaction_summary_ids: &[String]) {
         let message_count = messages.len();
         info!("Starting to restore {} messages to TUI", message_count);
+
+        // Mark compaction summary messages so separators render above them.
+        for id in compaction_summary_ids {
+            self.chat_store.mark_compaction_summary(id.clone());
+        }
 
         // Debug: log all Tool messages to check their IDs
         for message in &messages {
@@ -2309,8 +2314,8 @@ pub async fn run_tui(
         }
     };
 
-    let (session_id, messages) = if let Some(session_id) = session_id {
-        let (messages, _approved_tools) =
+    let (session_id, messages, compaction_summary_ids) = if let Some(session_id) = session_id {
+        let (messages, _approved_tools, compaction_summary_ids) =
             client.resume_session(&session_id).await.map_err(Box::new)?;
         info!(
             "Resumed session: {} with {} messages",
@@ -2318,7 +2323,7 @@ pub async fn run_tui(
             messages.len()
         );
         tracing_info!("Session ID: {session_id}");
-        (session_id, messages)
+        (session_id, messages, compaction_summary_ids)
     } else {
         // Create a new session
         let workspace = if let Some(ref dir) = directory {
@@ -2339,7 +2344,7 @@ pub async fn run_tui(
             .create_session(session_params)
             .await
             .map_err(Box::new)?;
-        (session_id, vec![])
+        (session_id, vec![], vec![])
     };
 
     client.subscribe_session_events().await.map_err(Box::new)?;
@@ -2356,7 +2361,7 @@ pub async fn run_tui(
     let _cleanup_guard = TuiCleanupGuard;
 
     if !messages.is_empty() {
-        tui.restore_messages(messages.clone());
+        tui.restore_messages(messages.clone(), &compaction_summary_ids);
         tui.chat_viewport.state_mut().scroll_to_bottom();
     }
 
@@ -2591,7 +2596,7 @@ mod tests {
         let messages = vec![assistant_msg, tool_msg];
 
         // Restore messages
-        tui.restore_messages(messages);
+        tui.restore_messages(messages, &[]);
 
         // Verify tool call was preserved in registry
         if let Some(stored_call) = tui.tool_registry.get_tool_call(&tool_id) {
@@ -2659,7 +2664,7 @@ mod tests {
 
         let messages = vec![tool_msg, assistant_msg];
 
-        tui.restore_messages(messages);
+        tui.restore_messages(messages, &[]);
 
         // Should still have proper parameters
         if let Some(stored_call) = tui.tool_registry.get_tool_call(&tool_id) {

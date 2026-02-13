@@ -18,6 +18,8 @@ pub struct RowWidget {
     row_background: Option<Style>,
     accent_style: Option<Style>,
     has_padding_lines: bool,
+    separator_above: bool,
+    separator_style: Option<Style>,
     cached_lines: Option<Vec<Line<'static>>>,
     last_width: u16,
     last_mode: ViewMode,
@@ -32,6 +34,8 @@ impl RowWidget {
             row_background: None,
             accent_style: None,
             has_padding_lines: false,
+            separator_above: false,
+            separator_style: None,
             cached_lines: None,
             last_width: 0,
             last_mode: ViewMode::Compact,
@@ -52,6 +56,12 @@ impl RowWidget {
 
     pub fn with_padding_lines(mut self) -> Self {
         self.has_padding_lines = true;
+        self
+    }
+
+    pub fn with_separator_above(mut self, style: Style) -> Self {
+        self.separator_above = true;
+        self.separator_style = Some(style);
         self
     }
 }
@@ -148,8 +158,19 @@ impl ChatRenderable for RowWidget {
             Line::from(acc)
         };
 
-        let extra_lines = if self.has_padding_lines { 2 } else { 0 };
+        let extra_lines = if self.has_padding_lines { 2 } else { 0 }
+            + if self.separator_above { 1 } else { 0 };
         let mut lines = Vec::with_capacity(body_lines.len() + extra_lines);
+
+        if self.separator_above {
+            let sep_style = self.separator_style.unwrap_or_default();
+            let rule_width = width.saturating_sub(PADDING * 2) as usize;
+            let mut sep_spans = Vec::with_capacity(3);
+            sep_spans.push(Span::raw(" ".repeat(PADDING as usize)));
+            sep_spans.push(Span::styled("─".repeat(rule_width), sep_style));
+            sep_spans.push(Span::raw(" ".repeat(PADDING as usize)));
+            lines.push(Line::from(sep_spans));
+        }
 
         if self.has_padding_lines {
             lines.push(make_padding_line(width));

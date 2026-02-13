@@ -7,7 +7,7 @@ mod tests {
     use crate::app::domain::event::{ContextWindowUsage, SessionEvent};
     use crate::app::domain::reduce::{apply_event_to_state, reduce};
     use crate::app::domain::state::{AppState, OperationKind, OperationState};
-    use crate::app::domain::types::{MessageId, OpId, RequestId, SessionId};
+    use crate::app::domain::types::{CompactionId, MessageId, OpId, RequestId, SessionId};
     use crate::config::model::builtin;
     use std::collections::HashSet;
     use steer_tools::ToolCall;
@@ -603,5 +603,181 @@ mod tests {
         assert_eq!(snapshot.context_window, context_window);
         assert_eq!(hydrated_state.llm_usage_totals, usage);
         assert_eq!(hydrated_state.event_sequence, 1);
+    }
+
+    #[test]
+    fn test_compaction_replay_marks_boundary_in_state() {
+        use crate::app::conversation::{Message, MessageData, UserContent};
+        use crate::app::domain::action::Action;
+        use crate::app::domain::event::CompactTrigger;
+        use crate::app::domain::state::OperationKind;
+
+        let session_id = deterministic_session_id();
+        let op_id = deterministic_op_id(1);
+        let mut live_state = AppState::new(session_id);
+
+        // Add pre-compaction messages.
+        let msg1 = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "hello".to_string(),
+                }],
+            },
+            id: "msg1".to_string(),
+            parent_message_id: None,
+            timestamp: 1,
+        };
+        live_state.message_graph.add_message(msg1);
+        let msg2 = Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "hi there".to_string(),
+                }],
+            },
+            id: "msg2".to_string(),
+            parent_message_id: Some("msg1".to_string()),
+            timestamp: 2,
+        };
+        live_state.message_graph.add_message(msg2);
+
+        // Start Compact operation.
+        live_state.start_operation(
+            op_id,
+            OperationKind::Compact {
+                trigger: CompactTrigger::Manual,
+            },
+        );
+        live_state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let summary_message_id = deterministic_message_id("summary");
+        let compaction_id = CompactionId::new();
+
+        let effects = reduce_ok(
+            &mut live_state,
+            Action::CompactionComplete {
+                session_id,
+                op_id,
+                compaction_id,
+                summary_message_id: summary_message_id.clone(),
+                summary: "Summary of conversation.".to_string(),
+                compacted_head_message_id: deterministic_message_id("msg2"),
+                previous_active_message_id: Some(deterministic_message_id("msg2")),
+                model: "claude-sonnet-4-5-20250929".to_string(),
+                timestamp: 3,
+            },
+        );
+
+        // Replay events onto a fresh state.
+        let events = collect_events(&effects);
+        let mut replayed_state = AppState::new(session_id);
+        for event in &events {
+            apply_event_to_state(&mut replayed_state, event);
+        }
+
+        // compaction_summary_ids should match.
+        assert_eq!(
+            live_state.compaction_summary_ids,
+            replayed_state.compaction_summary_ids,
+            "AppState.compaction_summary_ids should match after replay"
+        );
+
+        // MessageGraph compaction_summary_ids should match.
+        assert_eq!(
+            live_state.message_graph.compaction_summary_ids,
+            replayed_state.message_graph.compaction_summary_ids,
+            "MessageGraph.compaction_summary_ids should match after replay"
+        );
+
+        // get_thread_messages should return the same messages.
+        let live_thread_ids: Vec<&str> = live_state
+            .message_graph
+            .get_thread_messages()
+            .iter()
+            .map(|m| m.id())
+            .collect();
+        let replayed_thread_ids: Vec<&str> = replayed_state
+            .message_graph
+            .get_thread_messages()
+            .iter()
+            .map(|m| m.id())
+            .collect();
+        assert_eq!(
+            live_thread_ids, replayed_thread_ids,
+            "get_thread_messages should return the same filtered list after replay"
+        );
+
+        // Enhancement: dispatch UserInput on replayed state and verify CallModel
+        // messages are filtered (no pre-compaction messages).
+        let post_op_id = deterministic_op_id(100);
+        let post_effects = reduce_ok(
+            &mut replayed_state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("post-replay question").unwrap(),
+                op_id: post_op_id,
+                message_id: deterministic_message_id("post_replay_msg"),
+                model: builtin::claude_sonnet_4_5(),
+                timestamp: 10,
+            },
+        );
+
+        let callmodel_messages = post_effects.iter().find_map(|e| match e {
+            Effect::CallModel { messages, .. } => Some(messages),
+            _ => None,
+        });
+        let messages = callmodel_messages
+            .expect("expected CallModel effect from UserInput on replayed state");
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "CallModel should contain exactly 2 messages (summary + new user msg), got: {:?}",
+            messages.iter().map(|m| m.id()).collect::<Vec<_>>()
+        );
+
+        // First message should be the compaction summary.
+        assert!(
+            matches!(
+                &messages[0].data,
+                MessageData::Assistant { content }
+                    if content.iter().any(|c| matches!(
+                        c,
+                        AssistantContent::Text { text } if text == "Summary of conversation."
+                    ))
+            ),
+            "messages[0] should be the compaction summary"
+        );
+
+        // Second message should be the new user message.
+        assert!(
+            matches!(
+                &messages[1].data,
+                MessageData::User { content }
+                    if content.iter().any(|c| matches!(
+                        c,
+                        UserContent::Text { text } if text == "post-replay question"
+                    ))
+            ),
+            "messages[1] should be the new user message"
+        );
+
+        // Pre-compaction messages must NOT appear.
+        let has_pre_compaction = messages.iter().any(|m| match &m.data {
+            MessageData::User { content } => content.iter().any(|c| matches!(
+                c,
+                UserContent::Text { text } if text == "hello"
+            )),
+            MessageData::Assistant { content } => content.iter().any(|c| matches!(
+                c,
+                AssistantContent::Text { text } if text == "hi there"
+            )),
+            _ => false,
+        });
+        assert!(
+            !has_pre_compaction,
+            "CallModel messages must not contain pre-compaction messages after replay"
+        );
     }
 }

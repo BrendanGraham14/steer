@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
 use super::message::{AssistantContent, Message, MessageData, UserContent};
@@ -8,6 +8,8 @@ use super::message::{AssistantContent, Message, MessageData, UserContent};
 pub struct MessageGraph {
     pub messages: Vec<Message>,
     pub active_message_id: Option<String>,
+    #[serde(default)]
+    pub compaction_summary_ids: HashSet<String>,
 }
 
 impl Default for MessageGraph {
@@ -21,6 +23,7 @@ impl MessageGraph {
         Self {
             messages: Vec::new(),
             active_message_id: None,
+            compaction_summary_ids: HashSet::new(),
         }
     }
 
@@ -142,6 +145,10 @@ impl MessageGraph {
         }
     }
 
+    pub fn mark_compaction_summary(&mut self, id: String) {
+        self.compaction_summary_ids.insert(id);
+    }
+
     pub fn get_active_thread(&self) -> Vec<&Message> {
         if self.messages.is_empty() {
             return Vec::new();
@@ -163,6 +170,12 @@ impl MessageGraph {
 
         while let Some(msg) = current_msg {
             result.push(msg);
+
+            // Stop walking at compaction boundary — the summary message is
+            // included but older (pre-compaction) messages are not.
+            if self.compaction_summary_ids.contains(msg.id()) {
+                break;
+            }
 
             current_msg = if let Some(parent_id) = msg.parent_message_id() {
                 id_map.get(parent_id).copied()
@@ -434,6 +447,36 @@ mod tests {
 
         assert!(!graph.checkout("non-existent"));
         assert_eq!(graph.active_message_id, Some("msg2".to_string()));
+    }
+
+    #[test]
+    fn test_compaction_boundary_filters_old_messages() {
+        let mut graph = MessageGraph::new();
+
+        // Pre-compaction messages
+        let msg1 = create_user_message("msg1", None, "hello");
+        graph.add_message(msg1);
+        let msg2 = create_assistant_message("msg2", Some("msg1"), "hi there");
+        graph.add_message(msg2);
+        let msg3 = create_user_message("msg3", Some("msg2"), "tell me more");
+        graph.add_message(msg3);
+
+        // Compaction summary (parent points to compacted head)
+        let summary = create_assistant_message("summary", Some("msg3"), "Summary of conversation.");
+        graph.add_message(summary);
+        graph.mark_compaction_summary("summary".to_string());
+
+        // Post-compaction messages
+        let msg4 = create_user_message("msg4", Some("summary"), "new question");
+        graph.add_message(msg4);
+        let msg5 = create_assistant_message("msg5", Some("msg4"), "new answer");
+        graph.add_message(msg5);
+
+        let thread = graph.get_thread_messages();
+        let ids: Vec<&str> = thread.iter().map(|m| m.id()).collect();
+
+        // Should include summary + post-compaction, but NOT pre-compaction
+        assert_eq!(ids, vec!["summary", "msg4", "msg5"]);
     }
 
     #[test]

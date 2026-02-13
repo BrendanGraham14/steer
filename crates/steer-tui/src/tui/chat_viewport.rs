@@ -28,6 +28,7 @@ enum FlattenedItem {
         id: String,
         is_edited: bool,
         is_editing: bool,
+        is_compaction_summary: bool,
     },
     /// Tool call coupled with its result
     ToolInteraction {
@@ -64,11 +65,13 @@ impl FlattenedItem {
                 message,
                 is_edited,
                 is_editing,
+                is_compaction_summary,
                 ..
             } => {
                 hash_message_content(message, &mut hasher);
                 is_edited.hash(&mut hasher);
                 is_editing.hash(&mut hasher);
+                is_compaction_summary.hash(&mut hasher);
             }
             FlattenedItem::ToolInteraction { call, result, .. } => {
                 call.id.hash(&mut hasher);
@@ -240,7 +243,7 @@ impl ChatViewport {
 
         // Flatten raw items into 1:1 widget items
         let flattened =
-            Self::flatten_items(&filtered_items, &edited_message_ids, editing_message_id);
+            Self::flatten_items(&filtered_items, &edited_message_ids, editing_message_id, chat_store);
 
         // Build a map of existing widgets by ID for reuse
         let mut existing_widgets: HashMap<String, WidgetItem> = HashMap::new();
@@ -290,6 +293,7 @@ impl ChatViewport {
         raw: &[&ChatItem],
         edited_message_ids: &HashSet<String>,
         editing_message_id: Option<&str>,
+        chat_store: &ChatStore,
     ) -> Vec<FlattenedItem> {
         // First pass: collect tool results for coupling
         let mut tool_results: HashMap<String, ToolResult> = HashMap::new();
@@ -327,6 +331,7 @@ impl ChatViewport {
                                     id: format!("{}_text", row.id()),
                                     is_edited: false,
                                     is_editing: false,
+                                    is_compaction_summary: chat_store.is_compaction_summary(row.id()),
                                 });
                             }
 
@@ -360,6 +365,7 @@ impl ChatViewport {
                                 id: row.id().to_string(),
                                 is_edited,
                                 is_editing,
+                                is_compaction_summary: false,
                             });
                         }
                     }
@@ -681,6 +687,7 @@ fn create_widget_for_flattened_item(
             message,
             is_edited,
             is_editing,
+            is_compaction_summary,
             ..
         } => {
             let body = Box::new(
@@ -710,7 +717,14 @@ fn create_widget_for_flattened_item(
                             .with_padding_lines(),
                     )
                 }
-                MessageData::Assistant { .. } => Box::new(RowWidget::new(body)),
+                MessageData::Assistant { .. } => {
+                    let mut row = RowWidget::new(body);
+                    if *is_compaction_summary {
+                        let sep_style = theme.style(Component::NoticeInfo);
+                        row = row.with_separator_above(sep_style);
+                    }
+                    Box::new(row)
+                }
                 MessageData::Tool { .. } => Box::new(RowWidget::new(body)),
             }
         }

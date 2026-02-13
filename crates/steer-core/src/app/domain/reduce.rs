@@ -2019,6 +2019,14 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
                 })
                 .collect();
         }
+        SessionEvent::ConversationCompacted { record } => {
+            state
+                .compaction_summary_ids
+                .insert(record.summary_message_id.to_string());
+            state
+                .message_graph
+                .mark_compaction_summary(record.summary_message_id.to_string());
+        }
         _ => {}
     }
 
@@ -2062,11 +2070,15 @@ fn handle_compaction_complete(
             }],
         },
         id: summary_message_id.to_string(),
-        parent_message_id: None,
+        parent_message_id: Some(compacted_head_message_id.to_string()),
         timestamp,
     };
 
     state.message_graph.add_message(summary_message.clone());
+
+    // Mark the summary so get_active_thread() stops here (LLM won't see older messages).
+    state.compaction_summary_ids.insert(summary_message_id.to_string());
+    state.message_graph.mark_compaction_summary(summary_message_id.to_string());
 
     let record = CompactionRecord::with_timestamp(
         compaction_id,
@@ -3843,5 +3855,524 @@ mod tests {
             )
         });
         assert!(!has_error_event, "should not emit SessionEvent::Error for compaction failure");
+    }
+
+    /// Helper: extract the `messages` field from the first `Effect::CallModel` in a list of effects.
+    fn extract_callmodel_messages(effects: &[Effect]) -> Option<&Vec<Message>> {
+        effects.iter().find_map(|e| match e {
+            Effect::CallModel { messages, .. } => Some(messages),
+            _ => None,
+        })
+    }
+
+    /// Helper: check whether any message in the list contains the given text substring.
+    fn messages_contain_text(messages: &[Message], needle: &str) -> bool {
+        messages.iter().any(|m| match &m.data {
+            MessageData::User { content } => content.iter().any(|c| match c {
+                UserContent::Text { text } => text.contains(needle),
+                _ => false,
+            }),
+            MessageData::Assistant { content } => content.iter().any(|c| match c {
+                AssistantContent::Text { text } => text.contains(needle),
+                _ => false,
+            }),
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn test_compaction_full_cycle_callmodel_filters_messages() {
+        use crate::app::domain::types::CompactionId;
+
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        // Build 2 user/assistant turns (4 messages, exceeds MIN_MESSAGES_FOR_COMPACT=3).
+        // Turn 1:
+        let op_id_1 = OpId::new();
+        let _ = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("hello").unwrap(),
+                op_id: op_id_1,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 1,
+            },
+        );
+        let _ = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id: op_id_1,
+                message_id: MessageId::new(),
+                content: vec![AssistantContent::Text {
+                    text: "hi there".to_string(),
+                }],
+                usage: None,
+                context_window_tokens: None,
+                timestamp: 2,
+            },
+        );
+
+        // Turn 2:
+        let op_id_1b = OpId::new();
+        let _ = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("how are you").unwrap(),
+                op_id: op_id_1b,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 3,
+            },
+        );
+        let assistant_msg_id = MessageId::new();
+        let _ = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id: op_id_1b,
+                message_id: assistant_msg_id.clone(),
+                content: vec![AssistantContent::Text {
+                    text: "doing well".to_string(),
+                }],
+                usage: None,
+                context_window_tokens: None,
+                timestamp: 4,
+            },
+        );
+        assert!(
+            state.current_operation.is_none(),
+            "operation should be complete after text-only response"
+        );
+        assert!(state.message_graph.messages.len() >= 3);
+
+        // RequestCompaction — starts Compact operation.
+        let op_id_2 = OpId::new();
+        let compact_effects = reduce(
+            &mut state,
+            Action::RequestCompaction {
+                session_id,
+                op_id: op_id_2,
+                model: model.clone(),
+            },
+        );
+        assert!(
+            compact_effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. })),
+            "expected Effect::RequestCompaction"
+        );
+
+        // Step 4: CompactionComplete — summary replaces old messages as boundary.
+        let compaction_id = CompactionId::new();
+        let summary_message_id = MessageId::new();
+        let active_before = state.message_graph.active_message_id.clone();
+        let _ = reduce(
+            &mut state,
+            Action::CompactionComplete {
+                session_id,
+                op_id: op_id_2,
+                compaction_id,
+                summary_message_id: summary_message_id.clone(),
+                summary: "Summary of conversation.".to_string(),
+                compacted_head_message_id: assistant_msg_id,
+                previous_active_message_id: active_before.map(MessageId::from_string),
+                model: "claude-sonnet-4-5-20250929".to_string(),
+                timestamp: 3,
+            },
+        );
+        assert!(
+            state.compaction_summary_ids.contains(&summary_message_id.0),
+            "compaction_summary_ids should contain the summary id"
+        );
+
+        // Step 5: New UserInput("new question") — triggers CallModel.
+        let op_id_3 = OpId::new();
+        let effects = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("new question").unwrap(),
+                op_id: op_id_3,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 10,
+            },
+        );
+
+        // Assertions on CallModel messages.
+        let messages = extract_callmodel_messages(&effects)
+            .expect("expected Effect::CallModel from UserInput after compaction");
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "CallModel should contain exactly 2 messages (summary + new user msg), got: {:?}",
+            messages.iter().map(|m| m.id()).collect::<Vec<_>>()
+        );
+
+        // First message is the summary (assistant).
+        assert!(
+            matches!(&messages[0].data, MessageData::Assistant { content } if content.iter().any(|c| matches!(c, AssistantContent::Text { text } if text == "Summary of conversation."))),
+            "messages[0] should be the compaction summary"
+        );
+
+        // Second message is the new user message.
+        assert!(
+            matches!(&messages[1].data, MessageData::User { content } if content.iter().any(|c| matches!(c, UserContent::Text { text } if text == "new question"))),
+            "messages[1] should be the new user message"
+        );
+
+        // Pre-compaction messages must NOT appear.
+        assert!(
+            !messages_contain_text(messages, "hello"),
+            "CallModel messages must not contain pre-compaction user text 'hello'"
+        );
+        assert!(
+            !messages_contain_text(messages, "hi there"),
+            "CallModel messages must not contain pre-compaction assistant text 'hi there'"
+        );
+        assert!(
+            !messages_contain_text(messages, "how are you"),
+            "CallModel messages must not contain pre-compaction user text 'how are you'"
+        );
+        assert!(
+            !messages_contain_text(messages, "doing well"),
+            "CallModel messages must not contain pre-compaction assistant text 'doing well'"
+        );
+    }
+
+    #[test]
+    fn test_compaction_queued_message_callmodel_filters_messages() {
+        use crate::app::domain::types::CompactionId;
+
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        // Build initial conversation with 2 turns (4 msgs, exceeds MIN_MESSAGES_FOR_COMPACT=3).
+        // Turn 1:
+        let op_id_1 = OpId::new();
+        let _ = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("msg A").unwrap(),
+                op_id: op_id_1,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 1,
+            },
+        );
+        let _ = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id: op_id_1,
+                message_id: MessageId::new(),
+                content: vec![AssistantContent::Text {
+                    text: "response A".to_string(),
+                }],
+                usage: None,
+                context_window_tokens: None,
+                timestamp: 2,
+            },
+        );
+
+        // Turn 2:
+        let op_id_1b = OpId::new();
+        let _ = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("msg A2").unwrap(),
+                op_id: op_id_1b,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 3,
+            },
+        );
+        let assistant_msg_id = MessageId::new();
+        let _ = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id: op_id_1b,
+                message_id: assistant_msg_id.clone(),
+                content: vec![AssistantContent::Text {
+                    text: "response A2".to_string(),
+                }],
+                usage: None,
+                context_window_tokens: None,
+                timestamp: 4,
+            },
+        );
+        assert!(state.current_operation.is_none());
+
+        // Start compaction — Compact operation is now active.
+        let op_id_2 = OpId::new();
+        let _ = reduce(
+            &mut state,
+            Action::RequestCompaction {
+                session_id,
+                op_id: op_id_2,
+                model: model.clone(),
+            },
+        );
+        assert!(
+            state.has_active_operation(),
+            "Compact operation should be active"
+        );
+
+        // UserInput("msg B") while compaction is in flight — should be queued.
+        let op_id_3 = OpId::new();
+        let queued_effects = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("msg B").unwrap(),
+                op_id: op_id_3,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 5,
+            },
+        );
+        assert!(
+            queued_effects.iter().any(|e| matches!(
+                e,
+                Effect::EmitEvent {
+                    event: SessionEvent::QueueUpdated { .. },
+                    ..
+                }
+            )),
+            "queued user message should emit QueueUpdated"
+        );
+
+        // CompactionComplete — completes compaction AND dequeues "msg B".
+        let compaction_id = CompactionId::new();
+        let summary_message_id = MessageId::new();
+        let active_before = state.message_graph.active_message_id.clone();
+        let completion_effects = reduce(
+            &mut state,
+            Action::CompactionComplete {
+                session_id,
+                op_id: op_id_2,
+                compaction_id,
+                summary_message_id: summary_message_id.clone(),
+                summary: "Summary of A.".to_string(),
+                compacted_head_message_id: assistant_msg_id,
+                previous_active_message_id: active_before.map(MessageId::from_string),
+                model: "claude-sonnet-4-5-20250929".to_string(),
+                timestamp: 6,
+            },
+        );
+
+        // The dequeued "msg B" should produce a CallModel effect.
+        let messages = extract_callmodel_messages(&completion_effects)
+            .expect("CompactionComplete should dequeue 'msg B' and produce CallModel");
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "CallModel should contain exactly 2 messages (summary + 'msg B'), got: {:?}",
+            messages.iter().map(|m| m.id()).collect::<Vec<_>>()
+        );
+
+        // Summary message.
+        assert!(
+            messages_contain_text(messages, "Summary of A."),
+            "CallModel messages should contain the compaction summary"
+        );
+
+        // Queued user message.
+        assert!(
+            messages_contain_text(messages, "msg B"),
+            "CallModel messages should contain the dequeued 'msg B'"
+        );
+
+        // Pre-compaction messages must NOT appear.
+        assert!(
+            !messages_contain_text(messages, "response A"),
+            "CallModel messages must not contain pre-compaction 'response A'"
+        );
+        assert!(
+            !messages_contain_text(messages, "response A2"),
+            "CallModel messages must not contain pre-compaction 'response A2'"
+        );
+    }
+
+    #[test]
+    fn test_compaction_multi_round_conversation_then_compact() {
+        use crate::app::domain::types::CompactionId;
+
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        // Build 3 user/assistant turns (6 messages) via reducer actions.
+        let pre_compaction_texts = [
+            ("alpha user", "alpha assistant"),
+            ("beta user", "beta assistant"),
+            ("gamma user", "gamma assistant"),
+        ];
+        let mut last_assistant_msg_id = MessageId::new();
+        for (i, (user_text, assistant_text)) in pre_compaction_texts.iter().enumerate() {
+            let op = OpId::new();
+            let _ = reduce(
+                &mut state,
+                Action::UserInput {
+                    session_id,
+                    text: NonEmptyString::new(*user_text).unwrap(),
+                    op_id: op,
+                    message_id: MessageId::new(),
+                    model: model.clone(),
+                    timestamp: (i * 2 + 1) as u64,
+                },
+            );
+            last_assistant_msg_id = MessageId::new();
+            let _ = reduce(
+                &mut state,
+                Action::ModelResponseComplete {
+                    session_id,
+                    op_id: op,
+                    message_id: last_assistant_msg_id.clone(),
+                    content: vec![AssistantContent::Text {
+                        text: assistant_text.to_string(),
+                    }],
+                    usage: None,
+                    context_window_tokens: None,
+                    timestamp: (i * 2 + 2) as u64,
+                },
+            );
+        }
+        assert_eq!(state.message_graph.messages.len(), 6);
+        assert!(state.current_operation.is_none());
+
+        // Compact the conversation.
+        let op_compact = OpId::new();
+        let _ = reduce(
+            &mut state,
+            Action::RequestCompaction {
+                session_id,
+                op_id: op_compact,
+                model: model.clone(),
+            },
+        );
+
+        let compaction_id = CompactionId::new();
+        let summary_message_id = MessageId::new();
+        let active_before = state.message_graph.active_message_id.clone();
+        let _ = reduce(
+            &mut state,
+            Action::CompactionComplete {
+                session_id,
+                op_id: op_compact,
+                compaction_id,
+                summary_message_id: summary_message_id.clone(),
+                summary: "Summary of greek turns.".to_string(),
+                compacted_head_message_id: last_assistant_msg_id,
+                previous_active_message_id: active_before.map(MessageId::from_string),
+                model: "claude-sonnet-4-5-20250929".to_string(),
+                timestamp: 100,
+            },
+        );
+
+        // Add 2 post-compaction turns.
+        let post_compaction_texts = [
+            ("delta user", "delta assistant"),
+            ("epsilon user", "epsilon assistant"),
+        ];
+        for (i, (user_text, assistant_text)) in post_compaction_texts.iter().enumerate() {
+            let op = OpId::new();
+            let _ = reduce(
+                &mut state,
+                Action::UserInput {
+                    session_id,
+                    text: NonEmptyString::new(*user_text).unwrap(),
+                    op_id: op,
+                    message_id: MessageId::new(),
+                    model: model.clone(),
+                    timestamp: (101 + i * 2) as u64,
+                },
+            );
+            let _ = reduce(
+                &mut state,
+                Action::ModelResponseComplete {
+                    session_id,
+                    op_id: op,
+                    message_id: MessageId::new(),
+                    content: vec![AssistantContent::Text {
+                        text: assistant_text.to_string(),
+                    }],
+                    usage: None,
+                    context_window_tokens: None,
+                    timestamp: (102 + i * 2) as u64,
+                },
+            );
+        }
+
+        // Final UserInput to trigger CallModel.
+        let final_op = OpId::new();
+        let effects = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                text: NonEmptyString::new("final question").unwrap(),
+                op_id: final_op,
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 200,
+            },
+        );
+
+        let messages = extract_callmodel_messages(&effects)
+            .expect("expected CallModel from final UserInput");
+
+        // Expected: summary + 4 post-compaction messages + final user = 6.
+        assert_eq!(
+            messages.len(),
+            6,
+            "CallModel should have 6 messages (summary + 4 post-compaction + final), got: {:?}",
+            messages.iter().map(|m| m.id()).collect::<Vec<_>>()
+        );
+
+        // First message is the compaction summary.
+        assert!(
+            messages_contain_text(&messages[..1], "Summary of greek turns."),
+            "first message should be the compaction summary"
+        );
+
+        // Final message is the new user question.
+        assert!(
+            messages_contain_text(&messages[5..], "final question"),
+            "last message should be the final user question"
+        );
+
+        // Post-compaction messages should be present.
+        assert!(
+            messages_contain_text(messages, "delta user"),
+            "should contain post-compaction user text"
+        );
+        assert!(
+            messages_contain_text(messages, "epsilon assistant"),
+            "should contain post-compaction assistant text"
+        );
+
+        // Pre-compaction messages must NOT appear.
+        for (user_text, assistant_text) in &pre_compaction_texts {
+            assert!(
+                !messages_contain_text(messages, user_text),
+                "CallModel messages must not contain pre-compaction text '{user_text}'"
+            );
+            assert!(
+                !messages_contain_text(messages, assistant_text),
+                "CallModel messages must not contain pre-compaction text '{assistant_text}'"
+            );
+        }
     }
 }

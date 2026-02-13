@@ -111,7 +111,7 @@ impl AgentClient {
     pub async fn resume_session(
         &self,
         session_id: &str,
-    ) -> GrpcResult<(Vec<Message>, Vec<String>)> {
+    ) -> GrpcResult<(Vec<Message>, Vec<String>, Vec<String>)> {
         let result = self.get_conversation(session_id).await?;
         *self.session_id.lock().await = Some(session_id.to_string());
         info!("Resumed session: {}", session_id);
@@ -671,7 +671,7 @@ impl AgentClient {
     pub async fn get_conversation(
         &self,
         session_id: &str,
-    ) -> GrpcResult<(Vec<Message>, Vec<String>)> {
+    ) -> GrpcResult<(Vec<Message>, Vec<String>, Vec<String>)> {
         info!(
             "Client adapter getting conversation for session: {}",
             session_id
@@ -690,6 +690,7 @@ impl AgentClient {
 
         let mut messages = Vec::new();
         let mut approved_tools = Vec::new();
+        let mut compaction_summary_ids = Vec::new();
 
         while let Some(response) = stream.message().await.map_err(GrpcError::from)? {
             match response.chunk {
@@ -704,6 +705,7 @@ impl AgentClient {
                 }
                 Some(proto::get_conversation_response::Chunk::Footer(footer)) => {
                     approved_tools = footer.approved_tools;
+                    compaction_summary_ids = footer.compaction_summary_ids;
                 }
                 None => {}
             }
@@ -714,7 +716,7 @@ impl AgentClient {
             messages.len()
         );
 
-        Ok((messages, approved_tools))
+        Ok((messages, approved_tools, compaction_summary_ids))
     }
 
     pub async fn shutdown(self) {

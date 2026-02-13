@@ -67,43 +67,27 @@ impl EventProcessor for SystemEventProcessor {
             ClientEvent::CompactResult { result, trigger } => {
                 if matches!(result, CompactResult::Success(_)) {
                     ctx.llm_usage.clear();
+                    *ctx.messages_updated = true;
+                } else if matches!(trigger, CompactTrigger::Manual) {
+                    // Manual non-success: show error/status via CoreCmdResponse
+                    let chat_item = crate::tui::model::ChatItem {
+                        parent_chat_item_id: None,
+                        data: ChatItemData::CoreCmdResponse {
+                            id: generate_row_id(),
+                            command: CoreCommandType::Compact,
+                            response: CommandResponse::Compact(result),
+                            ts: time::OffsetDateTime::now_utc(),
+                        },
+                    };
+                    ctx.chat_store.push(chat_item);
+                    *ctx.messages_updated = true;
                 }
-                match trigger {
-                    CompactTrigger::Manual => {
-                        let chat_item = crate::tui::model::ChatItem {
-                            parent_chat_item_id: None,
-                            data: ChatItemData::CoreCmdResponse {
-                                id: generate_row_id(),
-                                command: CoreCommandType::Compact,
-                                response: CommandResponse::Compact(result),
-                                ts: time::OffsetDateTime::now_utc(),
-                            },
-                        };
-                        ctx.chat_store.push(chat_item);
-                        *ctx.messages_updated = true;
-                    }
-                    CompactTrigger::Auto => {
-                        if matches!(result, CompactResult::Success(_)) {
-                            let chat_item = crate::tui::model::ChatItem {
-                                parent_chat_item_id: None,
-                                data: ChatItemData::SystemNotice {
-                                    id: generate_row_id(),
-                                    level: NoticeLevel::Info,
-                                    text: "Context window compacted automatically.".to_string(),
-                                    ts: time::OffsetDateTime::now_utc(),
-                                },
-                            };
-                            ctx.chat_store.push(chat_item);
-                            *ctx.messages_updated = true;
-                        }
-                        // Auto + failure/cancel: silent — no chat item.
-                    }
-                }
+                // Auto non-success: silent (no chat item)
                 ProcessingResult::Handled
             }
             ClientEvent::ConversationCompacted { record } => {
                 ctx.chat_store
-                    .set_compaction_head(Some(record.compacted_head_message_id.to_string()));
+                    .mark_compaction_summary(record.summary_message_id.to_string());
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled
             }
@@ -253,7 +237,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auto_compact_success_shows_system_notice() {
+    async fn test_auto_compact_success_clears_usage_no_chat_item() {
         let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
             &Preferences::default(),
         )));
@@ -292,7 +276,9 @@ mod tests {
 
         assert!(matches!(result, ProcessingResult::Handled));
         assert!(*processing_ctx.messages_updated);
-        assert_eq!(processing_ctx.chat_store.len(), 1);
+        // CompactResult no longer inserts a chat item; separator is handled
+        // by ConversationCompacted marking the summary message.
+        assert!(processing_ctx.chat_store.is_empty());
     }
 
     #[tokio::test]
