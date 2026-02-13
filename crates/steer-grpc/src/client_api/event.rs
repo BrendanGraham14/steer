@@ -1,7 +1,7 @@
 use super::types::{
-    CompactResult, CompactionRecord, ContextWindowUsage, McpServerState, Message, MessageId,
-    ModelId, OpId, QueuedWorkItem, RequestId, SessionConfig, TokenUsage, ToolCall, ToolCallDelta,
-    ToolCallId, ToolResult,
+    CompactResult, CompactTrigger, CompactionRecord, ContextWindowUsage, McpServerState, Message,
+    MessageId, ModelId, OpId, QueuedWorkItem, RequestId, SessionConfig, TokenUsage, ToolCall,
+    ToolCallDelta, ToolCallId, ToolResult,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +51,7 @@ pub enum ClientEvent {
 
     CompactResult {
         result: CompactResult,
+        trigger: CompactTrigger,
     },
 
     ConversationCompacted {

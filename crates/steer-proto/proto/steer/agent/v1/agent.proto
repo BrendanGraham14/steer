@@ -216,6 +216,7 @@ message ConversationCompactedEvent {
 
 message CompactResultEvent {
   CompactResult result = 1;
+  CompactTrigger trigger = 2;
 }
 
 message CompactResult {
@@ -234,6 +235,17 @@ message CompactCancelled {
 }
 
 message CompactInsufficientMessages {
+}
+
+enum CompactTrigger {
+  COMPACT_TRIGGER_UNSPECIFIED = 0;
+  COMPACT_TRIGGER_MANUAL = 1;
+  COMPACT_TRIGGER_AUTO = 2;
+}
+
+message AutoCompactionConfig {
+  bool enabled = 1;
+  uint32 threshold_percent = 2;
 }
 
 message CompactionRecord {
@@ -260,6 +272,7 @@ message CreateSessionRequest {
   ModelSpec default_model = 6;  // Required: default model for the session
   optional string primary_agent_id = 12;
   optional SessionPolicyOverrides policy_overrides = 13;
+  optional AutoCompactionConfig auto_compaction = 14;
 }
 
 message CreateSessionResponse {
@@ -550,6 +563,7 @@ message SessionConfig {
   optional RepoRef repo_ref = 11;
   optional string primary_agent_id = 12;
   optional SessionPolicyOverrides policy_overrides = 13;
+  optional AutoCompactionConfig auto_compaction = 14;
 }
 
 // Environment management

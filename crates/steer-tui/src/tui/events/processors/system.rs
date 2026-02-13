@@ -8,7 +8,7 @@ use crate::tui::core_commands::{CommandResponse, CoreCommandType};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::{ChatItemData, NoticeLevel, generate_row_id};
 use async_trait::async_trait;
-use steer_grpc::client_api::{ClientEvent, CompactResult};
+use steer_grpc::client_api::{ClientEvent, CompactResult, CompactTrigger};
 
 /// Processor for system-level events
 pub struct SystemEventProcessor {
@@ -64,21 +64,41 @@ impl EventProcessor for SystemEventProcessor {
 
                 ProcessingResult::Handled
             }
-            ClientEvent::CompactResult { result } => {
+            ClientEvent::CompactResult { result, trigger } => {
                 if matches!(result, CompactResult::Success(_)) {
                     ctx.llm_usage.clear();
                 }
-                let chat_item = crate::tui::model::ChatItem {
-                    parent_chat_item_id: None,
-                    data: ChatItemData::CoreCmdResponse {
-                        id: generate_row_id(),
-                        command: CoreCommandType::Compact,
-                        response: CommandResponse::Compact(result),
-                        ts: time::OffsetDateTime::now_utc(),
-                    },
-                };
-                ctx.chat_store.push(chat_item);
-                *ctx.messages_updated = true;
+                match trigger {
+                    CompactTrigger::Manual => {
+                        let chat_item = crate::tui::model::ChatItem {
+                            parent_chat_item_id: None,
+                            data: ChatItemData::CoreCmdResponse {
+                                id: generate_row_id(),
+                                command: CoreCommandType::Compact,
+                                response: CommandResponse::Compact(result),
+                                ts: time::OffsetDateTime::now_utc(),
+                            },
+                        };
+                        ctx.chat_store.push(chat_item);
+                        *ctx.messages_updated = true;
+                    }
+                    CompactTrigger::Auto => {
+                        if matches!(result, CompactResult::Success(_)) {
+                            let chat_item = crate::tui::model::ChatItem {
+                                parent_chat_item_id: None,
+                                data: ChatItemData::SystemNotice {
+                                    id: generate_row_id(),
+                                    level: NoticeLevel::Info,
+                                    text: "Context window compacted automatically.".to_string(),
+                                    ts: time::OffsetDateTime::now_utc(),
+                                },
+                            };
+                            ctx.chat_store.push(chat_item);
+                            *ctx.messages_updated = true;
+                        }
+                        // Auto + failure/cancel: silent — no chat item.
+                    }
+                }
                 ProcessingResult::Handled
             }
             ClientEvent::ConversationCompacted { record } => {
@@ -222,6 +242,7 @@ mod tests {
             .process(
                 ClientEvent::CompactResult {
                     result: CompactResult::Success("summarized".to_string()),
+                    trigger: CompactTrigger::Manual,
                 },
                 &mut processing_ctx,
             )

@@ -124,6 +124,7 @@ impl AgentSpawner for DefaultAgentSpawner {
             policy_overrides,
             metadata: HashMap::new(),
             default_model: config.model.clone(),
+            auto_compaction: crate::session::state::AutoCompactionConfig::default(),
         };
 
         let tool_executor = self.build_tool_executor(workspace);

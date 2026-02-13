@@ -8,7 +8,7 @@ use crate::auth::{AuthStorage, CredentialType};
 use crate::config::LlmConfigProvider;
 use crate::config::model::ModelId;
 use crate::session::state::{
-    SessionConfig, SessionPolicyOverrides, SessionToolConfig, WorkspaceConfig,
+    AutoCompactionConfig, SessionConfig, SessionPolicyOverrides, SessionToolConfig, WorkspaceConfig,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -94,5 +94,6 @@ pub fn read_only_session_config(default_model: ModelId) -> SessionConfig {
         policy_overrides: SessionPolicyOverrides::empty(),
         metadata: HashMap::new(),
         default_model,
+        auto_compaction: AutoCompactionConfig::default(),
     }
 }

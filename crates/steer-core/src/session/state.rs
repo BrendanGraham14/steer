@@ -157,6 +157,8 @@ pub struct SessionConfig {
     pub policy_overrides: SessionPolicyOverrides,
     pub metadata: HashMap<String, String>,
     pub default_model: ModelId,
+    #[serde(default)]
+    pub auto_compaction: AutoCompactionConfig,
 }
 
 impl SessionConfig {
@@ -271,7 +273,30 @@ impl SessionConfig {
             policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model,
+            auto_compaction: AutoCompactionConfig::default(),
         }
+    }
+}
+
+/// Configuration for automatic context-window compaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AutoCompactionConfig {
+    pub enabled: bool,
+    pub threshold_percent: u32,
+}
+
+impl Default for AutoCompactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold_percent: 90,
+        }
+    }
+}
+
+impl AutoCompactionConfig {
+    pub fn threshold_ratio(&self) -> f64 {
+        f64::from(self.threshold_percent) / 100.0
     }
 }
 
@@ -927,6 +952,7 @@ mod tests {
             policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model: test_model(),
+            auto_compaction: AutoCompactionConfig::default(),
         };
         let session = Session::new("test-session".to_string(), config.clone());
 
@@ -1245,6 +1271,7 @@ mod tests {
             policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model: test_model(),
+            auto_compaction: AutoCompactionConfig::default(),
         };
 
         let (registry, _mcp_servers) = config.build_registry().await.unwrap();

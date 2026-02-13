@@ -405,6 +405,7 @@ fn default_session_config(default_model: crate::config::model::ModelId) -> Sessi
         },
         metadata: HashMap::new(),
         default_model,
+        auto_compaction: crate::session::state::AutoCompactionConfig::default(),
     }
 }
 

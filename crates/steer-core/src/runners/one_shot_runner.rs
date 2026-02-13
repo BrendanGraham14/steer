@@ -448,6 +448,7 @@ mod tests {
             primary_agent_id: None,
             policy_overrides: SessionPolicyOverrides::empty(),
             metadata: std::collections::HashMap::new(),
+            auto_compaction: crate::session::state::AutoCompactionConfig::default(),
         }
     }
 

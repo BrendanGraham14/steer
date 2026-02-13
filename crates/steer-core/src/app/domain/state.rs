@@ -102,7 +102,9 @@ pub struct OperationState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OperationKind {
     AgentLoop,
-    Compact,
+    Compact {
+        trigger: crate::app::domain::event::CompactTrigger,
+    },
     DirectBash { command: String },
 }
 

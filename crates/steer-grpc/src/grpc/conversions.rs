@@ -735,6 +735,10 @@ pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionC
         repo_ref: config.repo_ref.as_ref().map(repo_ref_to_proto),
         primary_agent_id: config.primary_agent_id.clone(),
         policy_overrides: Some(session_policy_overrides_to_proto(&config.policy_overrides)),
+        auto_compaction: Some(proto::AutoCompactionConfig {
+            enabled: config.auto_compaction.enabled,
+            threshold_percent: config.auto_compaction.threshold_percent,
+        }),
     }
 }
 
@@ -835,6 +839,13 @@ pub(crate) fn proto_to_session_config(
         primary_agent_id: proto_config.primary_agent_id,
         policy_overrides,
         metadata: proto_config.metadata,
+        auto_compaction: proto_config
+            .auto_compaction
+            .map(|ac| steer_core::session::state::AutoCompactionConfig {
+                enabled: ac.enabled,
+                threshold_percent: ac.threshold_percent,
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -1868,6 +1879,26 @@ fn compaction_record_from_proto(
     })
 }
 
+fn compact_trigger_to_proto(
+    trigger: steer_core::app::domain::event::CompactTrigger,
+) -> proto::CompactTrigger {
+    match trigger {
+        steer_core::app::domain::event::CompactTrigger::Manual => {
+            proto::CompactTrigger::Manual
+        }
+        steer_core::app::domain::event::CompactTrigger::Auto => {
+            proto::CompactTrigger::Auto
+        }
+    }
+}
+
+fn compact_trigger_from_proto(value: i32) -> steer_core::app::domain::event::CompactTrigger {
+    match proto::CompactTrigger::try_from(value) {
+        Ok(proto::CompactTrigger::Auto) => steer_core::app::domain::event::CompactTrigger::Auto,
+        _ => steer_core::app::domain::event::CompactTrigger::Manual,
+    }
+}
+
 fn compact_result_to_proto(
     result: &steer_core::app::domain::event::CompactResult,
 ) -> proto::CompactResult {
@@ -2195,11 +2226,14 @@ pub(crate) fn session_event_to_proto(
                     .and_then(queued_work_item_to_proto),
             }),
         ),
-        SessionEvent::CompactResult { result } => Some(proto::session_event::Event::CompactResult(
-            proto::CompactResultEvent {
-                result: Some(compact_result_to_proto(&result)),
-            },
-        )),
+        SessionEvent::CompactResult { result, trigger } => {
+            Some(proto::session_event::Event::CompactResult(
+                proto::CompactResultEvent {
+                    result: Some(compact_result_to_proto(&result)),
+                    trigger: compact_trigger_to_proto(trigger) as i32,
+                },
+            ))
+        }
         SessionEvent::ConversationCompacted { record } => Some(
             proto::session_event::Event::ConversationCompacted(proto::ConversationCompactedEvent {
                 record: Some(compaction_record_to_proto(&record)),
@@ -2819,7 +2853,8 @@ pub(crate) fn proto_to_client_event(
                 field: "compact_result.result".to_string(),
             })?;
             let result = compact_result_from_proto(result)?;
-            ClientEvent::CompactResult { result }
+            let trigger = compact_trigger_from_proto(e.trigger);
+            ClientEvent::CompactResult { result, trigger }
         }
         proto::session_event::Event::ConversationCompacted(e) => {
             let record = e.record.ok_or_else(|| ConversionError::MissingField {

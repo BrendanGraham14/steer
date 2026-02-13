@@ -11,6 +11,16 @@
         "null"
       ]
     },
+    "auto_compaction": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PartialAutoCompactionConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "metadata": {
       "type": [
         "object",
@@ -19,6 +29,12 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "system_prompt": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "tool_config": {
       "anyOf": [
@@ -43,25 +59,8 @@
   },
   "$defs": {
     "BackendConfig": {
-      "description": "Backend configuration for different tool execution environments",
+      "description": "Configuration for MCP server backends",
       "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "tool_filter": {
-              "description": "Tool filtering configuration for the local backend",
-              "$ref": "#/$defs/ToolFilter"
-            },
-            "type": {
-              "type": "string",
-              "const": "local"
-            }
-          },
-          "required": [
-            "type",
-            "tool_filter"
-          ]
-        },
         {
           "type": "object",
           "properties": {
@@ -211,34 +210,72 @@
       ]
     },
     "PartialApprovalConfig": {
-      "description": "Tool approval configuration with pre-approved tools and bash patterns",
       "type": "object",
       "properties": {
+        "bash": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialBashApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "default_behavior": {
-          "description": "Behavior for unapproved tools: 'prompt' asks user, 'deny' auto-rejects",
-          "$ref": "#/$defs/UnapprovedBehavior"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnapprovedBehavior"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dispatch_agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartialDispatchAgentApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "tools": {
-          "description": "Set of pre-approved tool names that execute without prompting",
           "type": "array",
+          "default": [],
           "items": {
             "type": "string"
           },
-          "uniqueItems": true,
-          "default": []
+          "uniqueItems": true
+        }
+      }
+    },
+    "PartialAutoCompactionConfig": {
+      "description": "Partial auto-compaction configuration (all fields optional for TOML merging).",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
-        "bash": {
-          "description": "Bash-specific approval rules with glob patterns",
-          "$ref": "#/$defs/PartialBashApproval"
+        "threshold_percent": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
         }
       }
     },
     "PartialBashApproval": {
-      "description": "Bash command approval patterns using glob syntax",
       "type": "object",
       "properties": {
         "patterns": {
-          "description": "Glob patterns for pre-approved bash commands (e.g., 'git status', 'cargo build*')",
           "type": "array",
           "items": {
             "type": "string"
@@ -249,19 +286,24 @@
         "patterns"
       ]
     },
-    "UnapprovedBehavior": {
-      "description": "How to handle tools that are not pre-approved",
-      "type": "string",
-      "enum": [
-        "prompt",
-        "deny"
+    "PartialDispatchAgentApproval": {
+      "type": "object",
+      "properties": {
+        "agent_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "agent_patterns"
       ]
     },
     "PartialToolConfig": {
       "type": "object",
       "properties": {
         "approvals": {
-          "description": "Tool approval policy configuration",
           "anyOf": [
             {
               "$ref": "#/$defs/PartialApprovalConfig"
@@ -473,6 +515,14 @@
             "blacklist"
           ]
         }
+      ]
+    },
+    "UnapprovedBehavior": {
+      "type": "string",
+      "enum": [
+        "prompt",
+        "deny",
+        "allow"
       ]
     }
   }

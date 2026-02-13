@@ -107,6 +107,7 @@ pub enum SessionEvent {
 
     CompactResult {
         result: CompactResult,
+        trigger: CompactTrigger,
     },
 
     ConversationCompacted {
@@ -127,6 +128,12 @@ pub enum SessionEvent {
         server_name: String,
         state: McpServerState,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompactTrigger {
+    Manual,
+    Auto,
 }
 
 #[derive(Debug, Clone, PartialEq)]

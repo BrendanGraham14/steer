@@ -87,6 +87,7 @@ impl AgentClient {
             default_model: Some(model_to_proto(params.default_model)),
             primary_agent_id: params.primary_agent_id,
             policy_overrides: Some(session_policy_overrides_to_proto(&params.policy_overrides)),
+            auto_compaction: None,
         });
 
         let response = self

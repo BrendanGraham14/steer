@@ -520,6 +520,13 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             policy_overrides,
             metadata: req.metadata,
             default_model,
+            auto_compaction: req
+                .auto_compaction
+                .map(|ac| steer_core::session::state::AutoCompactionConfig {
+                    enabled: ac.enabled,
+                    threshold_percent: ac.threshold_percent,
+                })
+                .unwrap_or_default(),
         };
 
         match self.runtime.create_session(session_config.clone()).await {

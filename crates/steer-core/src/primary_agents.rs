@@ -262,6 +262,7 @@ mod tests {
             policy_overrides: SessionPolicyOverrides::empty(),
             metadata: HashMap::new(),
             default_model: builtin::claude_sonnet_4_5(),
+            auto_compaction: crate::session::state::AutoCompactionConfig::default(),
         }
     }
 

@@ -37,6 +37,9 @@ pub enum SessionConfigError {
     #[error("MCP HTTP transport url cannot be empty")]
     EmptyHttpUrl,
 
+    #[error("auto_compaction.threshold_percent must be between 1 and 100")]
+    InvalidThresholdPercent,
+
     #[error("system_prompt is no longer supported in session config or CLI overrides")]
     SystemPromptUnsupported,
 
@@ -58,6 +61,7 @@ pub struct PartialSessionConfig {
     pub tool_config: Option<PartialToolConfig>,
     pub system_prompt: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
+    pub auto_compaction: Option<PartialAutoCompactionConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -112,6 +116,13 @@ pub enum ToolVisibilityConfig {
 pub enum ToolVisibilityObject {
     Whitelist(HashSet<String>),
     Blacklist(HashSet<String>),
+}
+
+/// Partial auto-compaction configuration (all fields optional for TOML merging).
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct PartialAutoCompactionConfig {
+    pub enabled: Option<bool>,
+    pub threshold_percent: Option<u32>,
 }
 
 /// Overrides that can be applied from CLI arguments
@@ -183,6 +194,7 @@ impl SessionConfigLoader {
                 primary_agent_id: None,
                 policy_overrides: SessionPolicyOverrides::empty(),
                 metadata: HashMap::new(),
+                auto_compaction: steer_core::session::state::AutoCompactionConfig::default(),
             })
         };
 
@@ -296,6 +308,16 @@ impl SessionConfigLoader {
             primary_agent_id: None,
             policy_overrides,
             metadata: partial.metadata.unwrap_or_default(),
+            auto_compaction: partial
+                .auto_compaction
+                .map(|p| {
+                    let defaults = steer_core::session::state::AutoCompactionConfig::default();
+                    steer_core::session::state::AutoCompactionConfig {
+                        enabled: p.enabled.unwrap_or(defaults.enabled),
+                        threshold_percent: p.threshold_percent.unwrap_or(defaults.threshold_percent),
+                    }
+                })
+                .unwrap_or_default(),
         })
     }
 
@@ -367,6 +389,11 @@ impl SessionConfigLoader {
                     }
                 }
             }
+        }
+
+        let pct = config.auto_compaction.threshold_percent;
+        if !(1..=100).contains(&pct) {
+            return Err(SessionConfigError::InvalidThresholdPercent);
         }
 
         Ok(())

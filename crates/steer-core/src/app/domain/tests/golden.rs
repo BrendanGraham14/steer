@@ -162,7 +162,7 @@ mod tests {
             has_operation: state.current_operation.is_some(),
             operation_kind: state.current_operation.as_ref().map(|op| match op.kind {
                 OperationKind::AgentLoop => "AgentLoop".to_string(),
-                OperationKind::Compact => "Compact".to_string(),
+                OperationKind::Compact { .. } => "Compact".to_string(),
                 OperationKind::DirectBash { .. } => "DirectBash".to_string(),
             }),
             pending_approval: state

@@ -21,7 +21,10 @@ use serde_json::Value;
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
 use steer_tools::tools::BASH_TOOL_NAME;
+use crate::app::domain::event::CompactTrigger;
 use thiserror::Error;
+
+const MIN_MESSAGES_FOR_COMPACT: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvalidActionKind {
@@ -1255,7 +1258,10 @@ fn handle_model_response_complete(
         },
     });
 
-    if let Some(usage) = usage {
+    // Capture usage before shadowing – TokenUsage is Copy.
+    let outer_usage = usage;
+
+    if let Some(usage) = outer_usage {
         let context_window = derive_context_window_usage(usage.total_tokens, context_window_tokens);
         state.record_llm_usage(op_id, model.clone(), usage, context_window.clone());
         effects.push(Effect::EmitEvent {
@@ -1275,7 +1281,19 @@ fn handle_model_response_complete(
             session_id,
             event: SessionEvent::OperationCompleted { op_id },
         });
-        effects.extend(maybe_start_queued_work(state, session_id));
+        // Try auto-compact first; if it doesn't fire, drain queued work.
+        let auto = maybe_auto_compact(
+            state,
+            session_id,
+            outer_usage,
+            context_window_tokens,
+            &model,
+        );
+        if auto.is_empty() {
+            effects.extend(maybe_start_queued_work(state, session_id));
+        } else {
+            effects.extend(auto);
+        }
     } else {
         for tool_call in tool_calls {
             let request_id = crate::app::domain::types::RequestId::new();
@@ -1420,6 +1438,72 @@ fn handle_dequeue_queued_item(
     }
 }
 
+fn maybe_auto_compact(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    usage: Option<TokenUsage>,
+    context_window_tokens: Option<u32>,
+    model: &crate::config::model::ModelId,
+) -> Vec<Effect> {
+    // Guard 1: config exists and auto-compaction is enabled.
+    let config = match &state.session_config {
+        Some(c) if c.auto_compaction.enabled => c,
+        _ => return vec![],
+    };
+    let threshold = config.auto_compaction.threshold_ratio();
+
+    // Guard 2: we have usage data.
+    let usage = match usage {
+        Some(u) => u,
+        None => return vec![],
+    };
+
+    // Guard 3: context window utilization is above threshold (non-estimated).
+    let cw = match derive_context_window_usage(usage.total_tokens, context_window_tokens) {
+        Some(cw) if !cw.estimated => cw,
+        _ => return vec![],
+    };
+    let ratio = match cw.utilization_ratio {
+        Some(r) if r >= threshold => r,
+        _ => return vec![],
+    };
+    let _ = ratio; // used only in guard
+
+    // Guard 4: enough messages to compact.
+    if state.message_graph.get_thread_messages().len() < MIN_MESSAGES_FOR_COMPACT {
+        return vec![];
+    }
+
+    // Guard 5: no queued work pending.
+    if !state.queued_work.is_empty() {
+        return vec![];
+    }
+
+    // Guard 6: no active operation (operation was completed before this call).
+    if state.has_active_operation() {
+        return vec![];
+    }
+
+    let op_id = crate::app::domain::types::OpId::new();
+    let kind = OperationKind::Compact {
+        trigger: CompactTrigger::Auto,
+    };
+    state.start_operation(op_id, kind.clone());
+    state.operation_models.insert(op_id, model.clone());
+
+    vec![
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationStarted { op_id, kind },
+        },
+        Effect::RequestCompaction {
+            session_id,
+            op_id,
+            model: model.clone(),
+        },
+    ]
+}
+
 fn maybe_start_queued_work(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
@@ -1514,7 +1598,6 @@ fn handle_request_compaction(
     op_id: crate::app::domain::types::OpId,
     model: crate::config::model::ModelId,
 ) -> Result<Vec<Effect>, ReduceError> {
-    const MIN_MESSAGES_FOR_COMPACT: usize = 3;
     let message_count = state.message_graph.get_thread_messages().len();
 
     if state.has_active_operation() {
@@ -1529,20 +1612,21 @@ fn handle_request_compaction(
             session_id,
             event: SessionEvent::CompactResult {
                 result: crate::app::domain::event::CompactResult::InsufficientMessages,
+                trigger: CompactTrigger::Manual,
             },
         }]);
     }
 
-    state.start_operation(op_id, OperationKind::Compact);
+    let kind = OperationKind::Compact {
+        trigger: CompactTrigger::Manual,
+    };
+    state.start_operation(op_id, kind.clone());
     state.operation_models.insert(op_id, model.clone());
 
     Ok(vec![
         Effect::EmitEvent {
             session_id,
-            event: SessionEvent::OperationStarted {
-                op_id,
-                kind: OperationKind::Compact,
-            },
+            event: SessionEvent::OperationStarted { op_id, kind },
         },
         Effect::RequestCompaction {
             session_id,
@@ -1566,11 +1650,12 @@ fn handle_cancel(
 
     state.record_cancelled_op(op.op_id);
 
-    if matches!(op.kind, OperationKind::Compact) {
+    if let OperationKind::Compact { trigger } = op.kind {
         effects.push(Effect::EmitEvent {
             session_id,
             event: SessionEvent::CompactResult {
                 result: crate::app::domain::event::CompactResult::Cancelled,
+                trigger,
             },
         });
     }
@@ -2004,6 +2089,15 @@ fn handle_compaction_complete(
         }];
     };
 
+    let trigger = state
+        .current_operation
+        .as_ref()
+        .and_then(|op| match op.kind {
+            OperationKind::Compact { trigger } => Some(trigger),
+            _ => None,
+        })
+        .unwrap_or(CompactTrigger::Manual);
+
     state.complete_operation(op_id);
 
     let mut effects = vec![
@@ -2018,6 +2112,7 @@ fn handle_compaction_complete(
             session_id,
             event: SessionEvent::CompactResult {
                 result: crate::app::domain::event::CompactResult::Success(summary),
+                trigger,
             },
         },
         Effect::EmitEvent {

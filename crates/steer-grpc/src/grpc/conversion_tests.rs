@@ -290,7 +290,7 @@ mod event_conversion_tests {
     };
     use steer_core::api::provider::TokenUsage;
     use steer_core::app::domain::delta::StreamDelta;
-    use steer_core::app::domain::event::{CompactResult, SessionEvent};
+    use steer_core::app::domain::event::{CompactResult, CompactTrigger, SessionEvent};
     use steer_core::config::model::builtin;
     use uuid::Uuid;
 
@@ -298,14 +298,16 @@ mod event_conversion_tests {
     fn test_compact_result_event_roundtrip() {
         let event = SessionEvent::CompactResult {
             result: CompactResult::Success("summary".to_string()),
+            trigger: CompactTrigger::Manual,
         };
 
         let proto = session_event_to_proto(event, 42).unwrap();
         let client_event = proto_to_client_event(proto).unwrap().unwrap();
 
         match client_event {
-            ClientEvent::CompactResult { result } => {
+            ClientEvent::CompactResult { result, trigger } => {
                 assert!(matches!(result, CompactResult::Success(ref s) if s == "summary"));
+                assert_eq!(trigger, CompactTrigger::Manual);
             }
             other => panic!("Expected CompactResult, got {other:?}"),
         }
