@@ -763,10 +763,16 @@ You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for
 
 Include:
     - Current progress and key decisions made
-    - Important context, constraints, or user preferences
+    - Important context, constraints, or user preferences discovered during this session
     - What remains to be done (clear next steps)
     - Any critical data, examples, or references needed to continue
-Be concise, structured, and focused on helping the next LLM seamlessly continue the work.";
+
+DO NOT include:
+    - System context information (repo structure, VCS state, environment details) - the next LLM will have its own system context
+    - Tool schemas or capabilities - these are provided separately
+    - General project information already in the system prompt
+
+Be concise, structured, and focused on session-specific progress and learnings.";
 
 fn build_compaction_message() -> crate::app::conversation::Message {
     crate::app::conversation::Message {
