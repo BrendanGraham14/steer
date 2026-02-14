@@ -86,8 +86,10 @@ impl EventProcessor for SystemEventProcessor {
                 ProcessingResult::Handled
             }
             ClientEvent::ConversationCompacted { record } => {
-                ctx.chat_store
-                    .mark_compaction_summary(record.summary_message_id.to_string());
+                ctx.chat_store.mark_compaction_summary_with_head(
+                    record.summary_message_id.to_string(),
+                    Some(record.compacted_head_message_id.to_string()),
+                );
                 *ctx.messages_updated = true;
                 ProcessingResult::Handled
             }
@@ -182,9 +184,9 @@ mod tests {
 
     #[tokio::test]
     async fn compact_success_clears_ctx_usage() {
-        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
-            &Preferences::default(),
-        )));
+        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(
+            NotificationManager::new(&Preferences::default()),
+        ));
         let mut ctx = create_test_context().await;
 
         let op_id = OpId::new();
@@ -201,7 +203,8 @@ mod tests {
             UsageUpdateKind::Final,
         );
 
-        let notification_manager = std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
+        let notification_manager =
+            std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
         let mut processing_ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,
@@ -238,12 +241,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_auto_compact_success_clears_usage_no_chat_item() {
-        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
-            &Preferences::default(),
-        )));
+        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(
+            NotificationManager::new(&Preferences::default()),
+        ));
         let mut ctx = create_test_context().await;
 
-        let notification_manager = std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
+        let notification_manager =
+            std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
         let mut processing_ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,
@@ -283,12 +287,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_auto_compact_cancelled_is_silent() {
-        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
-            &Preferences::default(),
-        )));
+        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(
+            NotificationManager::new(&Preferences::default()),
+        ));
         let mut ctx = create_test_context().await;
 
-        let notification_manager = std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
+        let notification_manager =
+            std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
         let mut processing_ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,
@@ -326,12 +331,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_auto_compact_failed_is_silent() {
-        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(NotificationManager::new(
-            &Preferences::default(),
-        )));
+        let mut processor = SystemEventProcessor::new(std::sync::Arc::new(
+            NotificationManager::new(&Preferences::default()),
+        ));
         let mut ctx = create_test_context().await;
 
-        let notification_manager = std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
+        let notification_manager =
+            std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
         let mut processing_ctx = ProcessingContext {
             chat_store: &mut ctx.chat_store,
             chat_list_state: &mut ctx.chat_list_state,

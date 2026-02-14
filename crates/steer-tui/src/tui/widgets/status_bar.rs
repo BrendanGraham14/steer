@@ -88,7 +88,9 @@ impl Widget for StatusBar<'_> {
         let mut right_spans = Vec::new();
         right_spans.push(Span::raw(" "));
         if let Some(context_remaining_percent) = self.context_remaining_percent {
-            right_spans.push(Span::raw(format_context_remaining_percent(context_remaining_percent)));
+            right_spans.push(Span::raw(format_context_remaining_percent(
+                context_remaining_percent,
+            )));
             right_spans.push(Span::styled(" │ ", self.theme.style(Component::DimText)));
         }
         right_spans.push(Span::raw(format!(

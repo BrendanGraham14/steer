@@ -158,8 +158,8 @@ impl ChatRenderable for RowWidget {
             Line::from(acc)
         };
 
-        let extra_lines = if self.has_padding_lines { 2 } else { 0 }
-            + if self.separator_above { 1 } else { 0 };
+        let extra_lines =
+            if self.has_padding_lines { 2 } else { 0 } + if self.separator_above { 1 } else { 0 };
         let mut lines = Vec::with_capacity(body_lines.len() + extra_lines);
 
         if self.separator_above {

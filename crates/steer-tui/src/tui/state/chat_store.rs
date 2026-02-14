@@ -32,6 +32,8 @@ pub struct ChatStore {
     compaction_head_key: Option<ChatItemKey>,
     /// Message IDs that are compaction summaries (for separator rendering)
     compaction_summary_ids: HashSet<String>,
+    /// Mapping from compaction summary ID -> compacted head message ID.
+    compaction_summary_heads: HashMap<String, String>,
 }
 
 impl Default for ChatStore {
@@ -46,6 +48,7 @@ impl Default for ChatStore {
             active_message_id: None,
             compaction_head_key: None,
             compaction_summary_ids: HashSet::new(),
+            compaction_summary_heads: HashMap::new(),
         }
     }
 }
@@ -120,13 +123,33 @@ impl ChatStore {
 
     /// Mark a message as a compaction summary (for separator rendering).
     pub fn mark_compaction_summary(&mut self, id: String) {
-        self.compaction_summary_ids.insert(id);
+        self.mark_compaction_summary_with_head(id, None);
+    }
+
+    /// Mark a compaction summary and optionally remember the compacted head ID.
+    pub fn mark_compaction_summary_with_head(
+        &mut self,
+        summary_id: String,
+        compacted_head_message_id: Option<String>,
+    ) {
+        self.compaction_summary_ids.insert(summary_id.clone());
+        if let Some(compacted_head_message_id) = compacted_head_message_id {
+            self.compaction_summary_heads
+                .insert(summary_id, compacted_head_message_id);
+        } else {
+            self.compaction_summary_heads.remove(&summary_id);
+        }
         self.revision += 1;
     }
 
     /// Check if a message is a compaction summary.
     pub fn is_compaction_summary(&self, id: &str) -> bool {
         self.compaction_summary_ids.contains(id)
+    }
+
+    /// Resolve the compacted head message ID for a compaction summary, if known.
+    pub fn compacted_head_for_summary(&self, id: &str) -> Option<&str> {
+        self.compaction_summary_heads.get(id).map(String::as_str)
     }
 
     /// Push a new item and return its key
@@ -215,6 +238,8 @@ impl ChatStore {
         self.pending_tool_keys.clear();
         self.in_flight_op_keys.clear();
         self.compaction_head_key = None;
+        self.compaction_summary_ids.clear();
+        self.compaction_summary_heads.clear();
         self.revision += 1; // Increment revision on mutation
     }
 
@@ -424,7 +449,7 @@ impl ChatStore {
 mod tests {
     use super::*;
     use std::time::SystemTime;
-    use steer_grpc::client_api::UserContent;
+    use steer_grpc::client_api::{AssistantContent, UserContent};
 
     fn user_message(id: &str, parent_id: Option<&str>, text: &str) -> Message {
         Message {
@@ -466,5 +491,59 @@ mod tests {
         let messages = store.user_messages_in_lineage();
         let ids: Vec<_> = messages.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(ids, vec!["msg1", "msg2", "msg3"]);
+    }
+
+    #[test]
+    fn test_compacted_head_for_summary_round_trip() {
+        let mut store = ChatStore::new();
+
+        store.mark_compaction_summary_with_head(
+            "summary-msg".to_string(),
+            Some("compacted-head".to_string()),
+        );
+
+        assert_eq!(
+            store.compacted_head_for_summary("summary-msg"),
+            Some("compacted-head")
+        );
+    }
+
+    #[test]
+    fn test_mark_compaction_summary_without_head_clears_mapping() {
+        let mut store = ChatStore::new();
+
+        store.mark_compaction_summary_with_head(
+            "summary-msg".to_string(),
+            Some("compacted-head".to_string()),
+        );
+        store.mark_compaction_summary("summary-msg".to_string());
+
+        assert!(store.is_compaction_summary("summary-msg"));
+        assert_eq!(store.compacted_head_for_summary("summary-msg"), None);
+    }
+
+    #[test]
+    fn test_clear_resets_compaction_summary_state() {
+        let mut store = ChatStore::new();
+
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "summary".to_string(),
+                }],
+            },
+            timestamp: 1000,
+            id: "summary-msg".to_string(),
+            parent_message_id: None,
+        });
+        store.mark_compaction_summary_with_head(
+            "summary-msg".to_string(),
+            Some("compacted-head".to_string()),
+        );
+
+        store.clear();
+
+        assert!(!store.is_compaction_summary("summary-msg"));
+        assert_eq!(store.compacted_head_for_summary("summary-msg"), None);
     }
 }

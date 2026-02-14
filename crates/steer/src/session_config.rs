@@ -314,7 +314,9 @@ impl SessionConfigLoader {
                     let defaults = steer_core::session::state::AutoCompactionConfig::default();
                     steer_core::session::state::AutoCompactionConfig {
                         enabled: p.enabled.unwrap_or(defaults.enabled),
-                        threshold_percent: p.threshold_percent.unwrap_or(defaults.threshold_percent),
+                        threshold_percent: p
+                            .threshold_percent
+                            .unwrap_or(defaults.threshold_percent),
                     }
                 })
                 .unwrap_or_default(),
@@ -1143,7 +1145,9 @@ enabled = false
 threshold_percent = 80
 "#;
         let parsed: PartialSessionConfig = toml::from_str(toml_str).unwrap();
-        let ac = parsed.auto_compaction.expect("auto_compaction should be Some");
+        let ac = parsed
+            .auto_compaction
+            .expect("auto_compaction should be Some");
         assert_eq!(ac.enabled, Some(false));
         assert_eq!(ac.threshold_percent, Some(80));
     }
@@ -1208,12 +1212,10 @@ threshold_percent = 0
         )
         .unwrap();
 
-        let result = SessionConfigLoader::new(
-            test_model(),
-            Some(temp_file_zero.path().to_path_buf()),
-        )
-        .load()
-        .await;
+        let result =
+            SessionConfigLoader::new(test_model(), Some(temp_file_zero.path().to_path_buf()))
+                .load()
+                .await;
         let err = result.expect_err("threshold_percent = 0 should fail validation");
         assert!(
             err.to_string().contains("threshold_percent"),
@@ -1232,12 +1234,10 @@ threshold_percent = 101
         )
         .unwrap();
 
-        let result = SessionConfigLoader::new(
-            test_model(),
-            Some(temp_file_101.path().to_path_buf()),
-        )
-        .load()
-        .await;
+        let result =
+            SessionConfigLoader::new(test_model(), Some(temp_file_101.path().to_path_buf()))
+                .load()
+                .await;
         let err = result.expect_err("threshold_percent = 101 should fail validation");
         assert!(
             err.to_string().contains("threshold_percent"),

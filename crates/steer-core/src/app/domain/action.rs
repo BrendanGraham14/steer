@@ -1,5 +1,5 @@
-use crate::app::conversation::UserContent;
 use crate::api::provider::TokenUsage;
+use crate::app::conversation::UserContent;
 use crate::app::domain::types::{CompactionId, MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use serde::{Deserialize, Serialize};

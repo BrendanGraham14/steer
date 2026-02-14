@@ -75,7 +75,10 @@ fn build_image_message(source: ImageSource) -> Message {
     }
 }
 
-fn assert_usage_invariants_if_present(response: &steer_core::api::CompletionResponse, model: &ModelId) {
+fn assert_usage_invariants_if_present(
+    response: &steer_core::api::CompletionResponse,
+    model: &ModelId,
+) {
     let usage_expected = matches!(
         model.provider.as_str(),
         "openai" | "anthropic" | "google" | "xai"
@@ -636,7 +639,14 @@ async fn test_openai_responses_stream_usage_is_non_zero_when_present() {
     let model_id = builtin::gpt_5_nano_2025_08_07();
 
     let mut stream = client
-        .stream_complete(&model_id, messages, None, None, None, CancellationToken::new())
+        .stream_complete(
+            &model_id,
+            messages,
+            None,
+            None,
+            None,
+            CancellationToken::new(),
+        )
         .await
         .expect("stream_complete should succeed");
 

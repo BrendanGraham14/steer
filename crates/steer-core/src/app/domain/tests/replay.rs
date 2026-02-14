@@ -678,8 +678,7 @@ mod tests {
 
         // compaction_summary_ids should match.
         assert_eq!(
-            live_state.compaction_summary_ids,
-            replayed_state.compaction_summary_ids,
+            live_state.compaction_summary_ids, replayed_state.compaction_summary_ids,
             "AppState.compaction_summary_ids should match after replay"
         );
 
@@ -729,8 +728,8 @@ mod tests {
             Effect::CallModel { messages, .. } => Some(messages),
             _ => None,
         });
-        let messages = callmodel_messages
-            .expect("expected CallModel effect from UserInput on replayed state");
+        let messages =
+            callmodel_messages.expect("expected CallModel effect from UserInput on replayed state");
 
         assert_eq!(
             messages.len(),
@@ -767,14 +766,18 @@ mod tests {
 
         // Pre-compaction messages must NOT appear.
         let has_pre_compaction = messages.iter().any(|m| match &m.data {
-            MessageData::User { content } => content.iter().any(|c| matches!(
-                c,
-                UserContent::Text { text } if text == "hello"
-            )),
-            MessageData::Assistant { content } => content.iter().any(|c| matches!(
-                c,
-                AssistantContent::Text { text } if text == "hi there"
-            )),
+            MessageData::User { content } => content.iter().any(|c| {
+                matches!(
+                    c,
+                    UserContent::Text { text } if text == "hello"
+                )
+            }),
+            MessageData::Assistant { content } => content.iter().any(|c| {
+                matches!(
+                    c,
+                    AssistantContent::Text { text } if text == "hi there"
+                )
+            }),
             _ => false,
         });
         assert!(

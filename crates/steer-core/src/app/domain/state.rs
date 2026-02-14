@@ -108,7 +108,9 @@ pub enum OperationKind {
     Compact {
         trigger: crate::app::domain::event::CompactTrigger,
     },
-    DirectBash { command: String },
+    DirectBash {
+        command: String,
+    },
 }
 
 #[derive(Debug, Clone)]

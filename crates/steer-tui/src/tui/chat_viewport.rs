@@ -229,9 +229,12 @@ impl ChatViewport {
             // Build lineage set by following parent_message_id chain
             let lineage = build_lineage_set(active_id, chat_store);
 
-            // Filter items to only show those in the lineage or attached to it
+            // Include pre-compaction history by stitching in ancestors of compaction heads.
+            let visible_messages = build_visible_message_set(&lineage, chat_store);
+
+            // Filter items to only show those in the visible message set or attached to it.
             raw.iter()
-                .filter(|item| is_visible(item, &lineage, chat_store))
+                .filter(|item| is_visible(item, &visible_messages, chat_store))
                 .copied()
                 .collect::<Vec<_>>()
         } else {
@@ -242,8 +245,12 @@ impl ChatViewport {
         let edited_message_ids = build_edited_message_ids(chat_store);
 
         // Flatten raw items into 1:1 widget items
-        let flattened =
-            Self::flatten_items(&filtered_items, &edited_message_ids, editing_message_id, chat_store);
+        let flattened = Self::flatten_items(
+            &filtered_items,
+            &edited_message_ids,
+            editing_message_id,
+            chat_store,
+        );
 
         // Build a map of existing widgets by ID for reuse
         let mut existing_widgets: HashMap<String, WidgetItem> = HashMap::new();
@@ -331,7 +338,8 @@ impl ChatViewport {
                                     id: format!("{}_text", row.id()),
                                     is_edited: false,
                                     is_editing: false,
-                                    is_compaction_summary: chat_store.is_compaction_summary(row.id()),
+                                    is_compaction_summary: chat_store
+                                        .is_compaction_summary(row.id()),
                                 });
                             }
 
@@ -837,13 +845,55 @@ fn build_lineage_set(active_message_id: &str, chat_store: &ChatStore) -> HashSet
     lineage
 }
 
-/// Check if a ChatItem should be visible based on the lineage set
-fn is_visible(item: &ChatItem, lineage: &HashSet<String>, chat_store: &ChatStore) -> bool {
-    if let ChatItemData::Message(msg) = &item.data {
-        if chat_store.is_before_compaction(msg.id()) {
-            return false;
+fn build_visible_message_set(lineage: &HashSet<String>, chat_store: &ChatStore) -> HashSet<String> {
+    let mut visible_messages = lineage.clone();
+    let mut pending_summaries: Vec<String> = lineage
+        .iter()
+        .filter(|id| chat_store.compacted_head_for_summary(id).is_some())
+        .cloned()
+        .collect();
+    let mut expanded_summaries = HashSet::new();
+
+    while let Some(summary_id) = pending_summaries.pop() {
+        if !expanded_summaries.insert(summary_id.clone()) {
+            continue;
         }
-        return lineage.contains(msg.id());
+
+        let Some(compacted_head_id) = chat_store.compacted_head_for_summary(&summary_id) else {
+            continue;
+        };
+
+        let mut current_id = Some(compacted_head_id.to_string());
+        while let Some(id) = current_id {
+            let inserted = visible_messages.insert(id.clone());
+
+            // If we encounter another summary while walking history, enqueue it so
+            // we recursively include the messages compacted by earlier rounds.
+            if chat_store.compacted_head_for_summary(&id).is_some() {
+                pending_summaries.push(id.clone());
+            }
+
+            if !inserted {
+                break;
+            }
+
+            current_id = chat_store.get_by_id(&id).and_then(|item| {
+                if let ChatItemData::Message(msg) = &item.data {
+                    msg.parent_message_id().map(str::to_string)
+                } else {
+                    None
+                }
+            });
+        }
+    }
+
+    visible_messages
+}
+
+/// Check if a ChatItem should be visible based on the visible messages set
+fn is_visible(item: &ChatItem, visible_messages: &HashSet<String>, chat_store: &ChatStore) -> bool {
+    if let ChatItemData::Message(msg) = &item.data {
+        return visible_messages.contains(msg.id());
     }
 
     // Root-level meta/tool rows (no parent) are always visible
@@ -853,17 +903,14 @@ fn is_visible(item: &ChatItem, lineage: &HashSet<String>, chat_store: &ChatStore
 
     let mut current = item.parent_chat_item_id.as_deref();
     while let Some(parent_id) = current {
-        if lineage.contains(parent_id) {
+        if visible_messages.contains(parent_id) {
             return true;
         }
 
-        // Check if this parent is a message - if so, we've already checked lineage
+        // Check if this parent is a message - if so, we've already checked visibility
         if let Some(parent_item) = chat_store.get_by_id(&parent_id.to_string()) {
             if matches!(parent_item.data, ChatItemData::Message(_)) {
-                if chat_store.is_before_compaction(parent_id) {
-                    return false;
-                }
-                // If we reached a message and it's not in lineage, stop here
+                // If we reached a message and it's not visible, stop here
                 return false;
             }
             // Otherwise continue walking up
@@ -1568,6 +1615,268 @@ mod tests {
     }
 
     #[test]
+    fn test_build_visible_message_set_includes_pre_compaction_chain() {
+        let mut store = create_test_chat_store();
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "pre user".to_string(),
+                }],
+            },
+            id: "pre_u".to_string(),
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "pre assistant".to_string(),
+                }],
+            },
+            id: "pre_a".to_string(),
+            timestamp: 1001,
+            parent_message_id: Some("pre_u".to_string()),
+        });
+
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "summary".to_string(),
+                }],
+            },
+            id: "summary".to_string(),
+            timestamp: 1002,
+            parent_message_id: None,
+        });
+        store.mark_compaction_summary_with_head("summary".to_string(), Some("pre_a".to_string()));
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "post user".to_string(),
+                }],
+            },
+            id: "post_u".to_string(),
+            timestamp: 1003,
+            parent_message_id: Some("summary".to_string()),
+        });
+        store.set_active_message_id(Some("post_u".to_string()));
+
+        let lineage = build_lineage_set("post_u", &store);
+        let visible = build_visible_message_set(&lineage, &store);
+
+        assert!(visible.contains("summary"));
+        assert!(visible.contains("post_u"));
+        assert!(visible.contains("pre_a"));
+        assert!(visible.contains("pre_u"));
+    }
+
+    #[test]
+    fn test_build_visible_message_set_nested_compaction_summaries() {
+        let mut store = create_test_chat_store();
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "pre1 user".to_string(),
+                }],
+            },
+            id: "pre1_u".to_string(),
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "pre1 assistant".to_string(),
+                }],
+            },
+            id: "pre1_a".to_string(),
+            timestamp: 1001,
+            parent_message_id: Some("pre1_u".to_string()),
+        });
+
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "summary1".to_string(),
+                }],
+            },
+            id: "summary1".to_string(),
+            timestamp: 1002,
+            parent_message_id: None,
+        });
+        store.mark_compaction_summary_with_head("summary1".to_string(), Some("pre1_a".to_string()));
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "mid user".to_string(),
+                }],
+            },
+            id: "mid_u".to_string(),
+            timestamp: 1003,
+            parent_message_id: Some("summary1".to_string()),
+        });
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "mid assistant".to_string(),
+                }],
+            },
+            id: "mid_a".to_string(),
+            timestamp: 1004,
+            parent_message_id: Some("mid_u".to_string()),
+        });
+
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "summary2".to_string(),
+                }],
+            },
+            id: "summary2".to_string(),
+            timestamp: 1005,
+            parent_message_id: None,
+        });
+        store.mark_compaction_summary_with_head("summary2".to_string(), Some("mid_a".to_string()));
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "post user".to_string(),
+                }],
+            },
+            id: "post_u".to_string(),
+            timestamp: 1006,
+            parent_message_id: Some("summary2".to_string()),
+        });
+
+        let lineage = build_lineage_set("post_u", &store);
+        let visible = build_visible_message_set(&lineage, &store);
+
+        assert!(visible.contains("pre1_u"));
+        assert!(visible.contains("pre1_a"));
+        assert!(visible.contains("summary1"));
+        assert!(visible.contains("mid_u"));
+        assert!(visible.contains("mid_a"));
+        assert!(visible.contains("summary2"));
+        assert!(visible.contains("post_u"));
+    }
+
+    #[test]
+    fn test_build_visible_message_set_without_compaction_mapping_matches_lineage() {
+        let mut store = create_test_chat_store();
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "root".to_string(),
+                }],
+            },
+            id: "root".to_string(),
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        store.add_message(Message {
+            data: MessageData::Assistant { content: vec![] },
+            id: "leaf".to_string(),
+            timestamp: 1001,
+            parent_message_id: Some("root".to_string()),
+        });
+
+        let lineage = build_lineage_set("leaf", &store);
+        let visible = build_visible_message_set(&lineage, &store);
+
+        assert_eq!(visible, lineage);
+    }
+
+    #[test]
+    fn test_compaction_history_visibility_filters_other_branches() {
+        let mut store = create_test_chat_store();
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "pre root".to_string(),
+                }],
+            },
+            id: "pre_root".to_string(),
+            timestamp: 1000,
+            parent_message_id: None,
+        });
+
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "pre assistant".to_string(),
+                }],
+            },
+            id: "pre_a".to_string(),
+            timestamp: 1001,
+            parent_message_id: Some("pre_root".to_string()),
+        });
+
+        store.add_message(Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "summary".to_string(),
+                }],
+            },
+            id: "summary".to_string(),
+            timestamp: 1002,
+            parent_message_id: None,
+        });
+        store.mark_compaction_summary_with_head("summary".to_string(), Some("pre_a".to_string()));
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "active branch".to_string(),
+                }],
+            },
+            id: "active_u".to_string(),
+            timestamp: 1003,
+            parent_message_id: Some("summary".to_string()),
+        });
+
+        store.add_message(Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "other branch".to_string(),
+                }],
+            },
+            id: "other_u".to_string(),
+            timestamp: 1004,
+            parent_message_id: Some("pre_root".to_string()),
+        });
+
+        let raw = store.as_vec();
+        let lineage = build_lineage_set("active_u", &store);
+        let visible = build_visible_message_set(&lineage, &store);
+        let visible_ids: HashSet<String> = raw
+            .iter()
+            .filter_map(|item| {
+                if is_visible(item, &visible, &store)
+                    && let ChatItemData::Message(message) = &item.data
+                {
+                    return Some(message.id().to_string());
+                }
+                None
+            })
+            .collect();
+
+        assert!(visible_ids.contains("pre_root"));
+        assert!(visible_ids.contains("pre_a"));
+        assert!(visible_ids.contains("summary"));
+        assert!(visible_ids.contains("active_u"));
+        assert!(!visible_ids.contains("other_u"));
+    }
+
+    #[test]
     fn test_is_visible_message_in_lineage() {
         let mut store = create_test_chat_store();
 
@@ -1602,14 +1911,16 @@ mod tests {
         });
 
         let lineage = build_lineage_set("msg2", &store);
+        let visible = build_visible_message_set(&lineage, &store);
         assert_eq!(
-            lineage,
+            visible,
             HashSet::from(["msg2".to_string(), "msg1".to_string(),])
         );
 
         let lineage = build_lineage_set("msg3", &store);
+        let visible = build_visible_message_set(&lineage, &store);
         assert_eq!(
-            lineage,
+            visible,
             HashSet::from(["msg3".to_string(), "msg1".to_string(),])
         );
     }
@@ -1617,7 +1928,7 @@ mod tests {
     #[test]
     fn test_is_visible_root_meta_items() {
         let mut store = create_test_chat_store();
-        let lineage = HashSet::new(); // Empty lineage
+        let visible_messages = HashSet::new(); // Empty visible set
 
         // Add root-level system notice
         let notice = ChatItem {
@@ -1632,7 +1943,7 @@ mod tests {
         store.push(notice.clone());
 
         // Root-level items should always be visible
-        assert!(is_visible(&notice, &lineage, &store));
+        assert!(is_visible(&notice, &visible_messages, &store));
     }
 
     #[test]
@@ -1692,14 +2003,15 @@ mod tests {
         };
         store.push(tool_call2.clone());
 
-        // Build lineage from msg1
+        // Build visible set from msg1 lineage
         let lineage = build_lineage_set("msg1", &store);
+        let visible_messages = build_visible_message_set(&lineage, &store);
 
         // tool_call1 should be visible (attached to msg1)
-        assert!(is_visible(&tool_call1, &lineage, &store));
+        assert!(is_visible(&tool_call1, &visible_messages, &store));
 
-        // tool_call2 should NOT be visible (attached to msg2 which is not in lineage)
-        assert!(!is_visible(&tool_call2, &lineage, &store));
+        // tool_call2 should NOT be visible (attached to msg2 which is not visible)
+        assert!(!is_visible(&tool_call2, &visible_messages, &store));
     }
 
     #[test]
@@ -1743,17 +2055,18 @@ mod tests {
         store.push(nested_notice.clone());
 
         let lineage = build_lineage_set("msg1", &store);
+        let visible_messages = build_visible_message_set(&lineage, &store);
 
         // First notice should be visible (attached to msg1)
         let notice1 = store.get_by_id(&"notice1".to_string()).unwrap();
         assert!(
-            is_visible(notice1, &lineage, &store),
+            is_visible(notice1, &visible_messages, &store),
             "notice1 should be visible"
         );
 
         // Nested notice should be visible through the chain
         assert!(
-            is_visible(&nested_notice, &lineage, &store),
+            is_visible(&nested_notice, &visible_messages, &store),
             "nested_notice should be visible"
         );
     }
@@ -1852,34 +2165,36 @@ mod tests {
 
         // Test with active_message_id = B
         let lineage_b = build_lineage_set("B", &store);
+        let visible_b = build_visible_message_set(&lineage_b, &store);
 
         // Should see: root notice, A, B, B's tool call
-        assert!(is_visible(&root_notice, &lineage_b, &store));
+        assert!(is_visible(&root_notice, &visible_b, &store));
         assert!(is_visible(
             store.get_by_id(&"A".to_string()).unwrap(),
-            &lineage_b,
+            &visible_b,
             &store
         ));
         assert!(is_visible(
             store.get_by_id(&"B".to_string()).unwrap(),
-            &lineage_b,
+            &visible_b,
             &store
         ));
-        assert!(is_visible(&pending_tool_b, &lineage_b, &store));
+        assert!(is_visible(&pending_tool_b, &visible_b, &store));
 
         // Should NOT see: C, C's tool call
         assert!(!is_visible(
             store.get_by_id(&"C".to_string()).unwrap(),
-            &lineage_b,
+            &visible_b,
             &store
         ));
-        assert!(!is_visible(&tool_c, &lineage_b, &store));
+        assert!(!is_visible(&tool_c, &visible_b, &store));
 
         // Test with active_message_id = C
         let lineage_c = build_lineage_set("C", &store);
+        let visible_c = build_visible_message_set(&lineage_c, &store);
 
         assert_eq!(
-            lineage_c,
+            visible_c,
             HashSet::from([
                 "A".to_string(),
                 "B".to_string(),
@@ -1889,25 +2204,25 @@ mod tests {
         );
 
         // Should see: root notice, A, C, C's tool call
-        assert!(is_visible(&root_notice, &lineage_c, &store));
+        assert!(is_visible(&root_notice, &visible_c, &store));
         assert!(is_visible(
             store.get_by_id(&"A".to_string()).unwrap(),
-            &lineage_c,
+            &visible_c,
             &store
         ));
         assert!(is_visible(
             store.get_by_id(&"C".to_string()).unwrap(),
-            &lineage_c,
+            &visible_c,
             &store
         ));
-        assert!(is_visible(&tool_c, &lineage_c, &store));
+        assert!(is_visible(&tool_c, &visible_c, &store));
 
         // Should NOT see: B, B's tool call
         assert!(is_visible(
             store.get_by_id(&"B".to_string()).unwrap(),
-            &lineage_c,
+            &visible_c,
             &store
         ));
-        assert!(is_visible(&pending_tool_b, &lineage_c, &store));
+        assert!(is_visible(&pending_tool_b, &visible_c, &store));
     }
 }

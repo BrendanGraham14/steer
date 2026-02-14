@@ -1883,12 +1883,8 @@ fn compact_trigger_to_proto(
     trigger: steer_core::app::domain::event::CompactTrigger,
 ) -> proto::CompactTrigger {
     match trigger {
-        steer_core::app::domain::event::CompactTrigger::Manual => {
-            proto::CompactTrigger::Manual
-        }
-        steer_core::app::domain::event::CompactTrigger::Auto => {
-            proto::CompactTrigger::Auto
-        }
+        steer_core::app::domain::event::CompactTrigger::Manual => proto::CompactTrigger::Manual,
+        steer_core::app::domain::event::CompactTrigger::Auto => proto::CompactTrigger::Auto,
     }
 }
 
@@ -2234,14 +2230,12 @@ pub(crate) fn session_event_to_proto(
                     .and_then(queued_work_item_to_proto),
             }),
         ),
-        SessionEvent::CompactResult { result, trigger } => {
-            Some(proto::session_event::Event::CompactResult(
-                proto::CompactResultEvent {
-                    result: Some(compact_result_to_proto(&result)),
-                    trigger: compact_trigger_to_proto(trigger) as i32,
-                },
-            ))
-        }
+        SessionEvent::CompactResult { result, trigger } => Some(
+            proto::session_event::Event::CompactResult(proto::CompactResultEvent {
+                result: Some(compact_result_to_proto(&result)),
+                trigger: compact_trigger_to_proto(trigger) as i32,
+            }),
+        ),
         SessionEvent::ConversationCompacted { record } => Some(
             proto::session_event::Event::ConversationCompacted(proto::ConversationCompactedEvent {
                 record: Some(compaction_record_to_proto(&record)),

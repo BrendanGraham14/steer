@@ -16,12 +16,12 @@ use crate::primary_agents::{
 };
 use crate::session::state::{BackendConfig, ToolDecision};
 
+use crate::app::domain::event::CompactTrigger;
 use crate::tools::{DISPATCH_AGENT_TOOL_NAME, DispatchAgentParams, DispatchAgentTarget};
 use serde_json::Value;
 use steer_tools::ToolError;
 use steer_tools::result::ToolResult;
 use steer_tools::tools::BASH_TOOL_NAME;
-use crate::app::domain::event::CompactTrigger;
 use thiserror::Error;
 
 const MIN_MESSAGES_FOR_COMPACT: usize = 3;
@@ -59,8 +59,7 @@ fn derive_context_window_usage(
     context_window_tokens.map(|max_context_tokens| {
         let remaining_tokens = max_context_tokens.saturating_sub(total_tokens);
         let (utilization_ratio, estimated) = if max_context_tokens > 0 {
-            let ratio =
-                (f64::from(total_tokens) / f64::from(max_context_tokens)).clamp(0.0, 1.0);
+            let ratio = (f64::from(total_tokens) / f64::from(max_context_tokens)).clamp(0.0, 1.0);
             (Some(ratio), false)
         } else {
             (None, true)
@@ -2077,8 +2076,12 @@ fn handle_compaction_complete(
     state.message_graph.add_message(summary_message.clone());
 
     // Mark the summary so get_active_thread() stops here (LLM won't see older messages).
-    state.compaction_summary_ids.insert(summary_message_id.to_string());
-    state.message_graph.mark_compaction_summary(summary_message_id.to_string());
+    state
+        .compaction_summary_ids
+        .insert(summary_message_id.to_string());
+    state
+        .message_graph
+        .mark_compaction_summary(summary_message_id.to_string());
 
     let record = CompactionRecord::with_timestamp(
         compaction_id,
@@ -3749,7 +3752,10 @@ mod tests {
         let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
         let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
 
-        assert!(effects.is_empty(), "expected empty effects when auto-compaction is disabled");
+        assert!(
+            effects.is_empty(),
+            "expected empty effects when auto-compaction is disabled"
+        );
     }
 
     #[test]
@@ -3762,7 +3768,10 @@ mod tests {
         let usage = Some(TokenUsage::new(40_000, 10_000, 50_000));
         let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
 
-        assert!(effects.is_empty(), "expected empty effects when utilization is below threshold");
+        assert!(
+            effects.is_empty(),
+            "expected empty effects when utilization is below threshold"
+        );
     }
 
     #[test]
@@ -3775,7 +3784,10 @@ mod tests {
         let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
         let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
 
-        assert!(effects.is_empty(), "expected empty effects with insufficient messages");
+        assert!(
+            effects.is_empty(),
+            "expected empty effects with insufficient messages"
+        );
     }
 
     #[test]
@@ -3790,7 +3802,9 @@ mod tests {
         state.queue_user_message(QueuedUserMessage {
             op_id: OpId::new(),
             message_id: MessageId::new(),
-            content: vec![UserContent::Text { text: "queued msg".to_string() }],
+            content: vec![UserContent::Text {
+                text: "queued msg".to_string(),
+            }],
             model: builtin::claude_sonnet_4_5(),
             queued_at: 0,
         });
@@ -3798,7 +3812,10 @@ mod tests {
         let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
         let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
 
-        assert!(effects.is_empty(), "expected empty effects when there is queued work");
+        assert!(
+            effects.is_empty(),
+            "expected empty effects when there is queued work"
+        );
     }
 
     #[test]
@@ -3842,7 +3859,10 @@ mod tests {
                 } if msg == "test error"
             )
         });
-        assert!(has_compact_result, "expected CompactResult::Failed event with Auto trigger");
+        assert!(
+            has_compact_result,
+            "expected CompactResult::Failed event with Auto trigger"
+        );
 
         // Should NOT contain a SessionEvent::Error.
         let has_error_event = effects.iter().any(|e| {
@@ -3854,7 +3874,10 @@ mod tests {
                 }
             )
         });
-        assert!(!has_error_event, "should not emit SessionEvent::Error for compaction failure");
+        assert!(
+            !has_error_event,
+            "should not emit SessionEvent::Error for compaction failure"
+        );
     }
 
     /// Helper: extract the `messages` field from the first `Effect::CallModel` in a list of effects.
@@ -4348,8 +4371,8 @@ mod tests {
             },
         );
 
-        let messages = extract_callmodel_messages(&effects)
-            .expect("expected CallModel from final UserInput");
+        let messages =
+            extract_callmodel_messages(&effects).expect("expected CallModel from final UserInput");
 
         // Expected: summary + 4 post-compaction messages + final user = 6.
         assert_eq!(

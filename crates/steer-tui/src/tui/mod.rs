@@ -818,6 +818,30 @@ impl Tui {
             self.chat_store.mark_compaction_summary(id.clone());
         }
 
+        // Reconstruct compaction summary -> compacted head mapping for restored sessions.
+        // Summaries are appended to the message list during compaction, so the prior
+        // message in persisted order is the compacted head.
+        let compaction_summary_id_set: HashSet<&str> =
+            compaction_summary_ids.iter().map(String::as_str).collect();
+        for (idx, message) in messages.iter().enumerate() {
+            if !compaction_summary_id_set.contains(message.id()) {
+                continue;
+            }
+
+            let Some(compacted_head_id) = idx
+                .checked_sub(1)
+                .and_then(|prev_idx| messages.get(prev_idx))
+                .map(|candidate| candidate.id().to_string())
+            else {
+                continue;
+            };
+
+            self.chat_store.mark_compaction_summary_with_head(
+                message.id().to_string(),
+                Some(compacted_head_id),
+            );
+        }
+
         // Debug: log all Tool messages to check their IDs
         for message in &messages {
             if let MessageData::Tool { tool_use_id, .. } = &message.data {
@@ -1510,9 +1534,9 @@ impl Tui {
                 .latest()
                 .and_then(|usage| usage.context_window.as_ref())
                 .and_then(|context_window| {
-                    context_window.utilization_ratio.map(|utilization_ratio| {
-                        (1.0 - utilization_ratio.clamp(0.0, 1.0)) * 100.0
-                    })
+                    context_window
+                        .utilization_ratio
+                        .map(|utilization_ratio| (1.0 - utilization_ratio.clamp(0.0, 1.0)) * 100.0)
                 });
 
             layout.render_status_bar(
