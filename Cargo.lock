@@ -187,9 +187,9 @@ dependencies = [
 
 [[package]]
 name = "arc-swap"
-version = "1.8.1"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ded5f9a03ac8f24d1b8a25101ee812cd32cdc8c50a4c50237de2c4915850e73"
+checksum = "f9f3647c145568cec02c42054e07bdf9a5a698e15b466fb2341bfc393cd24aa5"
 dependencies = [
  "rustversion",
 ]
@@ -6372,7 +6372,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "steer"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6436,7 +6436,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-anthropic"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6453,7 +6453,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-openai"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6474,7 +6474,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-plugin"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "keyring",
@@ -6485,7 +6485,7 @@ dependencies = [
 
 [[package]]
 name = "steer-core"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -6564,7 +6564,7 @@ dependencies = [
 
 [[package]]
 name = "steer-grpc"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6592,7 +6592,7 @@ dependencies = [
 
 [[package]]
 name = "steer-proto"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "prost 0.13.5",
  "prost-build",
@@ -6604,7 +6604,7 @@ dependencies = [
 
 [[package]]
 name = "steer-remote-workspace"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "clap",
  "gethostname 0.5.0",
@@ -6624,7 +6624,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tools"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "schemars",
  "serde",
@@ -6636,7 +6636,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tui"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "arboard",
  "async-trait",
@@ -6689,7 +6689,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -6724,7 +6724,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace-client"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "async-trait",
  "serde",

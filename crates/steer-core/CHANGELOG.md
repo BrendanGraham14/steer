@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.11.1...steer-core-v0.12.0) - 2026-02-14
+
+### Added
+
+- add automatic context window compaction
+- *(core)* emit persisted llm usage events with context utilization
+- *(core)* add normalized llm usage in provider responses
+
+### Fixed
+
+- *(compaction)* focus checkpoint prompt on session-specific context
+- *(compaction,tui)* preserve model compaction boundary while keeping history visible
+- *(core)* stop context traversal at compaction boundary
+- *(compaction)* persist summary boundaries across replay and session restore
+- emit CompactResult on compaction failure and add auto-compaction tests
+- make ResponseUsage fields required to match OpenAI Responses API spec
+
+### Other
+
+- strengthen llm usage coverage across core and grpc
+
 ## [0.11.1](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.11.0...steer-core-v0.11.1) - 2026-02-14
 
 ### Fixed

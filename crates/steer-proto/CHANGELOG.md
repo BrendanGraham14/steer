@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.11.1...steer-proto-v0.12.0) - 2026-02-14
+
+### Added
+
+- add automatic context window compaction
+- *(proto,grpc,tui)* expose llm usage updates across clients
+
+### Fixed
+
+- *(compaction)* persist summary boundaries across replay and session restore
+- emit CompactResult on compaction failure and add auto-compaction tests
+
 ## [0.11.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.10.1...steer-proto-v0.11.0) - 2026-02-14
 
 ### Added
