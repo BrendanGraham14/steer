@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.10.1...steer-proto-v0.11.0) - 2026-02-14
+
+### Added
+
+- preserve image attachments in queued messages and message editing
+- *(steer-proto)* add image content schema and send content field
+
 ## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.8.2...steer-proto-v0.9.0) - 2026-02-12
 
 ### Added
