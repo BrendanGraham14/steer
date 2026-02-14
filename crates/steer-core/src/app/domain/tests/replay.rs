@@ -715,7 +715,9 @@ mod tests {
             &mut replayed_state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("post-replay question").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "post-replay question".to_string(),
+                }],
                 op_id: post_op_id,
                 message_id: deterministic_message_id("post_replay_msg"),
                 model: builtin::claude_sonnet_4_5(),

@@ -2070,7 +2070,7 @@ fn handle_compaction_complete(
             }],
         },
         id: summary_message_id.to_string(),
-        parent_message_id: Some(compacted_head_message_id.to_string()),
+        parent_message_id: None,
         timestamp,
     };
 
@@ -3895,7 +3895,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("hello").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "hello".to_string(),
+                }],
                 op_id: op_id_1,
                 message_id: MessageId::new(),
                 model: model.clone(),
@@ -3923,7 +3925,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("how are you").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "how are you".to_string(),
+                }],
                 op_id: op_id_1b,
                 message_id: MessageId::new(),
                 model: model.clone(),
@@ -3997,7 +4001,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("new question").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "new question".to_string(),
+                }],
                 op_id: op_id_3,
                 message_id: MessageId::new(),
                 model: model.clone(),
@@ -4062,7 +4068,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("msg A").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "msg A".to_string(),
+                }],
                 op_id: op_id_1,
                 message_id: MessageId::new(),
                 model: model.clone(),
@@ -4090,7 +4098,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("msg A2").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "msg A2".to_string(),
+                }],
                 op_id: op_id_1b,
                 message_id: MessageId::new(),
                 model: model.clone(),
@@ -4135,7 +4145,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("msg B").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "msg B".to_string(),
+                }],
                 op_id: op_id_3,
                 message_id: MessageId::new(),
                 model: model.clone(),
@@ -4227,7 +4239,9 @@ mod tests {
                 &mut state,
                 Action::UserInput {
                     session_id,
-                    text: NonEmptyString::new(*user_text).unwrap(),
+                    content: vec![UserContent::Text {
+                        text: (*user_text).to_string(),
+                    }],
                     op_id: op,
                     message_id: MessageId::new(),
                     model: model.clone(),
@@ -4293,7 +4307,9 @@ mod tests {
                 &mut state,
                 Action::UserInput {
                     session_id,
-                    text: NonEmptyString::new(*user_text).unwrap(),
+                    content: vec![UserContent::Text {
+                        text: (*user_text).to_string(),
+                    }],
                     op_id: op,
                     message_id: MessageId::new(),
                     model: model.clone(),
@@ -4322,7 +4338,9 @@ mod tests {
             &mut state,
             Action::UserInput {
                 session_id,
-                text: NonEmptyString::new("final question").unwrap(),
+                content: vec![UserContent::Text {
+                    text: "final question".to_string(),
+                }],
                 op_id: final_op,
                 message_id: MessageId::new(),
                 model: model.clone(),
