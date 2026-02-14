@@ -1,20 +1,26 @@
 # Dev Environment
-This repo includes `flake.nix`. If commands fail due to missing dependencies, rerun them inside the Nix devshell, e.g. `nix develop -c <command>`.
+This repo includes `flake.nix`. Run commands directly by default. Only use the Nix devshell when a command fails due to missing dependencies that are expected to be provided by the devshell (for example, `nix develop -c <command>`).
 
 # Commands
 
-We use the Nix devshell for a consistent toolchain and dependencies. If a command fails due to missing deps, retry it inside `nix develop`.
+Run `just` commands directly first. If one fails due to missing deps, retry it inside `nix develop`.
 
 ```bash
+# Default
+just check
+just test
+just build
+
+# Fallback when deps are missing
 nix develop --command just check
 nix develop --command just test
 nix develop --command just build
 
-# For multiple commands
+# For multiple commands (fallback)
 nix develop --command sh -c "just check && just test"
 ```
 
-This keeps the environment consistent without requiring an interactive shell session.
+Using the devshell this way keeps the environment consistent without requiring an interactive shell session.
 
 ## When to use which command
 
