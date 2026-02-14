@@ -159,16 +159,17 @@ impl ChatRenderable for RowWidget {
         };
 
         let extra_lines =
-            if self.has_padding_lines { 2 } else { 0 } + if self.separator_above { 1 } else { 0 };
+            2 * usize::from(self.has_padding_lines) + usize::from(self.separator_above);
         let mut lines = Vec::with_capacity(body_lines.len() + extra_lines);
 
         if self.separator_above {
             let sep_style = self.separator_style.unwrap_or_default();
             let rule_width = width.saturating_sub(PADDING * 2) as usize;
-            let mut sep_spans = Vec::with_capacity(3);
-            sep_spans.push(Span::raw(" ".repeat(PADDING as usize)));
-            sep_spans.push(Span::styled("─".repeat(rule_width), sep_style));
-            sep_spans.push(Span::raw(" ".repeat(PADDING as usize)));
+            let sep_spans = vec![
+                Span::raw(" ".repeat(PADDING as usize)),
+                Span::styled("─".repeat(rule_width), sep_style),
+                Span::raw(" ".repeat(PADDING as usize)),
+            ];
             lines.push(Line::from(sep_spans));
         }
 
