@@ -514,14 +514,17 @@ impl SessionActor {
                     .active_message_id
                     .clone()
                     .map(MessageId::from);
+                let system_context = self.state.cached_system_context.clone();
                 tokio::spawn(async move {
-                    let summary_prompt = build_compaction_prompt(&messages);
-
                     let result = interpreter
                         .call_model(
                             model.clone(),
-                            vec![summary_prompt],
-                            None,
+                            messages
+                                .iter()
+                                .cloned()
+                                .chain(std::iter::once(build_compaction_message()))
+                                .collect(),
+                            system_context,
                             vec![],
                             cancel_token,
                         )
@@ -748,66 +751,26 @@ fn current_timestamp() -> u64 {
         .as_secs()
 }
 
-fn build_compaction_prompt(
-    messages: &[crate::app::conversation::Message],
-) -> crate::app::conversation::Message {
-    use crate::app::conversation::{Message, MessageData, UserContent};
+const COMPACTION_PROMPT: &str = r"
+You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
 
-    let conversation_text = messages
-        .iter()
-        .map(format_message_for_summary)
-        .collect::<Vec<_>>()
-        .join("\n\n");
+Include:
+    - Current progress and key decisions made
+    - Important context, constraints, or user preferences
+    - What remains to be done (clear next steps)
+    - Any critical data, examples, or references needed to continue
+Be concise, structured, and focused on helping the next LLM seamlessly continue the work.";
 
-    let prompt = format!(
-        "Summarize this conversation concisely, preserving:\n\
-         1. Key decisions and conclusions\n\
-         2. Important context established\n\
-         3. Current task state\n\
-         4. Critical information needed to continue\n\n\
-         Conversation:\n{conversation_text}\n\n\
-         Summary:"
-    );
-
-    Message {
-        data: MessageData::User {
-            content: vec![UserContent::Text { text: prompt }],
+fn build_compaction_message() -> crate::app::conversation::Message {
+    crate::app::conversation::Message {
+        data: crate::app::conversation::MessageData::User {
+            content: vec![crate::app::conversation::UserContent::Text {
+                text: COMPACTION_PROMPT.to_string(),
+            }],
         },
         id: uuid::Uuid::new_v4().to_string(),
         parent_message_id: None,
         timestamp: current_timestamp(),
-    }
-}
-
-fn format_message_for_summary(message: &crate::app::conversation::Message) -> String {
-    use crate::app::conversation::{AssistantContent, MessageData, UserContent};
-
-    match &message.data {
-        MessageData::User { content } => {
-            let text = content
-                .iter()
-                .filter_map(|c| match c {
-                    UserContent::Text { text } => Some(text.as_str()),
-                    UserContent::Image { .. } | UserContent::CommandExecution { .. } => None,
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!("User: {text}")
-        }
-        MessageData::Assistant { content } => {
-            let text = content
-                .iter()
-                .filter_map(|c| match c {
-                    AssistantContent::Text { text } => Some(text.as_str()),
-                    AssistantContent::Image { .. }
-                    | AssistantContent::ToolCall { .. }
-                    | AssistantContent::Thought { .. } => None,
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!("Assistant: {text}")
-        }
-        MessageData::Tool { .. } => String::new(),
     }
 }
 
