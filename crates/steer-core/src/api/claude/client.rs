@@ -7,9 +7,10 @@ use strum_macros::Display;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use crate::api::error::StreamError;
+use crate::api::error::{ProviderStreamErrorKind, StreamError};
 use crate::api::provider::{CompletionStream, StreamChunk, TokenUsage};
 use crate::api::sse::parse_sse_stream;
+use crate::api::util::map_http_status_to_api_error;
 use crate::api::{CompletionResponse, Provider, error::ApiError};
 use crate::app::SystemContext;
 use crate::app::conversation::{
@@ -1736,29 +1737,11 @@ impl Provider for AnthropicClient {
                     });
                 }
 
-                return Err(match status.as_u16() {
-                    401 | 403 => ApiError::AuthenticationFailed {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    },
-                    429 => ApiError::RateLimited {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    },
-                    400..=499 => ApiError::InvalidRequest {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    },
-                    500..=599 => ApiError::ServerError {
-                        provider: self.name().to_string(),
-                        status_code: status.as_u16(),
-                        details: error_text,
-                    },
-                    _ => ApiError::Unknown {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    },
-                });
+                return Err(map_http_status_to_api_error(
+                    self.name(),
+                    status.as_u16(),
+                    error_text,
+                ));
             }
 
             let response_text = tokio::select! {
@@ -1946,29 +1929,11 @@ impl Provider for AnthropicClient {
                     });
                 }
 
-                return Err(match status.as_u16() {
-                    401 | 403 => ApiError::AuthenticationFailed {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    },
-                    429 => ApiError::RateLimited {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    },
-                    400..=499 => ApiError::InvalidRequest {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    },
-                    500..=599 => ApiError::ServerError {
-                        provider: self.name().to_string(),
-                        status_code: status.as_u16(),
-                        details: error_text,
-                    },
-                    _ => ApiError::Unknown {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    },
-                });
+                return Err(map_http_status_to_api_error(
+                    self.name(),
+                    status.as_u16(),
+                    error_text,
+                ));
             }
 
             let byte_stream = response.bytes_stream();
@@ -2285,9 +2250,19 @@ fn convert_claude_stream(
                     break;
                 }
                 ClaudeStreamEvent::Error { error } => {
+                    let raw_error_type = if error.error_type.is_empty() {
+                        None
+                    } else {
+                        Some(error.error_type)
+                    };
+                    let kind = raw_error_type.as_deref().map_or_else(
+                        || ProviderStreamErrorKind::StreamError,
+                        ProviderStreamErrorKind::from_provider_error_type,
+                    );
                     yield StreamChunk::Error(StreamError::Provider {
                         provider: "anthropic".into(),
-                        error_type: error.error_type,
+                        kind,
+                        raw_error_type,
                         message: error.message,
                     });
                 }

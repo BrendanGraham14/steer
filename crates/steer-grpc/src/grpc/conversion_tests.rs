@@ -695,7 +695,10 @@ mod event_conversion_tests {
         };
 
         let proto_event = stream_delta_to_proto(reset_delta, 0, 0).unwrap();
-        let event = proto_event.event.expect("session event should be present");
+        let event = proto_event
+            .event
+            .as_ref()
+            .expect("session event should be present");
         let proto::session_event::Event::StreamDelta(stream_delta) = event else {
             panic!("expected stream delta event")
         };

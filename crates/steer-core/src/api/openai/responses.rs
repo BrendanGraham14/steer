@@ -4,7 +4,7 @@ use serde_json;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-use crate::api::error::{ApiError, SseParseError, StreamError};
+use crate::api::error::{ApiError, ProviderStreamErrorKind, SseParseError, StreamError};
 use crate::api::openai::responses_types::{
     ExtraValue, InputContentPart, InputItem, InputType, MessageContentPart, ReasoningConfig,
     ReasoningSummary, ReasoningSummaryPart, ResponseError, ResponseErrorEvent, ResponseFailedEvent,
@@ -13,6 +13,7 @@ use crate::api::openai::responses_types::{
 };
 use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk, TokenUsage};
 use crate::api::sse::parse_sse_stream;
+use crate::api::util::map_http_status_to_api_error;
 use crate::app::SystemContext;
 use crate::app::conversation::{
     AssistantContent, ImageSource, Message as AppMessage, MessageData, ThoughtContent, UserContent,
@@ -622,10 +623,7 @@ impl Client {
                                 "Failed to read response body: {}",
                                 e
                             );
-                            ApiError::ResponseParsingError {
-                                provider: "openai".to_string(),
-                                details: e.to_string(),
-                            }
+                            ApiError::Network(e)
                         })?
                     }
                 }
@@ -643,10 +641,7 @@ impl Client {
                                 "Failed to read response body: {}",
                                 e
                             );
-                            ApiError::ResponseParsingError {
-                                provider: "openai".to_string(),
-                                details: e.to_string(),
-                            }
+                            ApiError::Network(e)
                         })?
                     }
                 }
@@ -761,10 +756,7 @@ impl Client {
                                 "Failed to read response body: {}",
                                 e
                             );
-                            ApiError::ResponseParsingError {
-                                provider: "openai".to_string(),
-                                details: e.to_string(),
-                            }
+                            ApiError::Network(e)
                         })?
                     }
                 };
@@ -1083,13 +1075,15 @@ impl Client {
                                     serde_json::from_str::<ResponseErrorEvent>(&event.data);
                                 match parsed_event {
                                     Ok(error_event) => {
-                                        let error_type = error_event
-                                            .event_type
-                                            .clone()
-                                            .unwrap_or_else(|| "stream_error".to_string());
+                                        let raw_error_type = error_event.event_type.clone();
+                                        let kind = raw_error_type.as_deref().map_or_else(
+                                            || ProviderStreamErrorKind::StreamError,
+                                            ProviderStreamErrorKind::from_provider_error_type,
+                                        );
                                         yield StreamChunk::Error(StreamError::Provider {
                                             provider: "openai".into(),
-                                            error_type,
+                                            kind,
+                                            raw_error_type,
                                             message: error_event.message,
                                         });
                                         break;
@@ -1103,7 +1097,8 @@ impl Client {
                                         );
                                         yield StreamChunk::Error(StreamError::Provider {
                                             provider: "openai".into(),
-                                            error_type: "stream_error".into(),
+                                            kind: ProviderStreamErrorKind::StreamError,
+                                            raw_error_type: Some("stream_error".into()),
                                             message: event.data.clone(),
                                         });
                                         break;
@@ -1120,14 +1115,21 @@ impl Client {
                                             || "Response failed without an error object".to_string(),
                                             stream_error_message,
                                         );
-                                        let (error_type, message) = response_error
+                                        let (kind, raw_error_type, message) = response_error
                                             .map_or_else(
-                                                || ("response_failed".to_string(), fallback),
+                                                || {
+                                                    (
+                                                        ProviderStreamErrorKind::ResponseFailed,
+                                                        Some("response_failed".to_string()),
+                                                        fallback,
+                                                    )
+                                                },
                                                 |error| stream_error_details(&error),
                                             );
                                         yield StreamChunk::Error(StreamError::Provider {
                                             provider: "openai".into(),
-                                            error_type,
+                                            kind,
+                                            raw_error_type,
                                             message,
                                         });
                                         break;
@@ -1141,7 +1143,8 @@ impl Client {
                                         );
                                         yield StreamChunk::Error(StreamError::Provider {
                                             provider: "openai".into(),
-                                            error_type: "response_failed".into(),
+                                            kind: ProviderStreamErrorKind::ResponseFailed,
+                                            raw_error_type: Some("response_failed".into()),
                                             message: event.data.clone(),
                                         });
                                         break;
@@ -1688,26 +1691,12 @@ fn parse_tool_parameters(tool_name: &str, raw_args: &str) -> serde_json::Value {
 fn parse_http_error_response(status_code: u16, body_text: String) -> ApiError {
     match serde_json::from_str::<ResponsesHttpErrorEnvelope>(&body_text) {
         Ok(envelope) => {
-            if let Some(error) = envelope.error {
-                let details = stream_error_message(&error);
-                return ApiError::ServerError {
-                    provider: "openai".to_string(),
-                    status_code,
-                    details,
-                };
-            }
-
-            ApiError::ServerError {
-                provider: "openai".to_string(),
-                status_code,
-                details: body_text,
-            }
+            let details = envelope
+                .error
+                .map_or(body_text.clone(), |error| stream_error_message(&error));
+            map_http_status_to_api_error("openai", status_code, details)
         }
-        Err(_) => ApiError::ServerError {
-            provider: "openai".to_string(),
-            status_code,
-            details: body_text,
-        },
+        Err(_) => map_http_status_to_api_error("openai", status_code, body_text),
     }
 }
 
@@ -1725,13 +1714,17 @@ fn stream_error_message(error: &ResponseError) -> String {
     }
 }
 
-fn stream_error_details(error: &ResponseError) -> (String, String) {
-    let error_type = error
+fn stream_error_details(error: &ResponseError) -> (ProviderStreamErrorKind, Option<String>, String) {
+    let raw_error_type = error
         .error_type
         .clone()
-        .unwrap_or_else(|| error.code.clone());
+        .or_else(|| Some(error.code.clone()));
+    let kind = raw_error_type.as_deref().map_or_else(
+        || ProviderStreamErrorKind::StreamError,
+        ProviderStreamErrorKind::from_provider_error_type,
+    );
     let message = stream_error_message(error);
-    (error_type, message)
+    (kind, raw_error_type, message)
 }
 
 fn auth_header_context(model_id: &ModelId, request_kind: RequestKind) -> AuthHeaderContext {
@@ -2437,9 +2430,12 @@ mod tests {
             error_chunk,
             StreamChunk::Error(StreamError::Provider {
                 ref provider,
-                ref error_type,
+                kind: ProviderStreamErrorKind::StreamError,
+                ref raw_error_type,
                 ref message,
-            }) if provider == "openai" && error_type == "error" && message == "Too many requests"
+            }) if provider == "openai"
+                && raw_error_type.as_deref() == Some("error")
+                && message == "Too many requests"
         ));
     }
 
@@ -2464,9 +2460,12 @@ mod tests {
             error_chunk,
             StreamChunk::Error(StreamError::Provider {
                 ref provider,
-                ref error_type,
+                kind: ProviderStreamErrorKind::Unknown(_),
+                ref raw_error_type,
                 ref message,
-            }) if provider == "openai" && error_type == "invalid_prompt" && message == "Prompt blocked (param: input)"
+            }) if provider == "openai"
+                && raw_error_type.as_deref() == Some("invalid_prompt")
+                && message == "Prompt blocked (param: input)"
         ));
     }
 
@@ -2491,9 +2490,12 @@ mod tests {
             error_chunk,
             StreamChunk::Error(StreamError::Provider {
                 ref provider,
-                ref error_type,
+                kind: ProviderStreamErrorKind::ResponseFailed,
+                ref raw_error_type,
                 ref message,
-            }) if provider == "openai" && error_type == "response_failed" && message == "Response failed without an error object"
+            }) if provider == "openai"
+                && raw_error_type.as_deref() == Some("response_failed")
+                && message == "Response failed without an error object"
         ));
     }
 
@@ -2518,9 +2520,12 @@ mod tests {
             error_chunk,
             StreamChunk::Error(StreamError::Provider {
                 ref provider,
-                ref error_type,
+                kind: ProviderStreamErrorKind::StreamError,
+                ref raw_error_type,
                 ref message,
-            }) if provider == "openai" && error_type == "stream_error" && message == "not-json"
+            }) if provider == "openai"
+                && raw_error_type.as_deref() == Some("stream_error")
+                && message == "not-json"
         ));
     }
 
@@ -2545,9 +2550,12 @@ mod tests {
             error_chunk,
             StreamChunk::Error(StreamError::Provider {
                 ref provider,
-                ref error_type,
+                kind: ProviderStreamErrorKind::ResponseFailed,
+                ref raw_error_type,
                 ref message,
-            }) if provider == "openai" && error_type == "response_failed" && message == "not-json"
+            }) if provider == "openai"
+                && raw_error_type.as_deref() == Some("response_failed")
+                && message == "not-json"
         ));
     }
 

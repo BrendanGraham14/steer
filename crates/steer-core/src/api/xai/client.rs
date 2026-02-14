@@ -11,7 +11,7 @@ use crate::api::provider::{
     CompletionResponse, CompletionStream, Provider, StreamChunk, TokenUsage,
 };
 use crate::api::sse::parse_sse_stream;
-use crate::api::util::normalize_chat_url;
+use crate::api::util::{map_http_status_to_api_error, normalize_chat_url};
 use crate::app::SystemContext;
 use crate::app::conversation::{
     AssistantContent, ImageSource, Message as AppMessage, ToolResult, UserContent,
@@ -726,25 +726,11 @@ impl Provider for XAIClient {
                 error_text
             );
 
-            return match status.as_u16() {
-                429 => Err(ApiError::RateLimited {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                }),
-                400 => Err(ApiError::InvalidRequest {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                }),
-                401 => Err(ApiError::AuthenticationFailed {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                }),
-                _ => Err(ApiError::ServerError {
-                    provider: self.name().to_string(),
-                    status_code: status.as_u16(),
-                    details: error_text,
-                }),
-            };
+            return Err(map_http_status_to_api_error(
+                self.name(),
+                status.as_u16(),
+                error_text,
+            ));
         }
 
         let response_text = tokio::select! {
@@ -862,25 +848,11 @@ impl Provider for XAIClient {
                 error_text
             );
 
-            return match status.as_u16() {
-                429 => Err(ApiError::RateLimited {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                }),
-                400 => Err(ApiError::InvalidRequest {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                }),
-                401 => Err(ApiError::AuthenticationFailed {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                }),
-                _ => Err(ApiError::ServerError {
-                    provider: self.name().to_string(),
-                    status_code: status.as_u16(),
-                    details: error_text,
-                }),
-            };
+            return Err(map_http_status_to_api_error(
+                self.name(),
+                status.as_u16(),
+                error_text,
+            ));
         }
 
         let byte_stream = response.bytes_stream();

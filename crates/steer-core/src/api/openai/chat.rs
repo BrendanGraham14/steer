@@ -8,6 +8,7 @@ use tracing::{debug, error};
 use crate::api::error::{ApiError, SseParseError, StreamError};
 use crate::api::provider::{CompletionResponse, CompletionStream, StreamChunk, TokenUsage};
 use crate::api::sse::parse_sse_stream;
+use crate::api::util::map_http_status_to_api_error;
 use crate::app::SystemContext;
 use crate::app::conversation::{
     AssistantContent, ImageSource, Message as AppMessage, MessageData, ThoughtContent, UserContent,
@@ -183,11 +184,11 @@ impl Client {
                 target: "openai::chat",
                 "API error status={} body={}", status, body
             );
-            return Err(ApiError::ServerError {
-                provider: super::PROVIDER_NAME.to_string(),
-                status_code: status.as_u16(),
-                details: body,
-            });
+            return Err(map_http_status_to_api_error(
+                super::PROVIDER_NAME,
+                status.as_u16(),
+                body,
+            ));
         }
 
         let body_text = tokio::select! {
@@ -512,11 +513,11 @@ impl Client {
                 target: "openai::chat::stream",
                 "API error status={} body={}", status, body
             );
-            return Err(ApiError::ServerError {
-                provider: super::PROVIDER_NAME.to_string(),
-                status_code: status.as_u16(),
-                details: body,
-            });
+            return Err(map_http_status_to_api_error(
+                super::PROVIDER_NAME,
+                status.as_u16(),
+                body,
+            ));
         }
 
         let byte_stream = response.bytes_stream();

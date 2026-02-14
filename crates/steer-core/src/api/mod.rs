@@ -15,7 +15,7 @@ use crate::config::provider::ProviderId;
 use crate::config::{LlmConfigProvider, ResolvedAuth};
 use crate::error::Result;
 use crate::model_registry::ModelRegistry;
-pub use error::{ApiError, SseParseError, StreamError};
+pub use error::{ApiError, ProviderStreamErrorKind, SseParseError, StreamError};
 pub use factory::{create_provider, create_provider_with_directive};
 use futures::StreamExt;
 use rand::Rng;
@@ -94,6 +94,14 @@ impl Client {
         let jitter_percent = rand::thread_rng().gen_range(80_u64..=120_u64);
         let jittered_ms = base_ms.saturating_mul(jitter_percent).saturating_div(100).max(1);
         Duration::from_millis(jittered_ms)
+    }
+
+    fn should_retry_stream_error(error: &StreamError) -> bool {
+        match error {
+            StreamError::SseParse(SseParseError::Transport { .. }) => true,
+            StreamError::Provider { kind, .. } => kind.is_retryable(),
+            StreamError::Cancelled | StreamError::SseParse(_) => false,
+        }
     }
 
     #[expect(
@@ -551,7 +559,8 @@ impl Client {
                         Err(err) => {
                             yield StreamChunk::Error(StreamError::Provider {
                                 provider: provider_for_retry.name().to_string(),
-                                error_type: "stream_retry".to_string(),
+                                kind: ProviderStreamErrorKind::StreamRetry,
+                                raw_error_type: Some("stream_retry".to_string()),
                                 message: err.to_string(),
                             });
                             break;
@@ -560,36 +569,26 @@ impl Client {
                 };
 
                 while let Some(chunk) = stream.next().await {
-                    if matches!(
-                        &chunk,
-                        StreamChunk::Error(StreamError::SseParse(
-                            SseParseError::Transport { .. }
-                        )) if !saw_output && attempt < RETRY_MAX_ATTEMPTS
-                    ) {
-                        attempt += 1;
-                        warn!(
-                            target: "api::stream_complete",
-                            ?model_id,
-                            attempt,
-                            max_attempts = RETRY_MAX_ATTEMPTS,
-                            "Retrying stream after transport error before any output"
-                        );
-                        current_stream = None;
-                        continue 'outer;
-                    }
+                    let retryable_stream_error = match &chunk {
+                        StreamChunk::Error(stream_err) => match stream_err {
+                            StreamError::Cancelled => false,
+                            StreamError::SseParse(
+                                SseParseError::Parser { .. } | SseParseError::Utf8 { .. },
+                            ) => false,
+                            _ => Self::should_retry_stream_error(stream_err),
+                        },
+                        _ => false,
+                    };
 
-                    if matches!(
-                        &chunk,
-                        StreamChunk::Error(StreamError::Provider { error_type, .. })
-                            if error_type == "stream_error" && attempt < RETRY_MAX_ATTEMPTS
-                    ) {
+                    if retryable_stream_error && attempt < RETRY_MAX_ATTEMPTS {
                         attempt += 1;
                         warn!(
                             target: "api::stream_complete",
                             ?model_id,
                             attempt,
                             max_attempts = RETRY_MAX_ATTEMPTS,
-                            "Retrying stream after provider stream_error"
+                            error = ?chunk,
+                            "Retrying stream after transport/provider stream failure"
                         );
                         if saw_output {
                             yield StreamChunk::Reset;

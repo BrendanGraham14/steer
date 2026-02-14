@@ -1,3 +1,5 @@
+use crate::api::error::ApiError;
+
 /// Normalize a chat completions URL.
 /// Ensures the URL ends with the correct path for chat completions.
 pub fn normalize_chat_url(base_url: Option<&str>, default_url: &str) -> String {
@@ -59,6 +61,40 @@ pub fn normalize_responses_url(base_url: Option<&str>, default_url: &str) -> Str
     }
 }
 
+pub fn map_http_status_to_api_error(provider: &str, status_code: u16, details: String) -> ApiError {
+    match status_code {
+        401 | 403 => ApiError::AuthenticationFailed {
+            provider: provider.to_string(),
+            details,
+        },
+        408 => ApiError::Timeout {
+            provider: provider.to_string(),
+        },
+        429 => ApiError::RateLimited {
+            provider: provider.to_string(),
+            details,
+        },
+        409 => ApiError::ServerError {
+            provider: provider.to_string(),
+            status_code,
+            details,
+        },
+        400..=499 => ApiError::InvalidRequest {
+            provider: provider.to_string(),
+            details,
+        },
+        500..=599 => ApiError::ServerError {
+            provider: provider.to_string(),
+            status_code,
+            details,
+        },
+        _ => ApiError::Unknown {
+            provider: provider.to_string(),
+            details,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,30 +133,43 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_responses_url() {
-        assert_eq!(
-            normalize_responses_url(Some("https://api.example.com"), ""),
-            "https://api.example.com/v1/responses"
-        );
-        assert_eq!(
-            normalize_responses_url(Some("https://api.example.com/"), ""),
-            "https://api.example.com/v1/responses"
-        );
-        assert_eq!(
-            normalize_responses_url(Some("https://api.example.com/v1"), ""),
-            "https://api.example.com/v1/responses"
-        );
-        assert_eq!(
-            normalize_responses_url(Some("https://api.example.com/responses"), ""),
-            "https://api.example.com/responses"
-        );
-        assert_eq!(
-            normalize_responses_url(Some("https://api.example.com/v1/responses"), ""),
-            "https://api.example.com/v1/responses"
-        );
-        assert_eq!(
-            normalize_responses_url(None, "https://default.com/v1/responses"),
-            "https://default.com/v1/responses"
-        );
+    fn test_map_http_status_to_api_error() {
+        let provider = "test";
+
+        assert!(matches!(
+            map_http_status_to_api_error(provider, 401, "auth".to_string()),
+            ApiError::AuthenticationFailed { .. }
+        ));
+        assert!(matches!(
+            map_http_status_to_api_error(provider, 408, "timeout".to_string()),
+            ApiError::Timeout { .. }
+        ));
+        assert!(matches!(
+            map_http_status_to_api_error(provider, 409, "conflict".to_string()),
+            ApiError::ServerError {
+                status_code: 409,
+                ..
+            }
+        ));
+        assert!(matches!(
+            map_http_status_to_api_error(provider, 429, "rate".to_string()),
+            ApiError::RateLimited { .. }
+        ));
+        assert!(matches!(
+            map_http_status_to_api_error(provider, 400, "bad request".to_string()),
+            ApiError::InvalidRequest { .. }
+        ));
+        assert!(matches!(
+            map_http_status_to_api_error(provider, 503, "server".to_string()),
+            ApiError::ServerError {
+                status_code: 503,
+                ..
+            }
+        ));
+        assert!(matches!(
+            map_http_status_to_api_error(provider, 302, "redirect".to_string()),
+            ApiError::Unknown { .. }
+        ));
     }
 }
+

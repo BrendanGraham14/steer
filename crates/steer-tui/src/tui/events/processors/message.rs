@@ -438,6 +438,7 @@ mod tests {
             in_flight_operations: &mut in_flight_operations,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
         };
 
         let message_id = MessageId::from_string("msg_stream_reset");

@@ -11,6 +11,7 @@ use crate::api::provider::{
     CompletionResponse, CompletionStream, Provider, StreamChunk, TokenUsage,
 };
 use crate::api::sse::parse_sse_stream;
+use crate::api::util::map_http_status_to_api_error;
 use crate::app::SystemContext;
 use crate::app::conversation::{
     AssistantContent, ImageSource, Message as AppMessage, ThoughtContent, ThoughtSignature,
@@ -1282,32 +1283,11 @@ impl Provider for GeminiClient {
         if status != StatusCode::OK {
             let error_text = response.text().await.map_err(ApiError::Network)?;
             error!(target: "Gemini API Error Response", "Status: {}, Body: {}", status, error_text);
-            return Err(match status.as_u16() {
-                401 | 403 => ApiError::AuthenticationFailed {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                429 => ApiError::RateLimited {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                400 | 404 => {
-                    error!(target: "Gemini API Error Response", "Status: {}, Body: {}, Request: {}", status, error_text, serde_json::to_string_pretty(&request).unwrap_or_else(|_| "Failed to serialize request".to_string()));
-                    ApiError::InvalidRequest {
-                        provider: self.name().to_string(),
-                        details: error_text,
-                    }
-                } // 404 might mean invalid model
-                500..=599 => ApiError::ServerError {
-                    provider: self.name().to_string(),
-                    status_code: status.as_u16(),
-                    details: error_text,
-                },
-                _ => ApiError::Unknown {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-            });
+            return Err(map_http_status_to_api_error(
+                self.name(),
+                status.as_u16(),
+                error_text,
+            ));
         }
 
         let response_text = response.text().await.map_err(ApiError::Network)?;
@@ -1405,29 +1385,11 @@ impl Provider for GeminiClient {
         if status != StatusCode::OK {
             let error_text = response.text().await.map_err(ApiError::Network)?;
             error!(target: "gemini::stream", "API error - Status: {}, Body: {}", status, error_text);
-            return Err(match status.as_u16() {
-                401 | 403 => ApiError::AuthenticationFailed {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                429 => ApiError::RateLimited {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                400 | 404 => ApiError::InvalidRequest {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-                500..=599 => ApiError::ServerError {
-                    provider: self.name().to_string(),
-                    status_code: status.as_u16(),
-                    details: error_text,
-                },
-                _ => ApiError::Unknown {
-                    provider: self.name().to_string(),
-                    details: error_text,
-                },
-            });
+            return Err(map_http_status_to_api_error(
+                self.name(),
+                status.as_u16(),
+                error_text,
+            ));
         }
 
         let byte_stream = response.bytes_stream();

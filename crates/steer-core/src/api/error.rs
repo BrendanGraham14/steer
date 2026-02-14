@@ -30,6 +30,61 @@ where
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderStreamErrorKind {
+    StreamError,
+    StreamRetry,
+    RateLimitExceeded,
+    ResponseFailed,
+    Overloaded,
+    ServiceUnavailable,
+    Timeout,
+    Unknown(String),
+}
+
+impl ProviderStreamErrorKind {
+    pub fn from_provider_error_type(error_type: &str) -> Self {
+        match error_type {
+            "stream_error" | "error" => Self::StreamError,
+            "stream_retry" => Self::StreamRetry,
+            "rate_limit_exceeded" | "rate_limit_error" => Self::RateLimitExceeded,
+            "response_failed" => Self::ResponseFailed,
+            "overloaded_error" => Self::Overloaded,
+            "service_unavailable_error" => Self::ServiceUnavailable,
+            "timeout_error" => Self::Timeout,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::StreamError
+                | Self::StreamRetry
+                | Self::RateLimitExceeded
+                | Self::ResponseFailed
+                | Self::Overloaded
+                | Self::ServiceUnavailable
+                | Self::Timeout
+        )
+    }
+}
+
+impl std::fmt::Display for ProviderStreamErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StreamError => f.write_str("stream_error"),
+            Self::StreamRetry => f.write_str("stream_retry"),
+            Self::RateLimitExceeded => f.write_str("rate_limit_exceeded"),
+            Self::ResponseFailed => f.write_str("response_failed"),
+            Self::Overloaded => f.write_str("overloaded_error"),
+            Self::ServiceUnavailable => f.write_str("service_unavailable_error"),
+            Self::Timeout => f.write_str("timeout_error"),
+            Self::Unknown(raw) => f.write_str(raw),
+        }
+    }
+}
+
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum StreamError {
     #[error("Request cancelled")]
@@ -38,10 +93,11 @@ pub enum StreamError {
     #[error("SSE parse error: {0}")]
     SseParse(SseParseError),
 
-    #[error("{provider} error ({error_type}): {message}")]
+    #[error("{provider} error ({kind}): {message}")]
     Provider {
         provider: String,
-        error_type: String,
+        kind: ProviderStreamErrorKind,
+        raw_error_type: Option<String>,
         message: String,
     },
 }
