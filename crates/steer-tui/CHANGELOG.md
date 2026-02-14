@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.11.1...steer-tui-v0.12.1) - 2026-02-14
+
+### Added
+
+- add automatic context window compaction
+- *(tui)* show remaining context in status bar
+- *(proto,grpc,tui)* expose llm usage updates across clients
+
+### Fixed
+
+- clippy
+- *(compaction,tui)* preserve model compaction boundary while keeping history visible
+- *(compaction)* persist summary boundaries across replay and session restore
+- emit CompactResult on compaction failure and add auto-compaction tests
+- clear LLM usage stats when context window changes
+
+### Other
+
+- release v0.11.2
+
 ## [0.12.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.11.1...steer-tui-v0.12.0) - 2026-02-14
 
 ### Added
