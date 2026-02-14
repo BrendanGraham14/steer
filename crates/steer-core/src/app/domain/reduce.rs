@@ -25,6 +25,8 @@ use steer_tools::tools::BASH_TOOL_NAME;
 use thiserror::Error;
 
 const MIN_MESSAGES_FOR_COMPACT: usize = 3;
+const COMPACTION_CONTINUE_PROMPT: &str =
+    "Continue from the compaction summary and resume the conversation.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvalidActionKind {
@@ -2032,6 +2034,56 @@ pub fn apply_event_to_state(state: &mut AppState, event: &SessionEvent) {
     state.event_sequence += 1;
 }
 
+fn maybe_continue_after_compaction(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    trigger: CompactTrigger,
+    model: &crate::config::model::ModelId,
+) -> Vec<Effect> {
+    if trigger != CompactTrigger::Auto || state.has_active_operation() {
+        return vec![];
+    }
+
+    let op_id = crate::app::domain::types::OpId::new();
+    state.start_operation(op_id, OperationKind::AgentLoop);
+    state.operation_models.insert(op_id, model.clone());
+
+    let mut messages: Vec<Message> = state
+        .message_graph
+        .get_thread_messages()
+        .into_iter()
+        .cloned()
+        .collect();
+    messages.push(Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: COMPACTION_CONTINUE_PROMPT.to_string(),
+            }],
+        },
+        timestamp: Message::current_timestamp(),
+        id: format!("compact_continue_{op_id}"),
+        parent_message_id: state.message_graph.active_message_id.clone(),
+    });
+
+    vec![
+        Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationStarted {
+                op_id,
+                kind: OperationKind::AgentLoop,
+            },
+        },
+        Effect::CallModel {
+            session_id,
+            op_id,
+            model: model.clone(),
+            messages,
+            system_context: state.cached_system_context.clone(),
+            tools: state.tools.clone(),
+        },
+    ]
+}
+
 struct CompactionCompleteParams {
     op_id: crate::app::domain::types::OpId,
     compaction_id: crate::app::domain::types::CompactionId,
@@ -2120,7 +2172,7 @@ fn handle_compaction_complete(
             session_id,
             event: SessionEvent::AssistantMessageAdded {
                 message: summary_message,
-                model,
+                model: model.clone(),
             },
         },
         Effect::EmitEvent {
@@ -2141,6 +2193,9 @@ fn handle_compaction_complete(
     ];
 
     effects.extend(maybe_start_queued_work(state, session_id));
+    effects.extend(maybe_continue_after_compaction(
+        state, session_id, trigger, &model,
+    ));
 
     effects
 }
@@ -3904,6 +3959,90 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_compaction_completion_triggers_continuation() {
+        use crate::app::domain::event::{CompactResult, CompactTrigger};
+        use crate::app::domain::types::CompactionId;
+
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        let auto_effects = maybe_auto_compact(
+            &mut state,
+            session_id,
+            Some(TokenUsage::new(80_000, 15_000, 95_000)),
+            Some(100_000),
+            &model,
+        );
+
+        let op_id = auto_effects
+            .iter()
+            .find_map(|effect| match effect {
+                Effect::RequestCompaction { op_id, .. } => Some(*op_id),
+                _ => None,
+            })
+            .expect("expected auto compaction request");
+
+        let summary_message_id = MessageId::new();
+        let previous_active_message_id = state
+            .message_graph
+            .active_message_id
+            .clone()
+            .map(MessageId::from_string);
+        let head_before = previous_active_message_id
+            .clone()
+            .expect("expected active message before compaction");
+
+        let completion_effects = reduce(
+            &mut state,
+            Action::CompactionComplete {
+                session_id,
+                op_id,
+                compaction_id: CompactionId::new(),
+                summary_message_id: summary_message_id.clone(),
+                summary: "Auto summary".to_string(),
+                compacted_head_message_id: head_before,
+                previous_active_message_id,
+                model: model.id.clone(),
+                timestamp: 42,
+            },
+        );
+
+        assert!(
+            completion_effects.iter().any(|effect| matches!(
+                effect,
+                Effect::EmitEvent {
+                    event: SessionEvent::CompactResult {
+                        result: CompactResult::Success(summary),
+                        trigger: CompactTrigger::Auto,
+                    },
+                    ..
+                } if summary == "Auto summary"
+            )),
+            "expected auto compaction result event"
+        );
+
+        assert!(
+            completion_effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CallModel { .. })),
+            "expected auto compaction completion to continue with a model call"
+        );
+
+        let messages = extract_callmodel_messages(&completion_effects)
+            .expect("expected continuation CallModel after auto compaction");
+
+        assert!(
+            matches!(&messages[0].data, MessageData::Assistant { content } if content.iter().any(|c| matches!(c, AssistantContent::Text { text } if text == "Auto summary"))),
+            "first continuation message should be compaction summary"
+        );
+        assert!(
+            matches!(&messages[1].data, MessageData::User { content } if content.iter().any(|c| matches!(c, UserContent::Text { text } if text == COMPACTION_CONTINUE_PROMPT))),
+            "second continuation message should be continuation prompt"
+        );
+    }
+
+    #[test]
     fn test_compaction_full_cycle_callmodel_filters_messages() {
         use crate::app::domain::types::CompactionId;
 
@@ -3999,7 +4138,7 @@ mod tests {
         let compaction_id = CompactionId::new();
         let summary_message_id = MessageId::new();
         let active_before = state.message_graph.active_message_id.clone();
-        let _ = reduce(
+        let completion_effects = reduce(
             &mut state,
             Action::CompactionComplete {
                 session_id,
@@ -4017,6 +4156,21 @@ mod tests {
             state.compaction_summary_ids.contains(&summary_message_id.0),
             "compaction_summary_ids should contain the summary id"
         );
+        assert!(
+            !completion_effects
+                .iter()
+                .any(|e| matches!(e, Effect::CallModel { .. })),
+            "manual compaction should not trigger continuation"
+        );
+
+        let compact_result_trigger = completion_effects.iter().find_map(|effect| match effect {
+            Effect::EmitEvent {
+                event: SessionEvent::CompactResult { trigger, .. },
+                ..
+            } => Some(*trigger),
+            _ => None,
+        });
+        assert_eq!(compact_result_trigger, Some(CompactTrigger::Manual));
 
         // Step 5: New UserInput("new question") — triggers CallModel.
         let op_id_3 = OpId::new();
@@ -4304,7 +4458,7 @@ mod tests {
         let compaction_id = CompactionId::new();
         let summary_message_id = MessageId::new();
         let active_before = state.message_graph.active_message_id.clone();
-        let _ = reduce(
+        let completion_effects = reduce(
             &mut state,
             Action::CompactionComplete {
                 session_id,
@@ -4318,6 +4472,23 @@ mod tests {
                 timestamp: 100,
             },
         );
+
+        // Manual compaction should not start continuation automatically.
+        assert!(
+            !completion_effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CallModel { .. })),
+            "manual compaction should not trigger continuation"
+        );
+
+        let compact_result_trigger = completion_effects.iter().find_map(|effect| match effect {
+            Effect::EmitEvent {
+                event: SessionEvent::CompactResult { trigger, .. },
+                ..
+            } => Some(*trigger),
+            _ => None,
+        });
+        assert_eq!(compact_result_trigger, Some(CompactTrigger::Manual));
 
         // Add 2 post-compaction turns.
         let post_compaction_texts = [
