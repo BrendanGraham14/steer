@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.10.1...steer-core-v0.11.0) - 2026-02-14
+
+### Added
+
+- preserve image attachments in queued messages and message editing
+- *(steer-core)* map image user content in provider adapters
+- *(steer-core)* persist image inputs as session files
+- *(steer-grpc)* accept structured user content in runtime send path
+- *(steer-core)* add image content variants to conversation model
+
+### Other
+
+- just fix
+- *(steer-core)* add image api integration coverage
+- *(tests)* silence tracing output in tests by default
+
 ## [0.10.1](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.10.0...steer-core-v0.10.1) - 2026-02-12
 
 ### Fixed

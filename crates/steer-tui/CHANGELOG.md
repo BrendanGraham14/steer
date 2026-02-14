@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.10.1...steer-tui-v0.11.0) - 2026-02-14
+
+### Added
+
+- preserve image attachments in queued messages and message editing
+- *(steer-tui)* preview image attachments inline in input
+- *(steer-tui)* support Ctrl+V clipboard image attachments
+- *(steer-tui)* complete image paste attachment send flow
+- *(steer-tui)* scaffold image paste attachment flow
+- *(steer-core)* add image content variants to conversation model
+
+### Fixed
+
+- *(steer-tui)* skip image token labels before pushing chars to output
+- *(tui)* avoid panic truncating unicode diff summary
+
+### Other
+
+- *(steer-core)* add image api integration coverage
+
 ## [0.10.0](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.9.0...steer-tui-v0.10.0) - 2026-02-12
 
 ### Other
