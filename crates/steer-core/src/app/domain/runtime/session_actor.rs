@@ -522,19 +522,51 @@ impl SessionActor {
                     .map(MessageId::from);
                 let system_context = self.state.cached_system_context.clone();
                 tokio::spawn(async move {
-                    let result = interpreter
-                        .call_model(
-                            model.clone(),
-                            messages
-                                .iter()
-                                .cloned()
-                                .chain(std::iter::once(build_compaction_message()))
-                                .collect(),
-                            system_context,
-                            vec![],
-                            cancel_token,
-                        )
-                        .await;
+                    let mut compaction_messages = messages;
+                    let compaction_prompt = build_compaction_message();
+                    let mut dropped_tool_results = 0usize;
+
+                    let result = loop {
+                        let request_messages = compaction_messages
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(compaction_prompt.clone()))
+                            .collect();
+
+                        match interpreter
+                            .call_model(
+                                model.clone(),
+                                request_messages,
+                                system_context.clone(),
+                                vec![],
+                                cancel_token.clone(),
+                            )
+                            .await
+                        {
+                            Ok(response) => break Ok(response),
+                            Err(error) if is_context_window_exceeded_error(&error) => {
+                                let dropped = drop_earlier_tool_results(&mut compaction_messages);
+                                if dropped == 0 {
+                                    if dropped_tool_results == 0 {
+                                        break Err(error);
+                                    }
+                                    break Err(format!(
+                                        "{error} (compaction retried after dropping {dropped_tool_results} earlier tool results)"
+                                    ));
+                                }
+
+                                dropped_tool_results += dropped;
+                                tracing::warn!(
+                                    session_id = %session_id,
+                                    op_id = %op_id,
+                                    dropped,
+                                    dropped_tool_results,
+                                    "Compaction context window exceeded; retrying after dropping earlier tool results"
+                                );
+                            }
+                            Err(error) => break Err(error),
+                        }
+                    };
 
                     let action = match result {
                         Ok(response) => {
@@ -758,6 +790,66 @@ fn current_timestamp() -> u64 {
         .as_secs()
 }
 
+fn is_context_window_exceeded_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+
+    let has_explicit_phrase = [
+        "context length",
+        "context window",
+        "maximum context",
+        "max context",
+        "context_length_exceeded",
+        "too many tokens",
+        "token limit",
+        "prompt is too long",
+        "input is too long",
+    ]
+    .iter()
+    .any(|phrase| normalized.contains(phrase));
+
+    has_explicit_phrase
+        || (normalized.contains("context") && normalized.contains("exceed"))
+        || (normalized.contains("token")
+            && (normalized.contains("exceed")
+                || normalized.contains("too many")
+                || normalized.contains("limit")))
+}
+
+fn drop_earlier_tool_results(messages: &mut Vec<crate::app::conversation::Message>) -> usize {
+    let total_tool_results = messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message.data,
+                crate::app::conversation::MessageData::Tool { .. }
+            )
+        })
+        .count();
+
+    if total_tool_results == 0 {
+        return 0;
+    }
+
+    let target_drop_count = (total_tool_results / 2).max(1);
+    let mut dropped = 0usize;
+
+    messages.retain(|message| {
+        if dropped < target_drop_count
+            && matches!(
+                message.data,
+                crate::app::conversation::MessageData::Tool { .. }
+            )
+        {
+            dropped += 1;
+            false
+        } else {
+            true
+        }
+    });
+
+    dropped
+}
+
 const COMPACTION_PROMPT: &str = r"
 You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
 
@@ -805,6 +897,7 @@ mod tests {
     use crate::tools::BackendRegistry;
     use async_trait::async_trait;
     use steer_tools::ToolSchema;
+    use steer_tools::result::ExternalResult;
     use tokio::time::{Duration, timeout};
     use tokio_util::sync::CancellationToken;
 
@@ -813,6 +906,12 @@ mod tests {
 
     #[derive(Clone)]
     struct StubProviderWithUsage;
+
+    #[derive(Clone)]
+    struct ContextWindowLimitProvider {
+        max_tool_messages: usize,
+        observed_tool_message_counts: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
 
     #[async_trait]
     impl Provider for StubProvider {
@@ -858,6 +957,47 @@ mod tests {
                     text: "reply".to_string(),
                 }],
                 usage: Some(TokenUsage::new(11, 13, 24)),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ContextWindowLimitProvider {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            let tool_messages = messages
+                .iter()
+                .filter(|message| matches!(message.data, MessageData::Tool { .. }))
+                .count();
+
+            self.observed_tool_message_counts
+                .lock()
+                .expect("lock observed tool message counts")
+                .push(tool_messages);
+
+            if tool_messages > self.max_tool_messages {
+                return Err(ApiError::InvalidRequest {
+                    provider: "stub".to_string(),
+                    details: "maximum context length exceeded".to_string(),
+                });
+            }
+
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: "summary".to_string(),
+                }],
+                usage: None,
             })
         }
     }
@@ -916,6 +1056,51 @@ mod tests {
             timestamp: 3,
         };
         state.message_graph.add_message(third);
+    }
+
+    fn seed_messages_with_tool_results(state: &mut AppState, tool_message_count: usize) {
+        let first = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "hello".to_string(),
+                }],
+            },
+            id: "u1".to_string(),
+            parent_message_id: None,
+            timestamp: 1,
+        };
+        state.message_graph.add_message(first);
+
+        let mut parent_message_id = Some("u1".to_string());
+        for index in 0..tool_message_count {
+            let id = format!("t{}", index + 1);
+            let tool_message = Message {
+                data: MessageData::Tool {
+                    tool_use_id: format!("tool-call-{}", index + 1),
+                    result: crate::app::conversation::ToolResult::External(ExternalResult {
+                        tool_name: "stub".to_string(),
+                        payload: format!("payload-{}", index + 1),
+                    }),
+                },
+                id: id.clone(),
+                parent_message_id: parent_message_id.clone(),
+                timestamp: (index as u64) + 2,
+            };
+            state.message_graph.add_message(tool_message);
+            parent_message_id = Some(id);
+        }
+
+        let tail = Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "summarize".to_string(),
+                }],
+            },
+            id: "u2".to_string(),
+            parent_message_id,
+            timestamp: (tool_message_count as u64) + 2,
+        };
+        state.message_graph.add_message(tail);
     }
 
     async fn wait_for_operation_completed(
@@ -1032,5 +1217,90 @@ mod tests {
             completed,
             "expected OperationCompleted to be emitted for compaction"
         );
+    }
+
+    #[tokio::test]
+    async fn compaction_retries_when_context_window_is_exceeded() {
+        let session_id = SessionId::new();
+        let mut state = AppState::new(session_id);
+        seed_messages_with_tool_results(&mut state, 4);
+
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+        let provider_id = ProviderId("stub".to_string());
+        let model_id = ModelId::new(provider_id.clone(), "stub-model");
+        let observed_tool_message_counts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        api_client.insert_test_provider(
+            provider_id,
+            Arc::new(ContextWindowLimitProvider {
+                max_tool_messages: 1,
+                observed_tool_message_counts: observed_tool_message_counts.clone(),
+            }),
+        );
+
+        let handle = spawn_session_actor(
+            session_id,
+            state,
+            event_store.clone(),
+            api_client,
+            tool_executor,
+        );
+
+        let op_id = OpId::new();
+        handle
+            .dispatch(Action::RequestCompaction {
+                session_id,
+                op_id,
+                model: model_id,
+            })
+            .await
+            .expect("dispatch compaction");
+
+        let completed = wait_for_operation_completed(event_store.clone(), session_id, op_id).await;
+        handle.shutdown();
+
+        assert!(
+            completed,
+            "expected OperationCompleted to be emitted for compaction"
+        );
+
+        let counts = observed_tool_message_counts
+            .lock()
+            .expect("lock observed tool message counts")
+            .clone();
+        assert!(
+            counts.len() >= 2,
+            "expected retry after context limit error; observed counts: {counts:?}"
+        );
+        assert!(
+            counts.windows(2).any(|pair| pair[1] < pair[0]),
+            "expected tool message counts to decrease across retries; observed counts: {counts:?}"
+        );
+        assert!(
+            counts.last().is_some_and(|count| *count <= 1),
+            "expected final retry to fit provider limit; observed counts: {counts:?}"
+        );
+
+        let events = event_store
+            .load_events(session_id)
+            .await
+            .expect("load events after compaction");
+        assert!(events.iter().any(|(_, event)| {
+            matches!(
+                event,
+                SessionEvent::CompactResult {
+                    result: crate::app::domain::event::CompactResult::Success(_),
+                    ..
+                }
+            )
+        }));
+        assert!(!events.iter().any(|(_, event)| {
+            matches!(
+                event,
+                SessionEvent::CompactResult {
+                    result: crate::app::domain::event::CompactResult::Failed(_),
+                    ..
+                }
+            )
+        }));
     }
 }
