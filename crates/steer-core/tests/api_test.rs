@@ -17,7 +17,7 @@ use steer_core::tools::static_tools::{
     MultiEditTool, ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool,
 };
 use steer_core::tools::{DispatchAgentParams, DispatchAgentTarget, WorkspaceTarget};
-use steer_tools::result::{ExternalResult, ToolResult};
+use steer_tools::result::{EditResult, ExternalResult, FileContentResult, ToolResult};
 use steer_tools::tools::{DISPATCH_AGENT_TOOL_NAME, LS_TOOL_NAME, TODO_READ_TOOL_NAME};
 use steer_tools::{InputSchema, ToolCall, ToolSchema as Tool};
 use tempfile::TempDir;
@@ -302,6 +302,299 @@ async fn run_api_with_cancelled_tool_execution(
             || response_text.to_lowercase().contains("programming")
             || response_text.to_lowercase().contains("language"),
         "Response for model {model:?} should address the Rust question, got: '{response_text}'"
+    );
+
+    Ok(())
+}
+
+async fn run_api_with_pruned_duplicate_read_file_history(
+    client: &Client,
+    model: &ModelId,
+) -> ApiTestResult<()> {
+    let tool_call_id = fresh_tool_use_id();
+
+    let ts1 = Message::current_timestamp();
+    let ts2 = ts1 + 1;
+    let ts3 = ts2 + 1;
+    let ts4 = ts3 + 1;
+    let messages = vec![
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Use the tool output below to answer the question.".to_string(),
+                }],
+            },
+            timestamp: ts1,
+            id: Message::generate_id("user", ts1),
+            parent_message_id: None,
+        },
+        Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: ToolCall {
+                        id: tool_call_id.clone(),
+                        name: "read_file".to_string(),
+                        parameters: serde_json::json!({
+                            "file_path": "/tmp/pruned-config.toml",
+                            "offset": 100,
+                            "limit": 200
+                        }),
+                    },
+                    thought_signature: None,
+                }],
+            },
+            timestamp: ts2,
+            id: Message::generate_id("assistant", ts2),
+            parent_message_id: Some(Message::generate_id("user", ts1)),
+        },
+        Message {
+            data: MessageData::Tool {
+                tool_use_id: tool_call_id,
+                result: ToolResult::FileContent(FileContentResult {
+                    content: "name = \"demo\"\nstatus = \"green\"\nversion = 3".to_string(),
+                    file_path: "/tmp/pruned-config.toml".to_string(),
+                    line_count: 3,
+                    truncated: false,
+                }),
+            },
+            timestamp: ts3,
+            id: Message::generate_id("tool", ts3),
+            parent_message_id: Some(Message::generate_id("assistant", ts2)),
+        },
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "What is the status value? Reply with just the value.".to_string(),
+                }],
+            },
+            timestamp: ts4,
+            id: Message::generate_id("user", ts4),
+            parent_message_id: Some(Message::generate_id("tool", ts3)),
+        },
+    ];
+
+    let response = client
+        .complete(model, messages, None, None, None, CancellationToken::new())
+        .await?;
+
+    assert_usage_invariants_if_present(&response, model);
+
+    let response_text = response.extract_text();
+    assert!(
+        response_text.to_lowercase().contains("green"),
+        "response for model {model:?} should mention 'green', got: '{response_text}'"
+    );
+
+    Ok(())
+}
+
+async fn run_api_with_pruned_pre_edit_read_history(
+    client: &Client,
+    model: &ModelId,
+) -> ApiTestResult<()> {
+    let edit_call_id = fresh_tool_use_id();
+    let read_call_id = fresh_tool_use_id();
+
+    let ts1 = Message::current_timestamp();
+    let ts2 = ts1 + 1;
+    let ts3 = ts2 + 1;
+    let ts4 = ts3 + 1;
+    let ts5 = ts4 + 1;
+    let ts6 = ts5 + 1;
+    let messages = vec![
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Confirm the final GREETING constant after the edit.".to_string(),
+                }],
+            },
+            timestamp: ts1,
+            id: Message::generate_id("user", ts1),
+            parent_message_id: None,
+        },
+        Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: ToolCall {
+                        id: edit_call_id.clone(),
+                        name: "edit_file".to_string(),
+                        parameters: serde_json::json!({
+                            "file_path": "/tmp/pruned-greeting.rs",
+                            "old_string": "const GREETING: &str = \"hello\";",
+                            "new_string": "const GREETING: &str = \"bonjour\";"
+                        }),
+                    },
+                    thought_signature: None,
+                }],
+            },
+            timestamp: ts2,
+            id: Message::generate_id("assistant", ts2),
+            parent_message_id: Some(Message::generate_id("user", ts1)),
+        },
+        Message {
+            data: MessageData::Tool {
+                tool_use_id: edit_call_id,
+                result: ToolResult::Edit(EditResult {
+                    file_path: "/tmp/pruned-greeting.rs".to_string(),
+                    changes_made: 1,
+                    file_created: false,
+                    old_content: None,
+                    new_content: None,
+                }),
+            },
+            timestamp: ts3,
+            id: Message::generate_id("tool", ts3),
+            parent_message_id: Some(Message::generate_id("assistant", ts2)),
+        },
+        Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: ToolCall {
+                        id: read_call_id.clone(),
+                        name: "read_file".to_string(),
+                        parameters: serde_json::json!({
+                            "file_path": "/tmp/pruned-greeting.rs",
+                            "offset": 1,
+                            "limit": 200
+                        }),
+                    },
+                    thought_signature: None,
+                }],
+            },
+            timestamp: ts4,
+            id: Message::generate_id("assistant", ts4),
+            parent_message_id: Some(Message::generate_id("tool", ts3)),
+        },
+        Message {
+            data: MessageData::Tool {
+                tool_use_id: read_call_id,
+                result: ToolResult::FileContent(FileContentResult {
+                    content: "const GREETING: &str = \"bonjour\";".to_string(),
+                    file_path: "/tmp/pruned-greeting.rs".to_string(),
+                    line_count: 1,
+                    truncated: false,
+                }),
+            },
+            timestamp: ts5,
+            id: Message::generate_id("tool", ts5),
+            parent_message_id: Some(Message::generate_id("assistant", ts4)),
+        },
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "What is GREETING now? Reply with just the value.".to_string(),
+                }],
+            },
+            timestamp: ts6,
+            id: Message::generate_id("user", ts6),
+            parent_message_id: Some(Message::generate_id("tool", ts5)),
+        },
+    ];
+
+    let response = client
+        .complete(model, messages, None, None, None, CancellationToken::new())
+        .await?;
+
+    assert_usage_invariants_if_present(&response, model);
+
+    let response_text = response.extract_text();
+    assert!(
+        response_text.to_lowercase().contains("bonjour"),
+        "response for model {model:?} should mention 'bonjour', got: '{response_text}'"
+    );
+
+    Ok(())
+}
+
+async fn run_api_with_pruned_assistant_text_and_tool_history(
+    client: &Client,
+    model: &ModelId,
+) -> ApiTestResult<()> {
+    let tool_call_id = fresh_tool_use_id();
+
+    let ts1 = Message::current_timestamp();
+    let ts2 = ts1 + 1;
+    let ts3 = ts2 + 1;
+    let ts4 = ts3 + 1;
+    let ts5 = ts4 + 1;
+    let messages = vec![
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "Please summarize the latest command recommendation from notes."
+                        .to_string(),
+                }],
+            },
+            timestamp: ts1,
+            id: Message::generate_id("user", ts1),
+            parent_message_id: None,
+        },
+        Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "I dropped stale tool history and kept the latest notes read."
+                        .to_string(),
+                }],
+            },
+            timestamp: ts2,
+            id: Message::generate_id("assistant", ts2),
+            parent_message_id: Some(Message::generate_id("user", ts1)),
+        },
+        Message {
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::ToolCall {
+                    tool_call: ToolCall {
+                        id: tool_call_id.clone(),
+                        name: "read_file".to_string(),
+                        parameters: serde_json::json!({
+                            "file_path": "/tmp/notes.md",
+                            "offset": 1,
+                            "limit": 200
+                        }),
+                    },
+                    thought_signature: None,
+                }],
+            },
+            timestamp: ts3,
+            id: Message::generate_id("assistant", ts3),
+            parent_message_id: Some(Message::generate_id("assistant", ts2)),
+        },
+        Message {
+            data: MessageData::Tool {
+                tool_use_id: tool_call_id,
+                result: ToolResult::FileContent(FileContentResult {
+                    content: "recommended_command = \"cargo check --all-features\"".to_string(),
+                    file_path: "/tmp/notes.md".to_string(),
+                    line_count: 1,
+                    truncated: false,
+                }),
+            },
+            timestamp: ts4,
+            id: Message::generate_id("tool", ts4),
+            parent_message_id: Some(Message::generate_id("assistant", ts3)),
+        },
+        Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "What command was recommended? Return exactly the command.".to_string(),
+                }],
+            },
+            timestamp: ts5,
+            id: Message::generate_id("user", ts5),
+            parent_message_id: Some(Message::generate_id("tool", ts4)),
+        },
+    ];
+
+    let response = client
+        .complete(model, messages, None, None, None, CancellationToken::new())
+        .await?;
+
+    assert_usage_invariants_if_present(&response, model);
+
+    let response_text = response.extract_text();
+    assert!(
+        response_text.contains("cargo check --all-features"),
+        "response for model {model:?} should contain the command, got: '{response_text}'"
     );
 
     Ok(())
@@ -1397,6 +1690,54 @@ async fn test_api_with_cancelled_tool_execution(#[case] model: ModelId) {
     run_api_with_cancelled_tool_execution(&client, &model)
         .await
         .unwrap_or_else(|err| panic!("cancelled tool test failed for {model:?}: {err:?}"));
+}
+
+#[rstest]
+#[case::claude_haiku_4_5(builtin::claude_haiku_4_5())]
+#[case::gpt_5_nano_2025_08_07(builtin::gpt_5_nano_2025_08_07())]
+#[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
+#[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
+#[tokio::test]
+#[ignore = "requires external API credentials"]
+async fn test_api_with_pruned_duplicate_read_file_history(#[case] model: ModelId) {
+    let client = test_client();
+    run_api_with_pruned_duplicate_read_file_history(&client, &model)
+        .await
+        .unwrap_or_else(|err| {
+            panic!("pruned duplicate read_file history test failed for {model:?}: {err:?}")
+        });
+}
+
+#[rstest]
+#[case::claude_haiku_4_5(builtin::claude_haiku_4_5())]
+#[case::gpt_5_nano_2025_08_07(builtin::gpt_5_nano_2025_08_07())]
+#[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
+#[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
+#[tokio::test]
+#[ignore = "requires external API credentials"]
+async fn test_api_with_pruned_pre_edit_read_history(#[case] model: ModelId) {
+    let client = test_client();
+    run_api_with_pruned_pre_edit_read_history(&client, &model)
+        .await
+        .unwrap_or_else(|err| {
+            panic!("pruned pre-edit read history test failed for {model:?}: {err:?}")
+        });
+}
+
+#[rstest]
+#[case::claude_haiku_4_5(builtin::claude_haiku_4_5())]
+#[case::gpt_5_nano_2025_08_07(builtin::gpt_5_nano_2025_08_07())]
+#[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
+#[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
+#[tokio::test]
+#[ignore = "requires external API credentials"]
+async fn test_api_with_pruned_assistant_text_and_tool_history(#[case] model: ModelId) {
+    let client = test_client();
+    run_api_with_pruned_assistant_text_and_tool_history(&client, &model)
+        .await
+        .unwrap_or_else(|err| {
+            panic!("pruned assistant text/tool history test failed for {model:?}: {err:?}")
+        });
 }
 
 #[rstest]

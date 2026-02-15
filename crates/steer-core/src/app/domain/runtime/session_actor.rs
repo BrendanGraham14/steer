@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -816,38 +816,216 @@ fn is_context_window_exceeded_error(error: &str) -> bool {
 }
 
 fn drop_earlier_tool_results(messages: &mut Vec<crate::app::conversation::Message>) -> usize {
-    let total_tool_results = messages
-        .iter()
-        .filter(|message| {
-            matches!(
-                message.data,
-                crate::app::conversation::MessageData::Tool { .. }
-            )
-        })
-        .count();
+    let dropped_stale_reads = drop_stale_read_file_results(messages);
+    if dropped_stale_reads > 0 {
+        return dropped_stale_reads;
+    }
 
-    if total_tool_results == 0 {
+    drop_oldest_tool_results(messages)
+}
+
+#[derive(Debug)]
+struct ToolCallMetadata {
+    name: String,
+    file_path: Option<String>,
+}
+
+fn drop_stale_read_file_results(messages: &mut Vec<crate::app::conversation::Message>) -> usize {
+    let tool_call_metadata = collect_tool_call_metadata(messages);
+
+    let mut read_results_by_path: HashMap<String, Vec<(usize, String)>> = HashMap::new();
+    let mut latest_edit_index_by_path: HashMap<String, usize> = HashMap::new();
+
+    for (index, message) in messages.iter().enumerate() {
+        let crate::app::conversation::MessageData::Tool {
+            tool_use_id,
+            result,
+        } = &message.data
+        else {
+            continue;
+        };
+
+        let Some(metadata) = tool_call_metadata.get(tool_use_id) else {
+            continue;
+        };
+
+        let Some(file_path) = metadata.file_path.as_ref() else {
+            continue;
+        };
+
+        match metadata.name.as_str() {
+            steer_tools::tools::VIEW_TOOL_NAME
+                if matches!(result, crate::app::conversation::ToolResult::FileContent(_)) =>
+            {
+                read_results_by_path
+                    .entry(file_path.clone())
+                    .or_default()
+                    .push((index, tool_use_id.clone()));
+            }
+            steer_tools::tools::EDIT_TOOL_NAME
+            | steer_tools::tools::MULTI_EDIT_TOOL_NAME
+            | steer_tools::tools::REPLACE_TOOL_NAME
+                if matches!(result, crate::app::conversation::ToolResult::Edit(_)) =>
+            {
+                latest_edit_index_by_path.insert(file_path.clone(), index);
+            }
+            _ => {}
+        }
+    }
+
+    let mut ids_to_drop = HashSet::new();
+
+    for (file_path, reads) in &read_results_by_path {
+        if let Some((_, newest_id)) = reads.iter().max_by_key(|(index, _)| *index) {
+            for (_, id) in reads {
+                if id != newest_id {
+                    ids_to_drop.insert(id.clone());
+                }
+            }
+        }
+
+        if let Some(latest_edit_index) = latest_edit_index_by_path.get(file_path) {
+            for (index, id) in reads {
+                if index < latest_edit_index {
+                    ids_to_drop.insert(id.clone());
+                }
+            }
+        }
+    }
+
+    if ids_to_drop.is_empty() {
         return 0;
     }
 
-    let target_drop_count = (total_tool_results / 2).max(1);
-    let mut dropped = 0usize;
+    drop_tool_results_with_matching_tool_calls(messages, &ids_to_drop)
+}
 
-    messages.retain(|message| {
-        if dropped < target_drop_count
-            && matches!(
-                message.data,
-                crate::app::conversation::MessageData::Tool { .. }
-            )
-        {
-            dropped += 1;
-            false
-        } else {
-            true
+fn drop_oldest_tool_results(messages: &mut Vec<crate::app::conversation::Message>) -> usize {
+    let tool_result_ids: Vec<String> = messages
+        .iter()
+        .filter_map(|message| {
+            if let crate::app::conversation::MessageData::Tool { tool_use_id, .. } = &message.data {
+                Some(tool_use_id.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if tool_result_ids.is_empty() {
+        return 0;
+    }
+
+    let target_drop_count = (tool_result_ids.len() / 2).max(1);
+    let ids_to_drop: HashSet<String> = tool_result_ids
+        .into_iter()
+        .take(target_drop_count)
+        .collect();
+
+    drop_tool_results_with_matching_tool_calls(messages, &ids_to_drop)
+}
+
+fn collect_tool_call_metadata(
+    messages: &[crate::app::conversation::Message],
+) -> HashMap<String, ToolCallMetadata> {
+    let mut metadata = HashMap::new();
+
+    for message in messages {
+        let crate::app::conversation::MessageData::Assistant { content } = &message.data else {
+            continue;
+        };
+
+        for block in content {
+            let crate::app::conversation::AssistantContent::ToolCall { tool_call, .. } = block
+            else {
+                continue;
+            };
+
+            let file_path = match tool_call.name.as_str() {
+                steer_tools::tools::VIEW_TOOL_NAME
+                | steer_tools::tools::EDIT_TOOL_NAME
+                | steer_tools::tools::MULTI_EDIT_TOOL_NAME
+                | steer_tools::tools::REPLACE_TOOL_NAME => tool_call
+                    .parameters
+                    .as_object()
+                    .and_then(|params| params.get("file_path"))
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string()),
+                _ => None,
+            };
+
+            metadata.insert(
+                tool_call.id.clone(),
+                ToolCallMetadata {
+                    name: tool_call.name.clone(),
+                    file_path,
+                },
+            );
         }
-    });
+    }
 
-    dropped
+    metadata
+}
+
+fn drop_tool_results_with_matching_tool_calls(
+    messages: &mut Vec<crate::app::conversation::Message>,
+    tool_use_ids_to_drop: &HashSet<String>,
+) -> usize {
+    if tool_use_ids_to_drop.is_empty() {
+        return 0;
+    }
+
+    let mut dropped_tool_results = 0usize;
+    let mut pruned_messages = Vec::with_capacity(messages.len());
+
+    for mut message in messages.drain(..) {
+        match &mut message.data {
+            crate::app::conversation::MessageData::Tool { tool_use_id, .. } => {
+                if tool_use_ids_to_drop.contains(tool_use_id) {
+                    dropped_tool_results += 1;
+                } else {
+                    pruned_messages.push(message);
+                }
+            }
+            crate::app::conversation::MessageData::Assistant { content } => {
+                let original_len = content.len();
+                content.retain(|block| {
+                    if let crate::app::conversation::AssistantContent::ToolCall {
+                        tool_call, ..
+                    } = block
+                    {
+                        !tool_use_ids_to_drop.contains(&tool_call.id)
+                    } else {
+                        true
+                    }
+                });
+
+                let removed_tool_call = original_len != content.len();
+                if removed_tool_call && !assistant_message_has_request_relevant_content(content) {
+                    continue;
+                }
+
+                pruned_messages.push(message);
+            }
+            crate::app::conversation::MessageData::User { .. } => {
+                pruned_messages.push(message);
+            }
+        }
+    }
+
+    *messages = pruned_messages;
+    dropped_tool_results
+}
+
+fn assistant_message_has_request_relevant_content(
+    content: &[crate::app::conversation::AssistantContent],
+) -> bool {
+    content.iter().any(|block| {
+        !matches!(
+            block,
+            crate::app::conversation::AssistantContent::Thought { .. }
+        )
+    })
 }
 
 const COMPACTION_PROMPT: &str = r"
@@ -885,7 +1063,9 @@ mod tests {
     use crate::api::error::ApiError;
     use crate::api::provider::{CompletionResponse, Provider, TokenUsage};
     use crate::app::SystemContext;
-    use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
+    use crate::app::conversation::{
+        AssistantContent, Message, MessageData, ThoughtContent, UserContent,
+    };
     use crate::app::domain::action::Action;
     use crate::app::domain::event::SessionEvent;
     use crate::app::domain::session::event_store::InMemoryEventStore;
@@ -896,8 +1076,10 @@ mod tests {
     use crate::model_registry::ModelRegistry;
     use crate::tools::BackendRegistry;
     use async_trait::async_trait;
+    use serde_json::json;
+    use steer_tools::ToolCall;
     use steer_tools::ToolSchema;
-    use steer_tools::result::ExternalResult;
+    use steer_tools::result::{EditResult, ExternalResult, FileContentResult};
     use tokio::time::{Duration, timeout};
     use tokio_util::sync::CancellationToken;
 
@@ -1216,6 +1398,217 @@ mod tests {
         assert!(
             completed,
             "expected OperationCompleted to be emitted for compaction"
+        );
+    }
+
+    #[test]
+    fn drop_stale_read_file_results_drops_old_reads_and_keeps_latest_per_file() {
+        let messages = vec![
+            Message {
+                data: MessageData::Assistant {
+                    content: vec![AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                            parameters: json!({"file_path": "/tmp/a.rs", "offset": 1, "limit": 50}),
+                            id: "read-a-1".to_string(),
+                        },
+                        thought_signature: None,
+                    }],
+                },
+                id: "a-read-1".to_string(),
+                parent_message_id: None,
+                timestamp: 1,
+            },
+            Message {
+                data: MessageData::Tool {
+                    tool_use_id: "read-a-1".to_string(),
+                    result: crate::app::conversation::ToolResult::FileContent(FileContentResult {
+                        content: "first chunk".to_string(),
+                        file_path: "/tmp/a.rs".to_string(),
+                        line_count: 50,
+                        truncated: true,
+                    }),
+                },
+                id: "t-read-1".to_string(),
+                parent_message_id: Some("a-read-1".to_string()),
+                timestamp: 2,
+            },
+            Message {
+                data: MessageData::Assistant {
+                    content: vec![AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                            parameters: json!({"file_path": "/tmp/a.rs", "offset": 20, "limit": 50}),
+                            id: "read-a-2".to_string(),
+                        },
+                        thought_signature: None,
+                    }],
+                },
+                id: "a-read-2".to_string(),
+                parent_message_id: Some("t-read-1".to_string()),
+                timestamp: 3,
+            },
+            Message {
+                data: MessageData::Tool {
+                    tool_use_id: "read-a-2".to_string(),
+                    result: crate::app::conversation::ToolResult::FileContent(FileContentResult {
+                        content: "second chunk".to_string(),
+                        file_path: "/tmp/a.rs".to_string(),
+                        line_count: 50,
+                        truncated: false,
+                    }),
+                },
+                id: "t-read-2".to_string(),
+                parent_message_id: Some("a-read-2".to_string()),
+                timestamp: 4,
+            },
+            Message {
+                data: MessageData::Assistant {
+                    content: vec![AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            name: steer_tools::tools::EDIT_TOOL_NAME.to_string(),
+                            parameters: json!({
+                                "file_path": "/tmp/a.rs",
+                                "old_string": "old",
+                                "new_string": "new"
+                            }),
+                            id: "edit-a-1".to_string(),
+                        },
+                        thought_signature: None,
+                    }],
+                },
+                id: "a-edit".to_string(),
+                parent_message_id: Some("t-read-2".to_string()),
+                timestamp: 5,
+            },
+            Message {
+                data: MessageData::Tool {
+                    tool_use_id: "edit-a-1".to_string(),
+                    result: crate::app::conversation::ToolResult::Edit(EditResult {
+                        file_path: "/tmp/a.rs".to_string(),
+                        changes_made: 1,
+                        file_created: false,
+                        old_content: None,
+                        new_content: None,
+                    }),
+                },
+                id: "t-edit".to_string(),
+                parent_message_id: Some("a-edit".to_string()),
+                timestamp: 6,
+            },
+            Message {
+                data: MessageData::Assistant {
+                    content: vec![AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                            parameters: json!({"file_path": "/tmp/a.rs", "offset": 1, "limit": 200}),
+                            id: "read-a-3".to_string(),
+                        },
+                        thought_signature: None,
+                    }],
+                },
+                id: "a-read-3".to_string(),
+                parent_message_id: Some("t-edit".to_string()),
+                timestamp: 7,
+            },
+            Message {
+                data: MessageData::Tool {
+                    tool_use_id: "read-a-3".to_string(),
+                    result: crate::app::conversation::ToolResult::FileContent(FileContentResult {
+                        content: "post-edit full".to_string(),
+                        file_path: "/tmp/a.rs".to_string(),
+                        line_count: 200,
+                        truncated: false,
+                    }),
+                },
+                id: "t-read-3".to_string(),
+                parent_message_id: Some("a-read-3".to_string()),
+                timestamp: 8,
+            },
+        ];
+
+        let mut messages = messages;
+        let dropped = drop_stale_read_file_results(&mut messages);
+        assert_eq!(dropped, 2, "expected stale reads to be pruned");
+
+        let remaining_tool_ids: Vec<String> = messages
+            .iter()
+            .filter_map(|message| {
+                if let MessageData::Tool { tool_use_id, .. } = &message.data {
+                    Some(tool_use_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert!(remaining_tool_ids.contains(&"read-a-3".to_string()));
+        assert!(!remaining_tool_ids.contains(&"read-a-1".to_string()));
+        assert!(!remaining_tool_ids.contains(&"read-a-2".to_string()));
+
+        for message in &messages {
+            if let MessageData::Assistant { content } = &message.data {
+                for block in content {
+                    if let AssistantContent::ToolCall { tool_call, .. } = block {
+                        assert!(
+                            tool_call.id != "read-a-1" && tool_call.id != "read-a-2",
+                            "assistant tool call should be pruned alongside dropped result"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn drop_tool_results_with_matching_tool_calls_removes_orphan_assistant_messages() {
+        let mut messages = vec![
+            Message {
+                data: MessageData::Assistant {
+                    content: vec![
+                        AssistantContent::Thought {
+                            thought: ThoughtContent::Simple {
+                                text: "thinking".to_string(),
+                            },
+                        },
+                        AssistantContent::ToolCall {
+                            tool_call: ToolCall {
+                                name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                                parameters: json!({"file_path": "/tmp/a.rs"}),
+                                id: "read-1".to_string(),
+                            },
+                            thought_signature: None,
+                        },
+                    ],
+                },
+                id: "assistant-1".to_string(),
+                parent_message_id: None,
+                timestamp: 1,
+            },
+            Message {
+                data: MessageData::Tool {
+                    tool_use_id: "read-1".to_string(),
+                    result: crate::app::conversation::ToolResult::FileContent(FileContentResult {
+                        content: "content".to_string(),
+                        file_path: "/tmp/a.rs".to_string(),
+                        line_count: 1,
+                        truncated: false,
+                    }),
+                },
+                id: "tool-1".to_string(),
+                parent_message_id: Some("assistant-1".to_string()),
+                timestamp: 2,
+            },
+        ];
+
+        let mut drop_ids = HashSet::new();
+        drop_ids.insert("read-1".to_string());
+
+        let dropped = drop_tool_results_with_matching_tool_calls(&mut messages, &drop_ids);
+        assert_eq!(dropped, 1);
+        assert!(
+            messages.is_empty(),
+            "assistant message with only thought + dropped tool call should be removed"
         );
     }
 
