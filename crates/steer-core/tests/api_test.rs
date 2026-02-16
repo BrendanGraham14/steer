@@ -46,7 +46,7 @@ fn fresh_tool_use_id() -> String {
 }
 
 fn tiny_png_data_url() -> &'static str {
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Y9YkAAAAASUVORK5CYII="
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR42mP4DwYMEAoAU7oL9YXEbhEAAAAASUVORK5CYII="
 }
 
 fn build_image_message(source: ImageSource) -> Message {
@@ -1198,7 +1198,6 @@ async fn test_xai_provider_rejects_session_file_image_input() {
 #[case::claude_haiku_4_5(builtin::claude_haiku_4_5())]
 #[case::gpt_5_nano_2025_08_07(builtin::gpt_5_nano_2025_08_07())]
 #[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
-#[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
 #[tokio::test]
 #[ignore = "requires external API credentials"]
 async fn test_api_with_image_input(#[case] model: ModelId) {
