@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.12.0...steer-proto-v0.13.1) - 2026-02-17
+
+### Fixed
+
+- *(stream)* retry transient failures and emit reset deltas
+
+### Other
+
+- release v0.13.0
+
 ## [0.13.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.12.0...steer-proto-v0.13.0) - 2026-02-17
 
 ### Fixed
