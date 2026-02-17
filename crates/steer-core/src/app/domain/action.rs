@@ -85,6 +85,7 @@ pub enum Action {
         content: Vec<crate::app::conversation::AssistantContent>,
         usage: Option<TokenUsage>,
         context_window_tokens: Option<u32>,
+        configured_max_output_tokens: Option<u32>,
         timestamp: u64,
     },
 

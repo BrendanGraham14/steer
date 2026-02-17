@@ -118,11 +118,13 @@ auth_schemes = ["api-key"]
 provider = "{provider}"
 id = "{model_id}"
 recommended = true
+parameters = {{ max_output_tokens = 4096 }}
 
 [[models]]
 provider = "aaa"
 id = "aaa-model"
 recommended = true
+parameters = {{ max_output_tokens = 4096 }}
 "#,
             provider = builtin_default.provider.as_str(),
             model_id = builtin_default.id.as_str()
@@ -152,11 +154,13 @@ auth_schemes = ["api-key"]
 provider = "{provider}"
 id = "{model_id}"
 recommended = false
+parameters = {{ max_output_tokens = 4096 }}
 
 [[models]]
 provider = "aaa"
 id = "aaa-model"
 recommended = true
+parameters = {{ max_output_tokens = 4096 }}
 "#,
             provider = builtin_default.provider.as_str(),
             model_id = builtin_default.id.as_str()

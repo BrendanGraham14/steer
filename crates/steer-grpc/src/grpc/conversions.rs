@@ -2330,7 +2330,6 @@ pub(crate) fn stream_delta_to_proto(
         ),
     };
 
-
     Ok(proto::SessionEvent {
         sequence_num,
         timestamp,
@@ -2854,10 +2853,9 @@ pub(crate) fn proto_to_client_event(
                         delta,
                     }
                 }
-                proto::stream_delta_event::DeltaType::Reset(_) => ClientEvent::StreamReset {
-                    op_id,
-                    message_id,
-                },
+                proto::stream_delta_event::DeltaType::Reset(_) => {
+                    ClientEvent::StreamReset { op_id, message_id }
+                }
             }
         }
         proto::session_event::Event::CompactResult(e) => {

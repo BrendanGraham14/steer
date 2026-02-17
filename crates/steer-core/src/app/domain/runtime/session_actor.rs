@@ -351,6 +351,7 @@ impl SessionActor {
                 ..
             } => {
                 let context_window_tokens = self.interpreter.model_context_window_tokens(&model);
+                let configured_max_output_tokens = self.interpreter.model_max_output_tokens(&model);
                 let cancel_token = self.active_operations.entry(op_id).or_default().clone();
 
                 let interpreter = self.interpreter.clone();
@@ -403,6 +404,7 @@ impl SessionActor {
                                 content,
                                 usage,
                                 context_window_tokens,
+                                configured_max_output_tokens,
                                 timestamp: current_timestamp(),
                             }
                         }
@@ -1318,8 +1320,8 @@ mod tests {
         let state = AppState::new(session_id);
         let (event_store, api_client, tool_executor) = create_test_deps().await;
 
-        let provider_id = ProviderId("stub".to_string());
-        let model_id = ModelId::new(provider_id.clone(), "stub-model");
+        let model_id = crate::config::model::builtin::default_model();
+        let provider_id = model_id.provider.clone();
         api_client.insert_test_provider(provider_id, Arc::new(StubProviderWithUsage));
 
         let mut actor =
@@ -1349,11 +1351,13 @@ mod tests {
                 usage,
                 content,
                 context_window_tokens,
+                configured_max_output_tokens,
                 ..
             } => {
                 assert_eq!(completed_op_id, op_id);
                 assert_eq!(usage, Some(TokenUsage::new(11, 13, 24)));
-                assert!(context_window_tokens.is_none());
+                assert_eq!(context_window_tokens, Some(400_000));
+                assert!(configured_max_output_tokens.is_some());
                 assert!(matches!(
                     content.as_slice(),
                     [AssistantContent::Text { text }] if text == "reply"

@@ -150,7 +150,7 @@ impl Client {
                 .as_ref()
                 .and_then(|o| o.temperature)
                 .or(Some(1.0)),
-            max_tokens: call_options.as_ref().and_then(|o| o.max_tokens),
+            max_tokens: call_options.as_ref().and_then(|o| o.max_output_tokens),
             top_p: call_options.as_ref().and_then(|o| o.top_p).or(Some(1.0)),
             frequency_penalty: None,
             presence_penalty: None,
@@ -477,7 +477,7 @@ impl Client {
                 .as_ref()
                 .and_then(|o| o.temperature)
                 .or(Some(1.0)),
-            max_tokens: call_options.as_ref().and_then(|o| o.max_tokens),
+            max_tokens: call_options.as_ref().and_then(|o| o.max_output_tokens),
             top_p: call_options.as_ref().and_then(|o| o.top_p).or(Some(1.0)),
             frequency_penalty: None,
             presence_penalty: None,

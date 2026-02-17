@@ -57,11 +57,15 @@ fn invalid_action(kind: InvalidActionKind, message: impl Into<String>) -> Reduce
 fn derive_context_window_usage(
     total_tokens: u32,
     context_window_tokens: Option<u32>,
+    configured_max_output_tokens: Option<u32>,
 ) -> Option<ContextWindowUsage> {
     context_window_tokens.map(|max_context_tokens| {
-        let remaining_tokens = max_context_tokens.saturating_sub(total_tokens);
-        let (utilization_ratio, estimated) = if max_context_tokens > 0 {
-            let ratio = (f64::from(total_tokens) / f64::from(max_context_tokens)).clamp(0.0, 1.0);
+        let reserve = configured_max_output_tokens.unwrap_or(0);
+        let effective_context_tokens = max_context_tokens.saturating_sub(reserve);
+        let remaining_tokens = effective_context_tokens.saturating_sub(total_tokens);
+        let (utilization_ratio, estimated) = if effective_context_tokens > 0 {
+            let ratio =
+                (f64::from(total_tokens) / f64::from(effective_context_tokens)).clamp(0.0, 1.0);
             (Some(ratio), false)
         } else {
             (None, true)
@@ -160,6 +164,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, Reduc
             content,
             usage,
             context_window_tokens,
+            configured_max_output_tokens,
             timestamp,
         } => Ok(handle_model_response_complete(
             state,
@@ -170,6 +175,7 @@ pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, Reduc
                 content,
                 usage,
                 context_window_tokens,
+                configured_max_output_tokens,
                 timestamp,
             },
         )),
@@ -1191,6 +1197,7 @@ struct ModelResponseCompleteParams {
     content: Vec<AssistantContent>,
     usage: Option<TokenUsage>,
     context_window_tokens: Option<u32>,
+    configured_max_output_tokens: Option<u32>,
     timestamp: u64,
 }
 
@@ -1205,6 +1212,7 @@ fn handle_model_response_complete(
         content,
         usage,
         context_window_tokens,
+        configured_max_output_tokens,
         timestamp,
     } = params;
     let mut effects = Vec::new();
@@ -1263,7 +1271,11 @@ fn handle_model_response_complete(
     let outer_usage = usage;
 
     if let Some(usage) = outer_usage {
-        let context_window = derive_context_window_usage(usage.total_tokens, context_window_tokens);
+        let context_window = derive_context_window_usage(
+            usage.total_tokens,
+            context_window_tokens,
+            configured_max_output_tokens,
+        );
         state.record_llm_usage(op_id, model.clone(), usage, context_window.clone());
         effects.push(Effect::EmitEvent {
             session_id,
@@ -1288,6 +1300,7 @@ fn handle_model_response_complete(
             session_id,
             outer_usage,
             context_window_tokens,
+            configured_max_output_tokens,
             &model,
         );
         if auto.is_empty() {
@@ -1444,6 +1457,7 @@ fn maybe_auto_compact(
     session_id: crate::app::domain::types::SessionId,
     usage: Option<TokenUsage>,
     context_window_tokens: Option<u32>,
+    configured_max_output_tokens: Option<u32>,
     model: &crate::config::model::ModelId,
 ) -> Vec<Effect> {
     // Guard 1: config exists and auto-compaction is enabled.
@@ -1460,7 +1474,11 @@ fn maybe_auto_compact(
     };
 
     // Guard 3: context window utilization is above threshold (non-estimated).
-    let cw = match derive_context_window_usage(usage.total_tokens, context_window_tokens) {
+    let cw = match derive_context_window_usage(
+        usage.total_tokens,
+        context_window_tokens,
+        configured_max_output_tokens,
+    ) {
         Some(cw) if !cw.estimated => cw,
         _ => return vec![],
     };
@@ -3156,6 +3174,7 @@ mod tests {
                 content,
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 12345,
             },
         );
@@ -3198,6 +3217,7 @@ mod tests {
                 content,
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 12345,
             },
         );
@@ -3246,6 +3266,7 @@ mod tests {
                 }],
                 usage: Some(usage),
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 12345,
             },
         );
@@ -3308,6 +3329,7 @@ mod tests {
                 }],
                 usage: Some(usage),
                 context_window_tokens,
+                configured_max_output_tokens: None,
                 timestamp: 12345,
             },
         );
@@ -3352,6 +3374,69 @@ mod tests {
     }
 
     #[test]
+    fn test_model_response_utilization_uses_reserved_context_window() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+        let model = builtin::claude_sonnet_4_5();
+        let usage = TokenUsage::new(10, 20, 30);
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state.operation_models.insert(op_id, model.clone());
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id,
+                content: vec![AssistantContent::Text {
+                    text: "Done".to_string(),
+                }],
+                usage: Some(usage),
+                context_window_tokens: Some(100),
+                configured_max_output_tokens: Some(40),
+                timestamp: 12345,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::LlmUsageUpdated {
+                    context_window: Some(ContextWindowUsage {
+                        max_context_tokens: Some(100),
+                        remaining_tokens: Some(30),
+                        utilization_ratio: Some(ratio),
+                        estimated: false,
+                    }),
+                    ..
+                },
+                ..
+            } if (*ratio - 0.5).abs() < 1e-9
+        )));
+
+        let snapshot = state
+            .llm_usage_by_op
+            .get(&op_id)
+            .expect("usage snapshot should be recorded");
+        assert_eq!(
+            snapshot.context_window,
+            Some(ContextWindowUsage {
+                max_context_tokens: Some(100),
+                remaining_tokens: Some(30),
+                utilization_ratio: Some(0.5),
+                estimated: false,
+            })
+        );
+    }
+
+    #[test]
     fn test_model_response_with_zero_context_window_marks_estimated() {
         let mut state = test_state();
         let session_id = state.session_id;
@@ -3378,6 +3463,7 @@ mod tests {
                 }],
                 usage: Some(usage),
                 context_window_tokens: Some(0),
+                configured_max_output_tokens: None,
                 timestamp: 12345,
             },
         );
@@ -3491,6 +3577,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 3,
             },
         );
@@ -3515,6 +3602,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 4,
             },
         );
@@ -3777,7 +3865,14 @@ mod tests {
         let model = builtin::claude_sonnet_4_5();
 
         let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
-        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+        let effects = maybe_auto_compact(
+            &mut state,
+            session_id,
+            usage,
+            Some(100_000),
+            Some(10_000),
+            &model,
+        );
 
         assert!(!effects.is_empty(), "expected non-empty effects");
         assert!(
@@ -3805,7 +3900,14 @@ mod tests {
         let model = builtin::claude_sonnet_4_5();
 
         let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
-        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+        let effects = maybe_auto_compact(
+            &mut state,
+            session_id,
+            usage,
+            Some(100_000),
+            Some(10_000),
+            &model,
+        );
 
         assert!(
             effects.is_empty(),
@@ -3821,7 +3923,14 @@ mod tests {
 
         // 50% utilization, well below 90% threshold.
         let usage = Some(TokenUsage::new(40_000, 10_000, 50_000));
-        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+        let effects = maybe_auto_compact(
+            &mut state,
+            session_id,
+            usage,
+            Some(100_000),
+            Some(10_000),
+            &model,
+        );
 
         assert!(
             effects.is_empty(),
@@ -3837,7 +3946,14 @@ mod tests {
         let model = builtin::claude_sonnet_4_5();
 
         let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
-        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+        let effects = maybe_auto_compact(
+            &mut state,
+            session_id,
+            usage,
+            Some(100_000),
+            Some(10_000),
+            &model,
+        );
 
         assert!(
             effects.is_empty(),
@@ -3865,7 +3981,14 @@ mod tests {
         });
 
         let usage = Some(TokenUsage::new(80_000, 15_000, 95_000));
-        let effects = maybe_auto_compact(&mut state, session_id, usage, Some(100_000), &model);
+        let effects = maybe_auto_compact(
+            &mut state,
+            session_id,
+            usage,
+            Some(100_000),
+            Some(10_000),
+            &model,
+        );
 
         assert!(
             effects.is_empty(),
@@ -3972,6 +4095,7 @@ mod tests {
             session_id,
             Some(TokenUsage::new(80_000, 15_000, 95_000)),
             Some(100_000),
+            Some(10_000),
             &model,
         );
 
@@ -4077,6 +4201,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 2,
             },
         );
@@ -4108,6 +4233,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 4,
             },
         );
@@ -4265,6 +4391,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 2,
             },
         );
@@ -4296,6 +4423,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 4,
             },
         );
@@ -4437,6 +4565,7 @@ mod tests {
                     }],
                     usage: None,
                     context_window_tokens: None,
+                    configured_max_output_tokens: None,
                     timestamp: (i * 2 + 2) as u64,
                 },
             );
@@ -4521,6 +4650,7 @@ mod tests {
                     }],
                     usage: None,
                     context_window_tokens: None,
+                    configured_max_output_tokens: None,
                     timestamp: (102 + i * 2) as u64,
                 },
             );

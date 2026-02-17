@@ -136,6 +136,7 @@ mod tests {
                 ],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 1001,
             },
         );
@@ -316,6 +317,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 1001,
             },
         );
@@ -383,6 +385,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 1001,
             },
         );
@@ -547,6 +550,7 @@ mod tests {
                 }],
                 usage: None,
                 context_window_tokens: None,
+                configured_max_output_tokens: None,
                 timestamp: 1001,
             },
         );

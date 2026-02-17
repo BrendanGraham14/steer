@@ -1856,3 +1856,75 @@ async fn test_api_streaming_cancellation() {
         "Cancellation test passed! Chunks before cancel: {chunks_before_cancel}, Got cancelled signal: {got_cancelled}"
     );
 }
+
+async fn run_api_with_max_tokens(client: &Client, model: &ModelId) -> ApiTestResult<()> {
+    let timestamp = Message::current_timestamp();
+    let messages = vec![Message {
+        data: MessageData::User {
+            content: vec![UserContent::Text {
+                text: "Write a very long story about a dragon.".to_string(),
+            }],
+        },
+        timestamp,
+        id: Message::generate_id("user", timestamp),
+        parent_message_id: None,
+    }];
+
+    let params = Some(steer_core::config::model::ModelParameters {
+        max_output_tokens: Some(16),
+        ..Default::default()
+    });
+
+    let mut stream = client
+        .stream_complete(
+            model,
+            messages,
+            None,
+            None,
+            params,
+            CancellationToken::new(),
+        )
+        .await?;
+
+    let mut total_text = String::new();
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            StreamChunk::TextDelta(text) => {
+                total_text.push_str(&text);
+            }
+            StreamChunk::MessageComplete(response) => {
+                if let Some(usage) = response.usage {
+                    assert!(
+                        usage.output_tokens <= 20,
+                        "expected output tokens to be limited by max_tokens, got {}",
+                        usage.output_tokens
+                    );
+                }
+                break;
+            }
+            StreamChunk::Error(e) => {
+                return Err(ApiTestError::Api(ApiError::StreamError {
+                    provider: model.provider.to_string(),
+                    details: format!("{e:?}"),
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+#[rstest]
+#[case::claude_haiku_4_5(builtin::claude_haiku_4_5())]
+#[case::gpt_5_nano_2025_08_07(builtin::gpt_5_nano_2025_08_07())]
+#[case::gemini_3_flash_preview(builtin::gemini_3_flash_preview())]
+#[case::grok_4_1_fast_reasoning(builtin::grok_4_1_fast_reasoning())]
+#[tokio::test]
+#[ignore = "requires external API credentials"]
+async fn test_api_with_max_tokens(#[case] model: ModelId) {
+    let client = test_client();
+    run_api_with_max_tokens(&client, &model)
+        .await
+        .unwrap_or_else(|err| panic!("max_tokens test failed for {model:?}: {err:?}"));
+}

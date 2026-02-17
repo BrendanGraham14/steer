@@ -42,7 +42,7 @@ impl ModelParameters {
     pub fn merge(&self, other: &ModelParameters) -> ModelParameters {
         ModelParameters {
             temperature: other.temperature.or(self.temperature),
-            max_tokens: other.max_tokens.or(self.max_tokens),
+            max_output_tokens: other.max_output_tokens.or(self.max_output_tokens),
             top_p: other.top_p.or(self.top_p),
             thinking_config: match (self.thinking_config, other.thinking_config) {
                 (Some(a), Some(b)) => Some(ThinkingConfig {
@@ -129,8 +129,8 @@ impl ModelConfig {
                 if let Some(temp) = other_params.temperature {
                     self_params.temperature = Some(temp);
                 }
-                if let Some(max_tokens) = other_params.max_tokens {
-                    self_params.max_tokens = Some(max_tokens);
+                if let Some(max_output_tokens) = other_params.max_output_tokens {
+                    self_params.max_output_tokens = Some(max_output_tokens);
                 }
                 if let Some(top_p) = other_params.top_p {
                     self_params.top_p = Some(top_p);
@@ -188,7 +188,7 @@ mod tests {
             context_window_tokens: Some(200_000),
             parameters: Some(ModelParameters {
                 temperature: Some(0.7),
-                max_tokens: Some(4096),
+                max_output_tokens: Some(4096),
                 top_p: Some(0.9),
                 thinking_config: None,
             }),
@@ -227,14 +227,14 @@ mod tests {
     fn test_model_parameters_partial() {
         let toml_str = r"
             temperature = 0.5
-            max_tokens = 2048
+            max_output_tokens = 2048
         ";
 
         let params: ModelParameters =
             toml::from_str(toml_str).expect("Failed to deserialize parameters");
 
         assert_eq!(params.temperature, Some(0.5));
-        assert_eq!(params.max_tokens, Some(2048));
+        assert_eq!(params.max_output_tokens, Some(2048));
         assert_eq!(params.top_p, None);
     }
 
@@ -242,21 +242,21 @@ mod tests {
     fn test_model_parameters_merge() {
         let base = ModelParameters {
             temperature: Some(0.7),
-            max_tokens: Some(1000),
+            max_output_tokens: Some(1000),
             top_p: Some(0.9),
             thinking_config: None,
         };
 
         let override_params = ModelParameters {
             temperature: Some(0.5),
-            max_tokens: None,
+            max_output_tokens: None,
             top_p: Some(0.95),
             thinking_config: None,
         };
 
         let merged = base.merge(&override_params);
         assert_eq!(merged.temperature, Some(0.5)); // overridden
-        assert_eq!(merged.max_tokens, Some(1000)); // kept from base
+        assert_eq!(merged.max_output_tokens, Some(1000)); // kept from base
         assert_eq!(merged.top_p, Some(0.95)); // overridden
     }
 
@@ -271,7 +271,7 @@ mod tests {
             context_window_tokens: Some(200_000),
             parameters: Some(ModelParameters {
                 temperature: Some(0.7),
-                max_tokens: Some(4096),
+                max_output_tokens: Some(4096),
                 top_p: None,
                 thinking_config: None,
             }),
@@ -280,19 +280,19 @@ mod tests {
         // Test with no call options
         let effective = config.effective_parameters(None).unwrap();
         assert_eq!(effective.temperature, Some(0.7));
-        assert_eq!(effective.max_tokens, Some(4096));
+        assert_eq!(effective.max_output_tokens, Some(4096));
         assert_eq!(effective.top_p, None);
 
         // Test with call options
         let call_options = ModelParameters {
             temperature: Some(0.9),
-            max_tokens: None,
+            max_output_tokens: None,
             top_p: Some(0.95),
             thinking_config: None,
         };
         let effective = config.effective_parameters(Some(&call_options)).unwrap();
         assert_eq!(effective.temperature, Some(0.9)); // overridden
-        assert_eq!(effective.max_tokens, Some(4096)); // kept from config
+        assert_eq!(effective.max_output_tokens, Some(4096)); // kept from config
         assert_eq!(effective.top_p, Some(0.95)); // added
     }
 

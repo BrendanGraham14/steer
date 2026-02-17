@@ -73,12 +73,24 @@ impl ModelRegistry {
             }
         }
 
-        // Validate all models reference known providers
+        // Validate all models reference known providers and include required max_output_tokens.
         for model in &models {
             if !known_providers.contains_key(&model.provider) {
                 return Err(Error::Configuration(format!(
                     "Model '{}' references unknown provider '{}'",
                     model.id, model.provider
+                )));
+            }
+
+            let has_required_max_output_tokens = model
+                .parameters
+                .as_ref()
+                .and_then(|parameters| parameters.max_output_tokens)
+                .is_some();
+            if !has_required_max_output_tokens {
+                return Err(Error::Configuration(format!(
+                    "Model '{}' is missing required parameters.max_output_tokens",
+                    model.id
                 )));
             }
         }
@@ -393,7 +405,7 @@ provider = "anthropic"
 id = "claude-3"
 aliases = ["claude"]
 recommended = false
-parameters = { temperature = 0.7, max_tokens = 2048 }
+parameters = { temperature = 0.7, max_output_tokens = 2048 }
 
 [[models]]
 provider = "openai"
@@ -421,7 +433,7 @@ provider = "google"
 id = "gemini-pro"
 aliases = ["gemini"]
 recommended = true
-parameters = { temperature = 0.5, top_p = 0.95 }
+parameters = { temperature = 0.5, max_output_tokens = 4096, top_p = 0.95 }
 "#;
 
         let base: Catalog = toml::from_str(base_toml).unwrap();
@@ -456,7 +468,7 @@ parameters = { temperature = 0.5, top_p = 0.95 }
         assert!(claude.parameters.is_some());
         let claude_params = claude.parameters.unwrap();
         assert_eq!(claude_params.temperature, Some(0.9)); // overridden from 0.7
-        assert_eq!(claude_params.max_tokens, Some(2048)); // kept from base
+        assert_eq!(claude_params.max_output_tokens, Some(2048)); // kept from base
         assert!(claude_params.thinking_config.is_some());
         assert!(claude_params.thinking_config.unwrap().enabled);
 
@@ -500,6 +512,7 @@ provider = "anthropic"
 id = "test-model"
 aliases = ["test"]
 recommended = true
+parameters = { max_output_tokens = 4096 }
 "#;
 
         fs::write(&config_path, config).unwrap();
@@ -610,7 +623,7 @@ recommended = true
         let bad_path = dir.path().join("bad_catalog.toml");
         let dup_path = dir.path().join("dup_catalog.toml");
 
-        // Invalid: empty display_name
+        // Invalid: missing required max_output_tokens
         let bad = r#"
 [[providers]]
 id = "custom"
@@ -639,11 +652,13 @@ auth_schemes = ["api-key"]
 provider = "custom"
 id = "m1"
 display_name = "Same"
+parameters = { max_output_tokens = 1024 }
 
 [[models]]
 provider = "custom"
 id = "m2"
 display_name = "Same"
+parameters = { max_output_tokens = 2048 }
 "#;
         fs::write(&dup_path, dup).unwrap();
         let res2 = ModelRegistry::load(&[dup_path.to_string_lossy().to_string()]);
@@ -675,11 +690,13 @@ auth_schemes = ["api-key"]
 provider = "p1"
 id = "m1"
 aliases = ["shared"]
+parameters = { max_output_tokens = 1024 }
 
 [[models]]
 provider = "p2"
 id = "m2"
 aliases = ["shared"]
+parameters = { max_output_tokens = 1024 }
 "#;
         fs::write(&path, toml).unwrap();
         let res = ModelRegistry::load(&[path.to_string_lossy().to_string()]);

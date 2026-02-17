@@ -676,6 +676,11 @@ impl Provider for XAIClient {
             None
         };
 
+        let max_output_tokens = call_options
+            .as_ref()
+            .and_then(|o| o.max_output_tokens)
+            .or(Some(32_768));
+
         let request = CompletionRequest {
             model: model_id.id.clone(), // Use the model ID string
             messages: xai_messages,
@@ -683,8 +688,8 @@ impl Provider for XAIClient {
             frequency_penalty: None,
             logit_bias: None,
             logprobs: None,
-            max_completion_tokens: Some(32768),
-            max_tokens: None,
+            max_completion_tokens: max_output_tokens,
+            max_tokens: max_output_tokens,
             n: None,
             parallel_tool_calls: None,
             presence_penalty: None,
@@ -796,6 +801,11 @@ impl Provider for XAIClient {
             None
         };
 
+        let max_output_tokens = call_options
+            .as_ref()
+            .and_then(|o| o.max_output_tokens)
+            .or(Some(32_768));
+
         let request = CompletionRequest {
             model: model_id.id.clone(),
             messages: xai_messages,
@@ -803,8 +813,8 @@ impl Provider for XAIClient {
             frequency_penalty: None,
             logit_bias: None,
             logprobs: None,
-            max_completion_tokens: Some(32768),
-            max_tokens: None,
+            max_completion_tokens: max_output_tokens,
+            max_tokens: max_output_tokens,
             n: None,
             parallel_tool_calls: None,
             presence_penalty: None,

@@ -1641,7 +1641,7 @@ impl Provider for AnthropicClient {
                 messages: claude_messages,
                 max_tokens: call_options
                     .as_ref()
-                    .and_then(|o| o.max_tokens)
+                    .and_then(|o| o.max_output_tokens)
                     .map_or(32_000, |v| v as usize),
                 system: system_content.clone(),
                 tools,
@@ -1660,7 +1660,7 @@ impl Provider for AnthropicClient {
                 messages: claude_messages,
                 max_tokens: call_options
                     .as_ref()
-                    .and_then(|o| o.max_tokens)
+                    .and_then(|o| o.max_output_tokens)
                     .map_or(8000, |v| v as usize),
                 system: system_content,
                 tools,
@@ -1842,7 +1842,7 @@ impl Provider for AnthropicClient {
                 messages: claude_messages,
                 max_tokens: call_options
                     .as_ref()
-                    .and_then(|o| o.max_tokens)
+                    .and_then(|o| o.max_output_tokens)
                     .map_or(32_000, |v| v as usize),
                 system: system_content.clone(),
                 tools,
@@ -1861,7 +1861,7 @@ impl Provider for AnthropicClient {
                 messages: claude_messages,
                 max_tokens: call_options
                     .as_ref()
-                    .and_then(|o| o.max_tokens)
+                    .and_then(|o| o.max_output_tokens)
                     .map_or(8000, |v| v as usize),
                 system: system_content,
                 tools,

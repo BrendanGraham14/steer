@@ -290,9 +290,9 @@ mod event_conversion_tests {
         AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
     };
     use steer_core::app::domain::delta::StreamDelta;
-    use steer_proto::agent::v1 as proto;
     use steer_core::app::domain::event::{CompactResult, CompactTrigger, SessionEvent};
     use steer_core::config::model::builtin;
+    use steer_proto::agent::v1 as proto;
     use uuid::Uuid;
 
     #[test]

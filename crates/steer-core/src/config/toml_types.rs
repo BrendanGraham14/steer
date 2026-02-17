@@ -74,9 +74,9 @@ pub struct ModelParameters {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
 
-    /// Maximum number of tokens to generate.
+    /// Maximum number of output tokens to generate.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
+    pub max_output_tokens: Option<u32>,
 
     /// Top-p (nucleus) sampling parameter.
     #[serde(skip_serializing_if = "Option::is_none")]

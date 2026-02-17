@@ -31,6 +31,7 @@ aliases = ["haiku"]
 recommended = false
 context_window_tokens = 200000
 [models.parameters]
+max_output_tokens = 32_000
 thinking_config.enabled = true
 thinking_config.budget_tokens = 16_000
 
@@ -41,6 +42,7 @@ aliases = ["sonnet"]
 recommended = true
 context_window_tokens = 200000
 [models.parameters]
+max_output_tokens = 32_000
 thinking_config.enabled = true
 thinking_config.budget_tokens = 16_000
 
@@ -51,6 +53,7 @@ aliases = ["opus-4-5"]
 recommended = false
 context_window_tokens = 200000
 [models.parameters]
+max_output_tokens = 32_000
 thinking_config.enabled = true
 thinking_config.budget_tokens = 16_000
 
@@ -61,6 +64,7 @@ aliases = ["opus", "opus-4-6"]
 recommended = true
 context_window_tokens = 200000
 [models.parameters]
+max_output_tokens = 32_000
 thinking_config.enabled = true
 thinking_config.budget_tokens = 16_000
 
@@ -71,6 +75,7 @@ aliases = ["gpt-5-nano", "gpt5-nano"]
 recommended = false
 context_window_tokens = 400000
 [models.parameters]
+max_output_tokens = 128_000
 thinking_config.enabled = true
 thinking_config.effort = "medium"
 
@@ -81,6 +86,7 @@ aliases = ["gpt-5-mini", "gpt5-mini"]
 recommended = false
 context_window_tokens = 400000
 [models.parameters]
+max_output_tokens = 128_000
 thinking_config.enabled = true
 thinking_config.effort = "medium"
 
@@ -92,6 +98,7 @@ aliases = ["gpt-5.2", "gpt5.2", "gpt52", "gpt-5.2-xhigh"]
 recommended = false
 context_window_tokens = 400000
 [models.parameters]
+max_output_tokens = 128_000
 thinking_config.enabled = true
 thinking_config.effort = "x-high"
 
@@ -102,6 +109,7 @@ aliases = ["gpt5.3-codex", "gpt53-codex", "codex"]
 recommended = true
 context_window_tokens = 400000
 [models.parameters]
+max_output_tokens = 128_000
 thinking_config.enabled = true
 thinking_config.effort = "x-high"
 
@@ -112,6 +120,7 @@ aliases = ["gpt5.2-codex", "gpt52-codex"]
 recommended = false
 context_window_tokens = 400000
 [models.parameters]
+max_output_tokens = 128_000
 thinking_config.enabled = true
 thinking_config.effort = "x-high"
 
@@ -122,6 +131,7 @@ aliases = ["gpt5.1-codex-max", "gpt51-codex-max"]
 recommended = false
 context_window_tokens = 400000
 [models.parameters]
+max_output_tokens = 128_000
 thinking_config.enabled = true
 thinking_config.effort = "x-high"
 
@@ -131,6 +141,8 @@ id = "gemini-3-flash-preview"
 aliases = ["gemini-flash", "flash"]
 recommended = true
 context_window_tokens = 1048576
+[models.parameters]
+max_output_tokens = 65_536
 
 [[models]]
 provider = "google"
@@ -139,6 +151,7 @@ aliases = ["gemini-pro", "gemini"]
 recommended = true
 context_window_tokens = 1048576
 [models.parameters]
+max_output_tokens = 65_536
 thinking_config.enabled = true
 thinking_config.include_thoughts = true
 thinking_config.budget_tokens = 8192
@@ -149,3 +162,6 @@ id = "grok-4-1-fast-reasoning"
 aliases = ["grok-4-1-fast", "grok-4-1", "grok-4", "grok"]
 recommended = true
 context_window_tokens = 256000
+[models.parameters]
+max_output_tokens = 32_768
+

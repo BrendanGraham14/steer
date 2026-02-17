@@ -84,11 +84,13 @@ auth_schemes = ["api-key"]
 provider = "openai"
 id = "gpt-5.3-codex"
 recommended = false
+parameters = { max_output_tokens = 128000 }
 
 [[models]]
 provider = "aaa"
 id = "aaa-model"
 recommended = true
+parameters = { max_output_tokens = 4096 }
 "#;
     let (_tmp, path) = write_catalog(catalog).expect("write catalog");
     let (client, setup) = setup_client(vec![path]).await.expect("setup client");
@@ -115,11 +117,13 @@ auth_schemes = ["api-key"]
 provider = "openai"
 id = "gpt-5.3-codex"
 recommended = false
+parameters = { max_output_tokens = 128000 }
 
 [[models]]
 provider = "aaa"
 id = "aaa-model"
 recommended = true
+parameters = { max_output_tokens = 4096 }
 "#;
     let (_tmp, path) = write_catalog(catalog).expect("write catalog");
     let (client, setup) = setup_client(vec![path]).await.expect("setup client");
@@ -148,11 +152,13 @@ auth_schemes = ["api-key"]
 provider = "openai"
 id = "gpt-5.3-codex"
 recommended = false
+parameters = { max_output_tokens = 128000 }
 
 [[models]]
 provider = "aaa"
 id = "aaa-model"
 recommended = true
+parameters = { max_output_tokens = 4096 }
 "#;
     let (_tmp, path) = write_catalog(catalog).expect("write catalog");
     let (client, setup) = setup_client(vec![path]).await.expect("setup client");

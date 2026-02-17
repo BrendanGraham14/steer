@@ -34,6 +34,13 @@ enum ResponsesAuth {
 }
 
 impl ResponsesAuth {
+    fn should_send_max_output_tokens(&self) -> bool {
+        // Codex OAuth endpoint rejects max_output_tokens even though OpenAI Responses accepts it.
+        !matches!(self, ResponsesAuth::Directive(_))
+    }
+}
+
+impl ResponsesAuth {
     fn directive(&self) -> Option<&OpenAiResponsesAuth> {
         match self {
             ResponsesAuth::Directive(directive) => Some(directive),
@@ -192,7 +199,11 @@ impl Client {
             instructions,
             previous_response_id: None,
             temperature: call_options.as_ref().and_then(|o| o.temperature),
-            max_output_tokens: call_options.as_ref().and_then(|o| o.max_tokens),
+            max_output_tokens: self
+                .auth
+                .should_send_max_output_tokens()
+                .then(|| call_options.as_ref().and_then(|o| o.max_output_tokens))
+                .flatten(),
             max_tool_calls: None,
             parallel_tool_calls: Some(true),
             store: Some(false),
@@ -271,7 +282,7 @@ impl Client {
         };
         let context = AuthErrorContext {
             status: Some(status),
-            body_snippet: Some(truncate_body(body)),
+            body_snippet: Some(body.to_string()),
             request_kind,
         };
         directive
@@ -1714,7 +1725,9 @@ fn stream_error_message(error: &ResponseError) -> String {
     }
 }
 
-fn stream_error_details(error: &ResponseError) -> (ProviderStreamErrorKind, Option<String>, String) {
+fn stream_error_details(
+    error: &ResponseError,
+) -> (ProviderStreamErrorKind, Option<String>, String) {
     let raw_error_type = error
         .error_type
         .clone()
@@ -1742,17 +1755,6 @@ fn is_auth_status(status: reqwest::StatusCode) -> bool {
         status,
         reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
     )
-}
-
-fn truncate_body(body: &str) -> String {
-    const LIMIT: usize = 512;
-    let mut chars = body.chars();
-    let truncated: String = chars.by_ref().take(LIMIT).collect();
-    if chars.next().is_some() {
-        format!("{truncated}...")
-    } else {
-        truncated
-    }
 }
 
 fn apply_instruction_policy(
@@ -1824,9 +1826,36 @@ mod tests {
     };
     use crate::workspace::EnvironmentInfo;
 
+    use async_trait::async_trait;
     use schemars::schema_for;
     use steer_tools::ToolSchema;
     use steer_tools::tools::dispatch_agent::DispatchAgentParams;
+
+    use std::sync::Arc;
+
+    use steer_auth_plugin::{
+        AuthErrorAction, AuthErrorContext, AuthHeaderContext, AuthHeaderProvider, HeaderPair,
+        OpenAiResponsesAuth,
+    };
+
+    struct NoopAuthHeaderProvider;
+
+    #[async_trait]
+    impl AuthHeaderProvider for NoopAuthHeaderProvider {
+        async fn headers(
+            &self,
+            _ctx: AuthHeaderContext,
+        ) -> steer_auth_plugin::Result<Vec<HeaderPair>> {
+            Ok(Vec::new())
+        }
+
+        async fn on_auth_error(
+            &self,
+            _ctx: AuthErrorContext,
+        ) -> steer_auth_plugin::Result<AuthErrorAction> {
+            Ok(AuthErrorAction::NoAction)
+        }
+    }
 
     #[test]
     fn test_responses_api_message_conversion() {
@@ -2080,6 +2109,43 @@ mod tests {
     }
 
     #[test]
+    fn test_responses_api_omits_max_output_tokens_for_directive_auth() {
+        let directive = OpenAiResponsesAuth {
+            headers: Arc::new(NoopAuthHeaderProvider),
+            base_url_override: Some("https://chatgpt.com/backend-api/codex/responses".to_string()),
+            require_streaming: Some(true),
+            instruction_policy: None,
+            include: None,
+        };
+        let client = Client::with_directive(directive, None).expect("openai directive client");
+
+        let messages = vec![Message {
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "hello".to_string(),
+                }],
+            },
+            timestamp: 1000,
+            id: "msg1".to_string(),
+            parent_message_id: None,
+        }];
+
+        let call_options = Some(crate::config::model::ModelParameters {
+            temperature: None,
+            max_output_tokens: Some(42),
+            top_p: None,
+            thinking_config: None,
+        });
+
+        let model_id = ModelId::new(crate::config::provider::openai(), "gpt-5.3-codex");
+        let request = client
+            .build_request(&model_id, messages, None, None, call_options)
+            .expect("request should build");
+
+        assert_eq!(request.max_output_tokens, None);
+    }
+
+    #[test]
     fn test_responses_api_reasoning_config() {
         let client = Client::new("test_key".to_string()).expect("openai responses client");
 
@@ -2098,7 +2164,7 @@ mod tests {
         let model_id = ModelId::new(crate::config::provider::openai(), "codex-mini-latest");
         let call_options = Some(crate::config::model::ModelParameters {
             temperature: None,
-            max_tokens: None,
+            max_output_tokens: None,
             top_p: None,
             thinking_config: Some(crate::config::model::ThinkingConfig {
                 enabled: true,

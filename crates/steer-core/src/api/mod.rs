@@ -18,8 +18,8 @@ use crate::model_registry::ModelRegistry;
 pub use error::{ApiError, ProviderStreamErrorKind, SseParseError, StreamError};
 pub use factory::{create_provider, create_provider_with_directive};
 use futures::StreamExt;
-use rand::Rng;
 pub use provider::{CompletionResponse, CompletionStream, Provider, StreamChunk, TokenUsage};
+use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -92,7 +92,10 @@ impl Client {
     fn retry_delay(attempt: usize) -> Duration {
         let base_ms = RETRY_BASE_DELAY_MS * (1u64 << attempt.min(4));
         let jitter_percent = rand::thread_rng().gen_range(80_u64..=120_u64);
-        let jittered_ms = base_ms.saturating_mul(jitter_percent).saturating_div(100).max(1);
+        let jittered_ms = base_ms
+            .saturating_mul(jitter_percent)
+            .saturating_div(100)
+            .max(1);
         Duration::from_millis(jittered_ms)
     }
 
@@ -241,6 +244,13 @@ impl Client {
         self.model_registry
             .get(model_id)
             .and_then(|model| model.context_window_tokens)
+    }
+
+    pub fn model_max_output_tokens(&self, model_id: &ModelId) -> Option<u32> {
+        self.model_registry
+            .get(model_id)
+            .and_then(|model| model.parameters)
+            .and_then(|parameters| parameters.max_output_tokens)
     }
 
     #[cfg(any(test, feature = "test-utils"))]

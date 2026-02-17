@@ -57,6 +57,10 @@ impl EffectInterpreter {
         self.api_client.model_context_window_tokens(model)
     }
 
+    pub fn model_max_output_tokens(&self, model: &ModelId) -> Option<u32> {
+        self.api_client.model_max_output_tokens(model)
+    }
+
     pub async fn call_model(
         &self,
         model: ModelId,

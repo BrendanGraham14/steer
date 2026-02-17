@@ -1236,7 +1236,7 @@ impl Provider for GeminiClient {
             (
                 opts.and_then(|o| o.temperature).or(Some(1.0)),
                 opts.and_then(|o| o.top_p).or(Some(0.95)),
-                opts.and_then(|o| o.max_tokens)
+                opts.and_then(|o| o.max_output_tokens)
                     .map(|v| v as i32)
                     .or(Some(65536)),
             )
@@ -1339,7 +1339,7 @@ impl Provider for GeminiClient {
             (
                 opts.and_then(|o| o.temperature).or(Some(1.0)),
                 opts.and_then(|o| o.top_p).or(Some(0.95)),
-                opts.and_then(|o| o.max_tokens)
+                opts.and_then(|o| o.max_output_tokens)
                     .map(|v| v as i32)
                     .or(Some(65536)),
             )
