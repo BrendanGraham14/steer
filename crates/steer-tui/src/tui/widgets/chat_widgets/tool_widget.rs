@@ -291,7 +291,7 @@ mod tests {
         let theme = Theme::default();
         let tool_call = ToolCall {
             id: "test-id".to_string(),
-            name: "view".to_string(),
+            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
             parameters: json!({
                 "file_path": "/tmp/large.txt"
             }),
@@ -314,13 +314,12 @@ mod tests {
 
         let mut widget = ToolWidget::new(tool_call, result);
 
-        // Test that height is reasonable even with large content
+        // View detailed mode should match compact mode and never show file content.
         let compact_height = widget.lines(80, ViewMode::Compact, &theme).len();
         assert!(compact_height > 0);
-        assert!(compact_height < 200); // Should be truncated
 
         let detailed_height = widget.lines(80, ViewMode::Detailed, &theme).len();
-        assert!(detailed_height > compact_height);
+        assert_eq!(detailed_height, compact_height);
     }
 
     #[test]

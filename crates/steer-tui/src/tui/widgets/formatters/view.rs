@@ -1,7 +1,4 @@
-use super::{
-    ToolFormatter,
-    helpers::{separator_line, tool_error_user_message, truncate_lines},
-};
+use super::ToolFormatter;
 use crate::tui::theme::{Component, Theme};
 use ratatui::{
     style::{Modifier, Style},
@@ -13,7 +10,6 @@ use steer_grpc::client_api::ToolResult;
 use steer_tools::tools::view::ViewParams;
 
 pub struct ViewFormatter;
-const MAX_LINES: usize = 100;
 
 impl ToolFormatter for ViewFormatter {
     fn compact(
@@ -76,90 +72,7 @@ impl ToolFormatter for ViewFormatter {
         wrap_width: usize,
         theme: &Theme,
     ) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-
-        let Ok(params) = serde_json::from_value::<ViewParams>(params.clone()) else {
-            return vec![Line::from(Span::styled(
-                "Invalid view params",
-                theme.style(Component::ErrorText),
-            ))];
-        };
-
-        // Show file path
-        lines.push(Line::from(Span::styled(
-            format!("File: {}", params.file_path),
-            theme
-                .style(Component::CodeFilePath)
-                .add_modifier(Modifier::BOLD),
-        )));
-
-        // Show line range if specified
-        if params.offset.is_some() || params.limit.is_some() {
-            lines.push(Line::from(Span::styled(
-                format!("Lines: {}", format_line_range(params.offset, params.limit)),
-                theme.style(Component::DimText),
-            )));
-        }
-
-        // Show output if we have results
-        if let Some(result) = result {
-            match result {
-                ToolResult::FileContent(file_content) => {
-                    if file_content.content.is_empty() {
-                        lines.push(Line::from(Span::styled(
-                            "(Empty file)",
-                            theme
-                                .style(Component::DimText)
-                                .add_modifier(Modifier::ITALIC),
-                        )));
-                    } else {
-                        lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
-
-                        let (output_lines, truncated) =
-                            truncate_lines(&file_content.content, MAX_LINES);
-
-                        // Trim line number & tab
-                        let trimmed_lines: Vec<&str> = output_lines
-                            .iter()
-                            .map(|line| if line.len() > 6 { &line[6..] } else { "" })
-                            .collect();
-
-                        for line in trimmed_lines {
-                            for wrapped in textwrap::wrap(line, wrap_width) {
-                                lines.push(Line::from(Span::raw(wrapped.to_string())));
-                            }
-                        }
-
-                        if truncated {
-                            lines.push(Line::from(Span::styled(
-                                format!(
-                                    "... ({} more lines)",
-                                    file_content.content.lines().count() - MAX_LINES
-                                ),
-                                theme
-                                    .style(Component::DimText)
-                                    .add_modifier(Modifier::ITALIC),
-                            )));
-                        }
-                    }
-                }
-                ToolResult::Error(error) => {
-                    lines.push(separator_line(wrap_width, theme.style(Component::DimText)));
-                    lines.push(Line::from(Span::styled(
-                        tool_error_user_message(error).into_owned(),
-                        theme.style(Component::ErrorText),
-                    )));
-                }
-                _ => {
-                    lines.push(Line::from(Span::styled(
-                        "Unexpected result type",
-                        theme.style(Component::ErrorText),
-                    )));
-                }
-            }
-        }
-
-        lines
+        self.compact(params, result, wrap_width, theme)
     }
 }
 
@@ -171,13 +84,5 @@ fn extract_view_info(result: &Option<ToolResult>) -> String {
         }
         Some(ToolResult::Error(_)) => "error".to_string(),
         _ => "pending".to_string(),
-    }
-}
-
-fn format_line_range(offset: Option<u64>, limit: Option<u64>) -> String {
-    let start = offset.map_or(1, |o| o + 1);
-    match limit {
-        Some(l) if l > 0 => format!("{}-{}", start, start + l - 1),
-        _ => format!("{start}-EOF"),
     }
 }
