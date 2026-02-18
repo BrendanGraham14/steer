@@ -26,7 +26,7 @@ use ast_grep_core::{AstGrep, Pattern};
 use ast_grep_language::{LanguageExt, SupportLang};
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::sinks::UTF8;
-use grep_searcher::{BinaryDetection, SearcherBuilder};
+use grep_searcher::{BinaryDetection, SearcherBuilder, SinkError};
 use ignore::WalkBuilder;
 
 /// Local filesystem workspace
@@ -350,6 +350,10 @@ fn grep_search_internal(
             &matcher,
             path,
             UTF8(|line_num, line| {
+                if cancellation_token.is_cancelled() {
+                    return Err(SinkError::error_message("Operation cancelled".to_string()));
+                }
+
                 let display_path = match path.canonicalize() {
                     Ok(canonical) => canonical.display().to_string(),
                     Err(_) => path.display().to_string(),
@@ -364,13 +368,23 @@ fn grep_search_internal(
             }),
         );
 
-        if let Err(e) = search_result
-            && e.kind() == std::io::ErrorKind::InvalidData
-        {
-            continue;
+        match search_result {
+            Err(err)
+                if cancellation_token.is_cancelled()
+                    && err.to_string().contains("Operation cancelled") =>
+            {
+                all_matches.extend(matches_in_file);
+                return Ok(SearchResult {
+                    matches: all_matches,
+                    total_files_searched: files_searched,
+                    search_completed: false,
+                });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {}
+            Err(_) | Ok(()) => {
+                all_matches.extend(matches_in_file);
+            }
         }
-
-        all_matches.extend(matches_in_file);
     }
 
     if !all_matches.is_empty() {

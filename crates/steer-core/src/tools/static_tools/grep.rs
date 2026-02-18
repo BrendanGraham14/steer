@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use std::time::Duration;
+use tokio::time::timeout;
 
 use super::workspace_op_error;
 use crate::tools::capability::Capabilities;
@@ -30,6 +32,8 @@ impl StaticTool for GrepTool {
         params: Self::Params,
         ctx: &StaticToolContext,
     ) -> Result<Self::Output, StaticToolError<GrepError>> {
+        const GREP_TIMEOUT: Duration = Duration::from_secs(30);
+
         let request = GrepRequest {
             pattern: params.pattern,
             include: params.include,
@@ -37,12 +41,16 @@ impl StaticTool for GrepTool {
         };
         let op_ctx =
             WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
-        let result = ctx
-            .services
-            .workspace
-            .grep(request, &op_ctx)
-            .await
-            .map_err(|e| StaticToolError::execution(GrepError::Workspace(workspace_op_error(e))))?;
-        Ok(GrepResult(result))
+
+        tokio::select! {
+            () = ctx.cancellation_token.cancelled() => Err(StaticToolError::Cancelled),
+            result = timeout(GREP_TIMEOUT, ctx.services.workspace.grep(request, &op_ctx)) => {
+                match result {
+                    Ok(Ok(search_result)) => Ok(GrepResult(search_result)),
+                    Ok(Err(error)) => Err(StaticToolError::execution(GrepError::Workspace(workspace_op_error(error)))),
+                    Err(_) => Err(StaticToolError::Timeout),
+                }
+            }
+        }
     }
 }

@@ -5,6 +5,7 @@
 
 use crate::notifications::{NotificationEvent, NotificationManager, NotificationManagerHandle};
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
+use crate::tui::model::ChatItemData;
 use async_trait::async_trait;
 use steer_grpc::client_api::ClientEvent;
 
@@ -85,6 +86,25 @@ impl EventProcessor for ProcessingStateProcessor {
                 *ctx.current_tool_approval = None;
                 ctx.in_flight_operations.remove(&op_id);
 
+                // Tool completion events can be lost under subscription lag; scrub orphaned
+                // pending tool UI state when the operation itself is cancelled.
+                let pending_tool_ids: Vec<String> = ctx
+                    .chat_store
+                    .iter()
+                    .filter_map(|item| match &item.data {
+                        ChatItemData::PendingToolCall { tool_call, .. } => {
+                            Some(tool_call.id.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                for tool_id in pending_tool_ids {
+                    ctx.chat_store.remove_pending_tool(&tool_id);
+                    let _ = ctx
+                        .tool_registry
+                        .fail_execution(&tool_id, "Operation cancelled".to_string());
+                }
+
                 if let Some(item) = popped_queued_item {
                     let content = match item.kind {
                         steer_grpc::client_api::QueuedWorkKind::DirectBash => {
@@ -130,6 +150,7 @@ impl Default for ProcessingStateProcessor {
 mod tests {
     use super::*;
     use crate::tui::events::processor::{PendingToolApproval, ProcessingContext};
+    use crate::tui::model::{ChatItem, ChatItemData, generate_row_id};
     use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
     use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
     use steer_grpc::AgentClient;
@@ -244,6 +265,7 @@ mod tests {
 
         assert!(matches!(result, ProcessingResult::Handled));
         assert_eq!(processing_ctx.input_panel_state.content(), "queued draft");
+        assert!(!processing_ctx.chat_store.has_pending_tools());
     }
 
     #[tokio::test]
@@ -300,5 +322,75 @@ mod tests {
             .await;
 
         assert_eq!(processing_ctx.input_panel_state.content(), "!ls -la");
+    }
+
+    #[tokio::test]
+    async fn operation_cancelled_clears_stale_pending_tool_rows() {
+        let mut processor = ProcessingStateProcessor::default();
+        let mut ctx = create_test_context().await;
+
+        let op_id = OpId::new();
+        ctx.in_flight_operations.insert(op_id);
+
+        let tool_call = steer_grpc::client_api::ToolCall {
+            id: "tool_stale_1".to_string(),
+            name: "grep".to_string(),
+            parameters: serde_json::json!({"pattern": "needle"}),
+        };
+        ctx.tool_registry.register_call(tool_call.clone());
+        let _ = ctx.tool_registry.start_execution(&tool_call.id);
+
+        ctx.chat_store.add_pending_tool(ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::PendingToolCall {
+                id: generate_row_id(),
+                tool_call,
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        });
+
+        let notification_manager = std::sync::Arc::new(NotificationManager::new(
+            &steer_grpc::client_api::Preferences::default(),
+        ));
+
+        let mut processing_ctx = ProcessingContext {
+            chat_store: &mut ctx.chat_store,
+            chat_list_state: &mut ctx.chat_list_state,
+            tool_registry: &mut ctx.tool_registry,
+            client: &ctx.client,
+            notification_manager: &notification_manager,
+            input_panel_state: &mut ctx.input_panel_state,
+            is_processing: &mut ctx.is_processing,
+            progress_message: &mut ctx.progress_message,
+            spinner_state: &mut ctx.spinner_state,
+            current_tool_approval: &mut ctx.current_tool_approval,
+            current_model: &mut ctx.current_model,
+            current_agent_label: &mut ctx.current_agent_label,
+            messages_updated: &mut ctx.messages_updated,
+            in_flight_operations: &mut ctx.in_flight_operations,
+            queued_head: &mut ctx.queued_head,
+            queued_count: &mut ctx.queued_count,
+            llm_usage: &mut ctx.llm_usage,
+        };
+
+        let result = processor
+            .process(
+                ClientEvent::OperationCancelled {
+                    op_id,
+                    pending_tool_calls: 1,
+                    popped_queued_item: None,
+                },
+                &mut processing_ctx,
+            )
+            .await;
+
+        assert!(matches!(result, ProcessingResult::Handled));
+        assert!(!processing_ctx.chat_store.has_pending_tools());
+        assert!(
+            processing_ctx
+                .tool_registry
+                .completed_calls()
+                .contains_key("tool_stale_1")
+        );
     }
 }
