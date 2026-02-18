@@ -49,6 +49,9 @@ pub enum DispatchAgentTarget {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
 pub struct DispatchAgentParams {
     /// Instructions for the sub-agent.
+    /// Include relevant context you already gathered (paths, findings,
+    /// constraints, and acceptance criteria) so the sub-agent does not need to
+    /// re-gather it.
     /// Do not prepend synthetic path headers like `Repo: ...` or `CWD: ...`.
     /// The sub-agent receives its working-directory context automatically.
     pub prompt: String,

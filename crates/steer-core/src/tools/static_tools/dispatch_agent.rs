@@ -44,42 +44,60 @@ fn dispatch_agent_description() -> String {
     };
 
     format!(
-        r#"Launch a new agent to help with a focused task. When you are searching for a keyword or file and are not confident that you will find the right match on the first try, use the Agent tool to perform the search for you.
+        r#"Launch a new agent to help with a focused task. Delegate work to sub-agents when you want to keep your own context window focused, or when tasks can run in parallel.
 
-    When to use the Agent tool:
-    - If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", the Agent tool is strongly recommended
+When to use this tool:
+- If you need to edit files for a focused task (a feature, bug fix, or refactor), dispatch a sub-agent with the task and all relevant context so your own context stays clean
+- If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", dispatch a sub-agent to search
+- If a task can be split into independent subtasks, dispatch multiple sub-agents concurrently
 
-    When NOT to use the Agent tool:
-    - If you want to read a specific file path, use the {} or {} tool instead of the Agent tool, to find the match more quickly
-    - If you are searching for a specific class definition like "class Foo", use the {} tool instead, to find the match more quickly
-    - If you are searching for code within a specific file or set of 2-3 files, use the {} tool instead, to find the match more quickly
+When NOT to use this tool:
+- If you want to read a specific file path, use the {} or {} tool instead, to find the match more quickly
+- If you are searching for a specific class definition like "class Foo", use the {} tool instead, to find the match more quickly
+- If you are searching for code within a specific file or set of 2-3 files, use the {} tool instead, to find the match more quickly
+- Don't dispatch a sub-agent for a one-line fix you can make directly
 
-    Usage notes:
-    1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
-    2. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-    3. Each invocation returns a session_id. Pass it back via `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue the conversation with the same agent.
-    4. When `target.session` is `resume`, the session_id must refer to a child of the current session. The `agent` and `workspace` options are ignored and the existing session config is used.
-    5. The agent's outputs should generally be trusted
-    6. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
-    7. IMPORTANT: New workspaces are preserved (not auto-deleted). Clean them up manually if needed.
-    8. If the agent spec omits a model, the parent session's default model is used.
-    9. IMPORTANT: Do NOT include `Repo: <path>`, `CWD: <path>`, or similar path headers in your prompt. The sub-agent already receives its working directory via system instructions.
-    10. IMPORTANT: If `target.session` is `new` and `workspace.location` is `new`, the sub-agent runs in the newly created workspace path, which may differ from the caller's current directory.
+How to write an effective sub-agent prompt:
+1. Start with the goal and expected output format
+2. Include concrete context you've already gathered (file paths, symbol names, error messages, constraints, and acceptance criteria) so the sub-agent does not need to re-gather it
+3. Name exactly which files or directories to inspect first when known
+4. State whether the sub-agent should only explore or is expected to edit/build/test
+5. Do NOT include synthetic path headers like `Repo: <path>` or `CWD: <path>`; working-directory context is injected automatically
+
+Example of a strong sub-agent prompt:
+  "The login endpoint at `src/api/auth.rs:142` returns 401 for valid tokens because `validate_token` checks expiry with `>` instead of `>=`. Change the comparison to `>=` and verify the existing test in `tests/auth_test.rs` still passes."
+
+Compare with a weak prompt that forces the sub-agent to rediscover context:
+  "Fix the bug in auth"
+
+Usage:
+1. Launch multiple agents concurrently whenever possible; use a single message with multiple tool uses
+2. The result returned by the agent is not visible to the user. Summarize it for the user in a text message.
+3. Use `location: "new"` when dispatching multiple sub-agents that may edit overlapping files, to avoid conflicts.
+4. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
+
+Reference:
+- Each invocation returns a session_id. Pass it back via `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue the conversation with the same agent.
+- When `target.session` is `resume`, the session_id must refer to a child of the current session. The `agent` and `workspace` options are ignored and the existing session config is used.
+- The agent's outputs should generally be trusted.
+- New workspaces are preserved (not auto-deleted). Clean them up manually if needed.
+- If the agent spec omits a model, the parent session's default model is used.
+- If `target.session` is `new` and `workspace.location` is `new`, the sub-agent runs in the newly created workspace path, which may differ from the caller's current directory.
 
 Workspace options:
 - `workspace: {{ "location": "current" }}` to run in the current workspace
 - `workspace: {{ "location": "new", "name": "..." }}` to run in a fresh workspace (jj workspace or git worktree)
 - `location` is a logical workspace selector, not a filesystem path
 
-    Session options:
-    - `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue a prior dispatch_agent session
+Session options:
+- `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue a prior dispatch_agent session
 
-    New session options:
-    - `target: {{ "session": "new", "workspace": {{ "location": "current" }} }}` to run in the current workspace
-    - `target: {{ "session": "new", "workspace": {{ "location": "new", "name": "..." }} }}` to run in a new workspace
-    - `target: {{ "session": "new", "workspace": {{ "location": "current" }}, "agent": "<id>" }}` selects an agent spec (defaults to "{default_agent}")
+New session options:
+- `target: {{ "session": "new", "workspace": {{ "location": "current" }} }}` to run in the current workspace
+- `target: {{ "session": "new", "workspace": {{ "location": "new", "name": "..." }} }}` to run in a new workspace
+- `target: {{ "session": "new", "workspace": {{ "location": "current" }}, "agent": "<id>" }}` selects an agent spec (defaults to "{default_agent}")
 
-    {agent_specs_block}"#,
+{agent_specs_block}"#,
         VIEW_TOOL_NAME,
         LS_TOOL_NAME,
         GREP_TOOL_NAME,
@@ -97,7 +115,8 @@ impl StaticTool for DispatchAgentTool {
     type Output = AgentResult;
     type Spec = DispatchAgentToolSpec;
 
-    const DESCRIPTION: &'static str = "Launch a sub-agent to search for files or code";
+    const DESCRIPTION: &'static str =
+        "Launch a sub-agent with full context for focused search, implementation, or parallel subtasks";
     const REQUIRES_APPROVAL: bool = false;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::AGENT;
 
