@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/BrendanGraham14/steer/compare/steer-grpc-v0.13.1...steer-grpc-v0.14.0) - 2026-02-18
+
+### Added
+
+- *(core)* migrate to max_output_tokens, enforce catalog output limits, and reserve output budget
+
+### Other
+
+- *(approvals)* [**breaking**] remove default_behavior override
+
 ## [0.13.1](https://github.com/BrendanGraham14/steer/compare/steer-grpc-v0.12.0...steer-grpc-v0.13.1) - 2026-02-17
 
 ### Fixed

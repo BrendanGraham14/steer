@@ -545,9 +545,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.19.1"
+version = "3.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
+checksum = "5c6f81257d10a0f602a294ae4182251151ff97dbb504ef9afcdda4a64b24d9b4"
 
 [[package]]
 name = "bytecount"
@@ -1566,7 +1566,7 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
- "zlib-rs 0.6.0",
+ "zlib-rs 0.6.2",
 ]
 
 [[package]]
@@ -6611,7 +6611,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "steer"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6675,7 +6675,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-anthropic"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6692,7 +6692,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-openai"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6713,7 +6713,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-plugin"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "keyring",
@@ -6724,7 +6724,7 @@ dependencies = [
 
 [[package]]
 name = "steer-core"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -6803,7 +6803,7 @@ dependencies = [
 
 [[package]]
 name = "steer-grpc"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6831,7 +6831,7 @@ dependencies = [
 
 [[package]]
 name = "steer-proto"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "prost 0.13.5",
  "prost-build",
@@ -6843,7 +6843,7 @@ dependencies = [
 
 [[package]]
 name = "steer-remote-workspace"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "clap",
  "gethostname 0.5.0",
@@ -6863,7 +6863,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tools"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "schemars",
  "serde",
@@ -6875,7 +6875,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tui"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "arboard",
  "async-trait",
@@ -6928,7 +6928,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -6963,7 +6963,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace-client"
-version = "0.13.1"
+version = "0.14.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -9133,9 +9133,9 @@ checksum = "40990edd51aae2c2b6907af74ffb635029d5788228222c4bb811e9351c0caad3"
 
 [[package]]
 name = "zlib-rs"
-version = "0.6.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7948af682ccbc3342b6e9420e8c51c1fe5d7bf7756002b4a3c6cabfe96a7e3c"
+checksum = "c745c48e1007337ed136dc99df34128b9faa6ed542d80a1c673cf55a6d7236c8"
 
 [[package]]
 name = "zmij"

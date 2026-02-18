@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/BrendanGraham14/steer/compare/steer-tools-v0.13.1...steer-tools-v0.14.0) - 2026-02-18
+
+### Added
+
+- *(fetch)* relax URL policy and harden fetch summarization
+
 ## [0.11.0](https://github.com/BrendanGraham14/steer/compare/steer-tools-v0.10.1...steer-tools-v0.11.0) - 2026-02-14
 
 ### Other
