@@ -164,7 +164,6 @@ impl HeadlessCommand {
         };
 
         config.policy_overrides.approval_policy = ToolApprovalPolicyOverrides {
-            default_behavior: None,
             preapproved: auto_approve_rules,
         };
         config

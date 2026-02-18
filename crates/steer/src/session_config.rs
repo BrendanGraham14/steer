@@ -7,7 +7,7 @@ use steer_core::config::model::ModelId;
 use steer_core::session::{
     ApprovalRulesOverrides, BackendConfig, RemoteAuth, SessionConfig, SessionPolicyOverrides,
     SessionToolConfig, ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolRuleOverrides,
-    ToolVisibility, UnapprovedBehavior, WorkspaceConfig,
+    ToolVisibility, WorkspaceConfig,
 };
 use thiserror::Error;
 use tokio::fs;
@@ -86,8 +86,8 @@ pub struct PartialToolConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PartialApprovalConfig {
-    pub default_behavior: Option<UnapprovedBehavior>,
     #[serde(default)]
     pub tools: HashSet<String>,
     pub bash: Option<PartialBashApproval>,
@@ -275,7 +275,6 @@ impl SessionConfigLoader {
                 }
 
                 policy_overrides.approval_policy = ToolApprovalPolicyOverrides {
-                    default_behavior: approvals.default_behavior,
                     preapproved: ApprovalRulesOverrides {
                         tools: approvals.tools,
                         per_tool,
@@ -409,8 +408,7 @@ impl SessionConfigLoader {
 mod tests {
     use super::*;
     use steer_core::config::provider::ProviderId;
-    use steer_core::session::ToolFilter;
-    use steer_core::session::ToolRuleOverrides;
+    use steer_core::session::{ToolFilter, ToolRuleOverrides, UnapprovedBehavior};
 
     fn test_model() -> ModelId {
         ModelId::new(ProviderId("test-provider".to_string()), "test-model")
@@ -621,7 +619,7 @@ visibility = "invalid_value"
     }
 
     #[tokio::test]
-    async fn test_invalid_default_behavior_config() {
+    async fn test_invalid_approvals_config_rejects_unknown_fields() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
@@ -640,7 +638,7 @@ default_behavior = "invalid_value"
 
         assert!(
             result.is_err(),
-            "Should fail to parse invalid default_behavior"
+            "Should fail to parse unknown approvals field"
         );
     }
 
@@ -704,9 +702,6 @@ backends = [
 [tool_config]
 visibility = "all"
 
-[tool_config.approvals]
-default_behavior = "prompt"
-
 [metadata]
 key1 = "original1"
 key2 = "original2"
@@ -734,10 +729,13 @@ key2 = "original2"
             config.policy_overrides.tool_visibility,
             Some(ToolVisibility::All)
         ));
-        assert!(matches!(
-            config.policy_overrides.approval_policy.default_behavior,
-            Some(UnapprovedBehavior::Prompt)
-        ));
+        assert!(
+            config
+                .policy_overrides
+                .approval_policy
+                .preapproved
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -930,9 +928,6 @@ patterns = []
 [tool_config]
 visibility = "all"
 
-[tool_config.approvals]
-default_behavior = "prompt"
-
 [tool_config.approvals.bash]
 patterns = ["ls -la", "pwd"]
 "#
@@ -945,10 +940,6 @@ patterns = ["ls -la", "pwd"]
         assert!(matches!(
             config.policy_overrides.tool_visibility,
             Some(ToolVisibility::All)
-        ));
-        assert!(matches!(
-            config.policy_overrides.approval_policy.default_behavior,
-            Some(UnapprovedBehavior::Prompt)
         ));
 
         let bash_rule = config
@@ -1071,7 +1062,6 @@ visibility = "all"
 backends = []
 
 [tool_config.approvals]
-default_behavior = "prompt"
 tools = ["grep", "ls", "view"]
 
 [tool_config.approvals.bash]
@@ -1103,10 +1093,6 @@ project = "test-project"
         );
 
         let policy = &config.policy_overrides.approval_policy;
-        assert!(matches!(
-            policy.default_behavior,
-            Some(UnapprovedBehavior::Prompt)
-        ));
         assert_eq!(policy.preapproved.tools.len(), 3);
         assert!(policy.preapproved.tools.contains("grep"));
         assert!(policy.preapproved.tools.contains("ls"));

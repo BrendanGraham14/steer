@@ -129,7 +129,7 @@ fn normalize_fetch_url(raw_url: &str) -> Result<url::Url, FetchError> {
         "http" => {
             parsed
                 .set_scheme("https")
-                .map_err(|_| FetchError::UnsupportedScheme {
+                .map_err(|()| FetchError::UnsupportedScheme {
                     scheme: "http".to_string(),
                 })?;
             if parsed.port() == Some(80) {

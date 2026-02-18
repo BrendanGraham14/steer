@@ -5,7 +5,6 @@
 visibility = "all"
 
 [tool_config.approvals]
-default_behavior = "prompt"
 tools = []
 
 [tool_config.approvals.bash]

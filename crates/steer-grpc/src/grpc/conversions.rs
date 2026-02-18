@@ -507,11 +507,6 @@ pub(crate) fn tool_approval_policy_overrides_to_proto(
     overrides: &ToolApprovalPolicyOverrides,
 ) -> proto::ToolApprovalPolicyOverrides {
     proto::ToolApprovalPolicyOverrides {
-        default_behavior: overrides.default_behavior.map(|behavior| match behavior {
-            UnapprovedBehavior::Prompt => proto::UnapprovedBehavior::Prompt.into(),
-            UnapprovedBehavior::Deny => proto::UnapprovedBehavior::Deny.into(),
-            UnapprovedBehavior::Allow => proto::UnapprovedBehavior::Allow.into(),
-        }),
         preapproved: if overrides.preapproved.is_empty() {
             None
         } else {
@@ -1431,23 +1426,11 @@ pub(crate) fn proto_to_tool_approval_policy_overrides(
 ) -> ToolApprovalPolicyOverrides {
     match proto_policy {
         Some(policy) => {
-            let default_behavior = policy
-                .default_behavior
-                .and_then(|value| proto::UnapprovedBehavior::try_from(value).ok())
-                .and_then(|behavior| match behavior {
-                    proto::UnapprovedBehavior::Prompt => Some(UnapprovedBehavior::Prompt),
-                    proto::UnapprovedBehavior::Deny => Some(UnapprovedBehavior::Deny),
-                    proto::UnapprovedBehavior::Allow => Some(UnapprovedBehavior::Allow),
-                    proto::UnapprovedBehavior::Unspecified => None,
-                });
             let preapproved = policy.preapproved.map_or_else(
                 ApprovalRulesOverrides::empty,
                 proto_to_approval_rules_overrides,
             );
-            ToolApprovalPolicyOverrides {
-                default_behavior,
-                preapproved,
-            }
+            ToolApprovalPolicyOverrides { preapproved }
         }
         None => ToolApprovalPolicyOverrides::empty(),
     }

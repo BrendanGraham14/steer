@@ -329,8 +329,6 @@ impl SessionPolicyOverrides {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ToolApprovalPolicyOverrides {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_behavior: Option<UnapprovedBehavior>,
     #[serde(default = "ApprovalRulesOverrides::empty")]
     pub preapproved: ApprovalRulesOverrides,
 }
@@ -338,13 +336,12 @@ pub struct ToolApprovalPolicyOverrides {
 impl ToolApprovalPolicyOverrides {
     pub fn empty() -> Self {
         Self {
-            default_behavior: None,
             preapproved: ApprovalRulesOverrides::empty(),
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.default_behavior.is_none() && self.preapproved.is_empty()
+        self.preapproved.is_empty()
     }
 }
 
@@ -518,10 +515,6 @@ impl ToolApprovalPolicy {
 impl ToolApprovalPolicyOverrides {
     pub fn apply_to(&self, base: &ToolApprovalPolicy) -> ToolApprovalPolicy {
         let mut merged = base.clone();
-
-        if let Some(default_behavior) = self.default_behavior {
-            merged.default_behavior = default_behavior;
-        }
 
         if !self.preapproved.tools.is_empty() {
             merged
@@ -1056,7 +1049,6 @@ mod tests {
         };
 
         let overrides = ToolApprovalPolicyOverrides {
-            default_behavior: Some(UnapprovedBehavior::Deny),
             preapproved: ApprovalRulesOverrides {
                 tools: ["write_file"].iter().map(|s| (*s).to_string()).collect(),
                 per_tool: [
@@ -1080,7 +1072,7 @@ mod tests {
 
         let merged = overrides.apply_to(&base_policy);
 
-        assert_eq!(merged.default_behavior, UnapprovedBehavior::Deny);
+        assert_eq!(merged.default_behavior, UnapprovedBehavior::Prompt);
         assert!(merged.preapproved.tools.contains("read_file"));
         assert!(merged.preapproved.tools.contains("write_file"));
 

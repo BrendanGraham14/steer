@@ -2303,8 +2303,8 @@ mod tests {
     use crate::config::model::builtin;
     use crate::primary_agents::resolve_effective_config;
     use crate::session::state::{
-        ApprovalRules, ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides,
-        ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolVisibility, UnapprovedBehavior,
+        ApprovalRules, SessionConfig, SessionPolicyOverrides, ToolApprovalPolicy, ToolVisibility,
+        UnapprovedBehavior,
     };
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
     use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
@@ -2428,43 +2428,6 @@ mod tests {
         assert_eq!(
             updated.tool_config.approval_policy.default_behavior,
             UnapprovedBehavior::Allow
-        );
-    }
-
-    #[test]
-    fn test_switch_primary_agent_preserves_policy_overrides() {
-        let mut state = test_state();
-        let session_id = state.session_id;
-
-        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
-        config.primary_agent_id = Some("normal".to_string());
-        config.policy_overrides = SessionPolicyOverrides {
-            default_model: None,
-            tool_visibility: None,
-            approval_policy: ToolApprovalPolicyOverrides {
-                default_behavior: Some(UnapprovedBehavior::Deny),
-                preapproved: ApprovalRulesOverrides::empty(),
-            },
-        };
-        let config = resolve_effective_config(&config);
-        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
-
-        let _ = reduce(
-            &mut state,
-            Action::SwitchPrimaryAgent {
-                session_id,
-                agent_id: "yolo".to_string(),
-            },
-        );
-
-        let updated = state.session_config.as_ref().expect("config");
-        assert_eq!(
-            updated.tool_config.approval_policy.default_behavior,
-            UnapprovedBehavior::Deny
-        );
-        assert_eq!(
-            updated.policy_overrides.approval_policy.default_behavior,
-            Some(UnapprovedBehavior::Deny)
         );
     }
 

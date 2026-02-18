@@ -12,8 +12,7 @@ use crate::model_registry::ModelRegistry;
 use crate::runners::OneShotRunner;
 use crate::session::state::{
     ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides, SessionToolConfig,
-    ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolVisibility, UnapprovedBehavior,
-    WorkspaceConfig,
+    ToolApprovalPolicy, ToolApprovalPolicyOverrides, ToolVisibility, WorkspaceConfig,
 };
 use crate::tools::{ToolExecutor, ToolSystemBuilder};
 use crate::workspace::{RepoManager, Workspace, WorkspaceManager};
@@ -98,7 +97,6 @@ impl AgentSpawner for DefaultAgentSpawner {
             default_model: Some(config.model.clone()),
             tool_visibility: Some(ToolVisibility::Whitelist(visibility_tools.clone())),
             approval_policy: ToolApprovalPolicyOverrides {
-                default_behavior: Some(UnapprovedBehavior::Prompt),
                 preapproved: ApprovalRulesOverrides {
                     tools: visibility_tools,
                     per_tool: HashMap::new(),

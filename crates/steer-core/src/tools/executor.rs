@@ -182,14 +182,7 @@ impl ToolExecutor {
         {
             debug!(target: "tool_executor", "Executing static tool: {}", tool_name);
             return self
-                .execute_static_tool(
-                    tool,
-                    tool_call,
-                    session_id,
-                    invoking_model,
-                    services,
-                    token,
-                )
+                .execute_static_tool(tool, tool_call, session_id, invoking_model, services, token)
                 .await;
         }
 

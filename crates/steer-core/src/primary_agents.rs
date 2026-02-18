@@ -303,7 +303,6 @@ mod tests {
             default_model: Some(builtin::claude_haiku_4_5()),
             tool_visibility: Some(ToolVisibility::ReadOnly),
             approval_policy: ToolApprovalPolicyOverrides {
-                default_behavior: Some(UnapprovedBehavior::Allow),
                 preapproved: ApprovalRulesOverrides {
                     tools: ["custom_tool".to_string()].into_iter().collect(),
                     per_tool: [(
@@ -323,7 +322,7 @@ mod tests {
         assert_eq!(updated.tool_config.visibility, ToolVisibility::ReadOnly);
         assert_eq!(
             updated.tool_config.approval_policy.default_behavior,
-            UnapprovedBehavior::Allow
+            UnapprovedBehavior::Prompt
         );
         assert!(
             updated

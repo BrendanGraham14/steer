@@ -222,16 +222,6 @@
             }
           ]
         },
-        "default_behavior": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/UnapprovedBehavior"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "dispatch_agent": {
           "anyOf": [
             {
@@ -250,7 +240,8 @@
           },
           "uniqueItems": true
         }
-      }
+      },
+      "additionalProperties": false
     },
     "PartialAutoCompactionConfig": {
       "description": "Partial auto-compaction configuration (all fields optional for TOML merging).",
@@ -515,14 +506,6 @@
             "blacklist"
           ]
         }
-      ]
-    },
-    "UnapprovedBehavior": {
-      "type": "string",
-      "enum": [
-        "prompt",
-        "deny",
-        "allow"
       ]
     }
   }

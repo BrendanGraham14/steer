@@ -541,7 +541,7 @@ mod tests {
     use crate::model_registry::ModelRegistry;
     use crate::session::state::{
         ApprovalRulesOverrides, SessionConfig, SessionPolicyOverrides, ToolApprovalPolicyOverrides,
-        ToolFilter, ToolVisibility, UnapprovedBehavior,
+        ToolFilter, ToolVisibility,
     };
     use crate::tools::McpTransport;
     use crate::tools::services::{AgentSpawner, SubAgentError, SubAgentResult, ToolServices};
@@ -1279,7 +1279,6 @@ mod tests {
                 VIEW_TOOL_NAME.to_string()
             ]))),
             approval_policy: ToolApprovalPolicyOverrides {
-                default_behavior: Some(UnapprovedBehavior::Deny),
                 preapproved: ApprovalRulesOverrides {
                     tools: HashSet::from([VIEW_TOOL_NAME.to_string()]),
                     per_tool: HashMap::new(),

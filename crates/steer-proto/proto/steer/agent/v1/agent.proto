@@ -1065,8 +1065,7 @@ message ApprovalRulesOverrides {
 }
 
 message ToolApprovalPolicyOverrides {
-  optional UnapprovedBehavior default_behavior = 1;
-  optional ApprovalRulesOverrides preapproved = 2;
+  optional ApprovalRulesOverrides preapproved = 1;
 }
 
 message SessionPolicyOverrides {

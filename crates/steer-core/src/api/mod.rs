@@ -1141,7 +1141,11 @@ mod tests {
         let provider_id = ProviderId("stream-without-completion".to_string());
         let model_id = ModelId::new(provider_id.clone(), "stub-model");
 
-        insert_provider(&client, provider_id, Arc::new(StreamWithoutCompletionProvider));
+        insert_provider(
+            &client,
+            provider_id,
+            Arc::new(StreamWithoutCompletionProvider),
+        );
 
         let err = client
             .complete(
