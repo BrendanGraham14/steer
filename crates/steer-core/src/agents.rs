@@ -157,7 +157,7 @@ fn default_agent_specs() -> Vec<AgentSpec> {
         AgentSpec {
             id: "explore".to_string(),
             name: "Explore agent".to_string(),
-            description: "Read-only search and inspection".to_string(),
+            description: "Use for code reviews, exploration, and any other read-only task".to_string(),
             tools: explore_tools,
             mcp_access: McpAccessPolicy::None,
             model: None,
@@ -165,7 +165,7 @@ fn default_agent_specs() -> Vec<AgentSpec> {
         AgentSpec {
             id: "build".to_string(),
             name: "Build agent".to_string(),
-            description: "Read/write changes plus build commands".to_string(),
+            description: "Use only when the sub-agent needs to modify files (includes build commands)".to_string(),
             tools: build_tools,
             mcp_access: McpAccessPolicy::All,
             model: None,
