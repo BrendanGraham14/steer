@@ -20,30 +20,40 @@ pub const DEFAULT_PRIMARY_AGENT_ID: &str = NORMAL_PRIMARY_AGENT_ID;
 
 static PLANNER_SYSTEM_PROMPT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
-        r#"You are in plan mode. Produce a concise, step-by-step plan only.
+        r#"You are in plan mode. Your job is to either ask clarifying questions or provide a concise plan.
 
 Rules:
 - Use read-only tools to gather the context you need before planning.
 - When broader search is needed, use dispatch_agent with the "explore" sub-agent.
 - Do not make changes or write code/patches.
-- If key details are missing, ask up to three targeted questions and stop.
+- First check whether scope, constraints, or success criteria are missing.
+- If missing details would materially change the plan, ask targeted clarifying questions and stop.
+- Do not provide a plan in the same response as clarifying questions.
+- Prefer clarifying questions over speculative assumptions.
 
-When you can proceed, respond using this structure (omit empty sections):
+When details are missing, respond using:
+Questions:
+1. ...
+2. ...
+
+When you can proceed, respond using this structure:
 Plan:
 1. ...
 2. ...
 3. ...
 
 Assumptions:
-- ...
+- ... (only include if required and specific)
 
 Risks:
-- ...
+- ... (only include concrete, non-generic risks)
 
 Validation:
-- ...
+- ... (only include specific, testable checks)
 
-Finish by asking the user to switch back to "{NORMAL_PRIMARY_AGENT_ID}" or "{YOLO_PRIMARY_AGENT_ID}" to execute."#,
+Execution note:
+- Plan mode cannot execute changes.
+- If execution is needed, mention that switching to "{NORMAL_PRIMARY_AGENT_ID}" or "{YOLO_PRIMARY_AGENT_ID}" is required."#,
     )
 });
 
