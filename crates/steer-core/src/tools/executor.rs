@@ -1,5 +1,6 @@
 use crate::app::domain::types::{SessionId, ToolCallId};
 use crate::config::LlmConfigProvider;
+use crate::config::model::ModelId;
 use crate::tools::error::Result;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -160,15 +161,16 @@ impl ToolExecutor {
         session_id: SessionId,
         token: CancellationToken,
     ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
-        self.execute_tool_with_session_resolver(tool_call, session_id, token, None)
+        self.execute_tool_with_session_resolver(tool_call, session_id, None, token, None)
             .await
     }
 
-    #[instrument(skip(self, tool_call, session_id, token, session_resolver), fields(tool.name = %tool_call.name, tool.id = %tool_call.id))]
+    #[instrument(skip(self, tool_call, session_id, invoking_model, token, session_resolver), fields(tool.name = %tool_call.name, tool.id = %tool_call.id))]
     pub async fn execute_tool_with_session_resolver(
         &self,
         tool_call: &ToolCall,
         session_id: SessionId,
+        invoking_model: Option<ModelId>,
         token: CancellationToken,
         session_resolver: Option<&dyn BackendResolver>,
     ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
@@ -180,7 +182,14 @@ impl ToolExecutor {
         {
             debug!(target: "tool_executor", "Executing static tool: {}", tool_name);
             return self
-                .execute_static_tool(tool, tool_call, session_id, services, token)
+                .execute_static_tool(
+                    tool,
+                    tool_call,
+                    session_id,
+                    invoking_model,
+                    services,
+                    token,
+                )
                 .await;
         }
 
@@ -273,12 +282,14 @@ impl ToolExecutor {
         tool: &dyn super::static_tool::StaticToolErased,
         tool_call: &ToolCall,
         session_id: SessionId,
+        invoking_model: Option<ModelId>,
         services: &Arc<ToolServices>,
         token: CancellationToken,
     ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId(tool_call.id.clone()),
             session_id,
+            invoking_model,
             cancellation_token: token,
             services: services.clone(),
         };
@@ -328,7 +339,7 @@ impl ToolExecutor {
                 tool_id
             );
             return self
-                .execute_static_tool(tool, tool_call, SessionId::new(), services, token)
+                .execute_static_tool(tool, tool_call, SessionId::new(), None, services, token)
                 .await;
         }
 

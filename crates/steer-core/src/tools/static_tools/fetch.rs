@@ -5,7 +5,6 @@ use futures_util::StreamExt;
 use url::Host;
 
 use crate::app::conversation::{Message, MessageData, UserContent};
-use crate::config::model::builtin::claude_haiku_4_5 as summarization_model;
 use crate::tools::capability::Capabilities;
 use crate::tools::services::ModelCallError;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
@@ -14,7 +13,7 @@ use steer_tools::tools::fetch::{FetchError, FetchParams, FetchToolSpec};
 
 const DESCRIPTION: &str = r#"- Fetches content from a specified URL and processes it using an AI model
 - Takes a URL and a prompt as input
-- Fetches the URL content and passes it to a small, fast model for analysis
+- Fetches the URL content and passes it to the same model that invoked the tool
 - Returns the model's response about the content
 - Use this tool when you need to retrieve and analyze web content
 
@@ -55,7 +54,8 @@ impl StaticTool for FetchTool {
             .model_caller()
             .ok_or_else(|| StaticToolError::missing_capability("model_caller"))?;
 
-        let normalized_url = normalize_fetch_url(&params.url).map_err(StaticToolError::execution)?;
+        let normalized_url =
+            normalize_fetch_url(&params.url).map_err(StaticToolError::execution)?;
         let content = fetch_url(&normalized_url, &ctx.cancellation_token).await?;
         let summary_input = truncate_for_summary(&content);
 
@@ -86,7 +86,11 @@ Provide a concise response based only on relevant facts from the content above.
 
         let response = model_caller
             .call(
-                &summarization_model(),
+                ctx.invoking_model.as_ref().ok_or_else(|| {
+                    StaticToolError::execution(FetchError::ModelCallFailed {
+                        message: "missing invoking model for fetch summarization".to_string(),
+                    })
+                })?,
                 messages,
                 None,
                 ctx.cancellation_token.clone(),
@@ -150,9 +154,7 @@ fn truncate_for_summary(content: &str) -> String {
     }
 
     let truncated: String = content.chars().take(MAX_SUMMARY_CHARS).collect();
-    format!(
-        "{truncated}\n\n[... content truncated after {MAX_SUMMARY_CHARS} characters ...]"
-    )
+    format!("{truncated}\n\n[... content truncated after {MAX_SUMMARY_CHARS} characters ...]")
 }
 
 async fn fetch_url(
@@ -252,5 +254,4 @@ mod tests {
         let error = normalize_fetch_url("https://").expect_err("expected missing host");
         assert!(matches!(error, FetchError::InvalidUrl { .. }));
     }
-
 }

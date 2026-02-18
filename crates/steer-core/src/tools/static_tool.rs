@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::domain::types::{SessionId, ToolCallId};
+use crate::config::model::ModelId;
 use steer_tools::error::ToolExecutionError;
 use steer_tools::result::ToolResult;
 use steer_tools::{ToolSchema, ToolSpec};
@@ -18,6 +19,7 @@ use super::services::ToolServices;
 pub struct StaticToolContext {
     pub tool_call_id: ToolCallId,
     pub session_id: SessionId,
+    pub invoking_model: Option<ModelId>,
     pub cancellation_token: CancellationToken,
     pub services: Arc<ToolServices>,
 }

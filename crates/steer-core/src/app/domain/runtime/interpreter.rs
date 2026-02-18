@@ -160,6 +160,7 @@ impl EffectInterpreter {
     pub async fn execute_tool(
         &self,
         tool_call: ToolCall,
+        invoking_model: Option<ModelId>,
         cancel_token: CancellationToken,
     ) -> Result<ToolResult, ToolError> {
         let resolver = self
@@ -169,7 +170,13 @@ impl EffectInterpreter {
 
         if let Some(session_id) = self.session_id {
             self.tool_executor
-                .execute_tool_with_session_resolver(&tool_call, session_id, cancel_token, resolver)
+                .execute_tool_with_session_resolver(
+                    &tool_call,
+                    session_id,
+                    invoking_model,
+                    cancel_token,
+                    resolver,
+                )
                 .await
         } else {
             self.tool_executor

@@ -433,6 +433,7 @@ impl SessionActor {
                     crate::app::domain::types::ToolCallId::from_string(&tool_call.id);
                 let tool_name = tool_call.name.clone();
                 let tool_parameters = tool_call.parameters.clone();
+                let invoking_model = self.state.operation_models.get(&op_id).cloned();
 
                 let start_action = Action::ToolExecutionStarted {
                     session_id,
@@ -443,7 +444,9 @@ impl SessionActor {
                 let _ = action_tx.send(start_action).await;
 
                 tokio::spawn(async move {
-                    let result = interpreter.execute_tool(tool_call, cancel_token).await;
+                    let result = interpreter
+                        .execute_tool(tool_call, invoking_model, cancel_token)
+                        .await;
 
                     let action = Action::ToolResult {
                         session_id,

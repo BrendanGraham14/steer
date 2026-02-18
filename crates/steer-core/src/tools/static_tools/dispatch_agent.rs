@@ -779,6 +779,7 @@ mod tests {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: SessionId::new(),
+            invoking_model: None,
             cancellation_token: CancellationToken::new(),
             services,
         };
@@ -833,6 +834,7 @@ mod tests {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
+            invoking_model: None,
             cancellation_token: CancellationToken::new(),
             services,
         };
@@ -891,6 +893,7 @@ mod tests {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
+            invoking_model: None,
             cancellation_token: cancel_token.clone(),
             services,
         };
@@ -937,6 +940,7 @@ mod tests {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: SessionId::new(),
+            invoking_model: None,
             cancellation_token: CancellationToken::new(),
             services,
         };
@@ -1041,6 +1045,7 @@ mod tests {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
+            invoking_model: None,
             cancellation_token: CancellationToken::new(),
             services,
         };
@@ -1132,6 +1137,7 @@ mod tests {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
+            invoking_model: None,
             cancellation_token: CancellationToken::new(),
             services,
         };
@@ -1215,6 +1221,7 @@ mod tests {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
+            invoking_model: None,
             cancellation_token: CancellationToken::new(),
             services,
         };
@@ -1302,6 +1309,7 @@ mod tests {
         let ctx = StaticToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
+            invoking_model: None,
             cancellation_token: CancellationToken::new(),
             services,
         };

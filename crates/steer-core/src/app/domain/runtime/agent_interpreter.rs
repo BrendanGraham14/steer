@@ -282,7 +282,11 @@ impl AgentInterpreter {
 
                     let result = self
                         .effect_interpreter
-                        .execute_tool(tool_call.clone(), cancel_token.clone())
+                        .execute_tool(
+                            tool_call.clone(),
+                            Some(agent_config.model.clone()),
+                            cancel_token.clone(),
+                        )
                         .await;
 
                     let message_id = MessageId::new();
