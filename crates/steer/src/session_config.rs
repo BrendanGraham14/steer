@@ -384,6 +384,9 @@ impl SessionConfigLoader {
                     if url.is_empty() {
                         return Err(SessionConfigError::EmptySseUrl);
                     }
+                    tracing::warn!(
+                        "MCP transport type 'sse' is deprecated and no longer supported by rmcp; use type='http' for streamable HTTP endpoints"
+                    );
                 }
                 steer_core::tools::McpTransport::Http { url, .. } => {
                     if url.is_empty() {

@@ -25,10 +25,14 @@ use steer_tools::{
     result::{ExternalResult, ToolResult},
 };
 
+use axum::http::{HeaderName, HeaderValue};
 use rmcp::{
-    model::{CallToolRequestParam, Tool},
+    model::{CallToolRequestParams, RawContent, Tool},
     service::{RoleClient, RunningService, ServiceExt},
-    transport::{SseClientTransport, StreamableHttpClientTransport, TokioChildProcess},
+    transport::{
+        StreamableHttpClientTransport, TokioChildProcess,
+        streamable_http_client::StreamableHttpClientTransportConfig,
+    },
 };
 
 /// MCP transport configuration
@@ -160,39 +164,36 @@ impl McpBackend {
                     }
                 })?
             }
-            McpTransport::Sse { url, headers } => {
-                // Use the dedicated SSE client transport for SSE connections
-                if headers.as_ref().is_some_and(|h| !h.is_empty()) {
-                    info!(
-                        "SSE transport with custom headers requested; headers may not be applied"
-                    );
-                }
-
-                let transport = SseClientTransport::start(url.clone()).await.map_err(|e| {
-                    error!("Failed to start SSE transport: {}", e);
-                    McpError::ConnectionFailed {
-                        server_name: server_name.clone(),
-                        message: format!("Failed to start SSE transport: {e}"),
-                    }
-                })?;
-
-                ().serve(transport).await.map_err(|e| {
-                    error!("Failed to serve MCP over SSE: {}", e);
-                    McpError::ServeFailed {
-                        transport: "sse".to_string(),
-                        message: format!("Failed to serve MCP over SSE: {e}"),
-                    }
-                })?
+            McpTransport::Sse { .. } => {
+                return Err(McpError::ConnectionFailed {
+                    server_name: server_name.clone(),
+                    message: "SSE transport is no longer supported by rmcp; use transport type \"http\" with a streamable HTTP MCP endpoint".to_string(),
+                });
             }
             McpTransport::Http { url, headers } => {
-                // Use the simpler from_uri method
-                let transport = StreamableHttpClientTransport::from_uri(url.clone());
+                let mut config = StreamableHttpClientTransportConfig::with_uri(url.clone());
 
-                if headers.as_ref().is_some_and(|h| !h.is_empty()) {
-                    info!(
-                        "HTTP transport with custom headers requested; headers may not be applied"
-                    );
+                if let Some(headers) = headers {
+                    let mut custom_headers = HashMap::new();
+                    for (name, value) in headers {
+                        let parsed_name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| {
+                            McpError::ConnectionFailed {
+                                server_name: server_name.clone(),
+                                message: format!("Invalid HTTP header name '{name}': {e}"),
+                            }
+                        })?;
+                        let parsed_value = HeaderValue::from_str(value).map_err(|e| {
+                            McpError::ConnectionFailed {
+                                server_name: server_name.clone(),
+                                message: format!("Invalid HTTP header value for '{name}': {e}"),
+                            }
+                        })?;
+                        custom_headers.insert(parsed_name, parsed_value);
+                    }
+                    config = config.custom_headers(custom_headers);
                 }
+
+                let transport = StreamableHttpClientTransport::from_config(config);
 
                 ().serve(transport).await.map_err(|e| {
                     error!("Failed to serve MCP over HTTP: {}", e);
@@ -210,15 +211,14 @@ impl McpBackend {
         debug!("Attempting to list tools from MCP server '{}'", server_name);
 
         let list_tools_timeout = std::time::Duration::from_secs(10);
-        let tool_list =
-            tokio::time::timeout(list_tools_timeout, client.list_tools(Default::default()))
-                .await
-                .map_err(|_| McpError::ListToolsTimeout {
-                    server_name: server_name.clone(),
-                })?
-                .map_err(|e| McpError::ListToolsFailed {
-                    message: format!("Failed to list tools: {e}"),
-                })?;
+        let tool_list = tokio::time::timeout(list_tools_timeout, client.list_tools(None))
+            .await
+            .map_err(|_| McpError::ListToolsTimeout {
+                server_name: server_name.clone(),
+            })?
+            .map_err(|e| McpError::ListToolsFailed {
+                message: format!("Failed to list tools: {e}"),
+            })?;
 
         // Process the tools
         let mut tools = HashMap::new();
@@ -336,9 +336,11 @@ impl ToolBackend for McpBackend {
 
         // Execute the tool
         let result = service
-            .call_tool(CallToolRequestParam {
+            .call_tool(CallToolRequestParams {
+                meta: None,
                 name: actual_tool_name.to_string().into(),
                 arguments,
+                task: None,
             })
             .await
             .map_err(|e| {
@@ -349,15 +351,12 @@ impl ToolBackend for McpBackend {
         let output = result
             .content
             .into_iter()
-            .flat_map(|annotated_contents| annotated_contents.into_iter())
-            .map(|annotated| {
-                // Access the raw content from the Annotated wrapper
-                match annotated.raw {
-                    rmcp::model::RawContent::Text(text_content) => text_content.text.clone(),
-                    rmcp::model::RawContent::Image { .. } => "[Image content]".to_string(),
-                    rmcp::model::RawContent::Resource { .. } => "[Resource content]".to_string(),
-                    rmcp::model::RawContent::Audio { .. } => "[Audio content]".to_string(),
-                }
+            .map(|content| match content.raw {
+                RawContent::Text(text_content) => text_content.text,
+                RawContent::Image(_) => "[Image content]".to_string(),
+                RawContent::Resource(_) => "[Resource content]".to_string(),
+                RawContent::Audio(_) => "[Audio content]".to_string(),
+                RawContent::ResourceLink(_) => "[Resource link]".to_string(),
             })
             .collect::<Vec<_>>()
             .join("\n");
