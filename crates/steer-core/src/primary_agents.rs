@@ -354,6 +354,7 @@ mod tests {
             system_prompt: Some("base prompt".to_string()),
             primary_agent_id: None,
             policy_overrides: SessionPolicyOverrides::empty(),
+            title: None,
             metadata: HashMap::new(),
             default_model: builtin::claude_sonnet_4_5(),
             auto_compaction: crate::session::state::AutoCompactionConfig::default(),

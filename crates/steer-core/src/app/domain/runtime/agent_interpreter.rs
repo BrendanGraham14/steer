@@ -231,7 +231,9 @@ impl AgentInterpreter {
                                 timestamp,
                             }
                         }
-                        Err(error) => AgentInput::ModelError { error },
+                        Err(error) => AgentInput::ModelError {
+                            error: error.to_string(),
+                        },
                     };
 
                     let (new_state, outputs) = stepper.step(state, input);
@@ -407,6 +409,7 @@ fn default_session_config(default_model: crate::config::model::ModelId) -> Sessi
             tool_visibility: Some(ToolVisibility::ReadOnly),
             approval_policy: ToolApprovalPolicyOverrides::empty(),
         },
+        title: None,
         metadata: HashMap::new(),
         default_model,
         auto_compaction: crate::session::state::AutoCompactionConfig::default(),

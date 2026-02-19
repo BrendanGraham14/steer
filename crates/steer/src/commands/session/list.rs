@@ -50,17 +50,18 @@ impl Command for ListSessionCommand {
         writeln!(stdout, "Sessions:")?;
         writeln!(
             stdout,
-            "{:<36} {:<20} {:<20} {:<10} {:<30}",
-            "ID", "Created", "Updated", "Messages", "Last Model"
+            "{:<36} {:<20} {:<20} {:<10} {:<30} {:<30}",
+            "ID", "Created", "Updated", "Messages", "Last Model", "Title"
         )?;
-        writeln!(stdout, "{}", "-".repeat(116))?;
+        writeln!(stdout, "{}", "-".repeat(147))?;
 
         for session in sessions {
             let model_str = session.last_model.unwrap_or_else(|| "N/A".to_string());
+            let title_str = session.title.unwrap_or_else(|| "N/A".to_string());
 
             writeln!(
                 stdout,
-                "{:<36} {:<20} {:<20} {:<10} {:<30}",
+                "{:<36} {:<20} {:<20} {:<10} {:<30} {:<30}",
                 session.id,
                 session
                     .created_at
@@ -72,6 +73,7 @@ impl Command for ListSessionCommand {
                     .format("%Y-%m-%d %H:%M:%S"),
                 session.message_count,
                 model_str,
+                title_str,
             )?;
         }
 
@@ -111,10 +113,10 @@ impl ListSessionCommand {
         writeln!(stdout, "Remote Sessions:")?;
         writeln!(
             stdout,
-            "{:<36} {:<20} {:<20} {:<10}",
-            "ID", "Created", "Updated", "Status"
+            "{:<36} {:<20} {:<20} {:<10} {:<30}",
+            "ID", "Created", "Updated", "Status", "Title"
         )?;
-        writeln!(stdout, "{}", "-".repeat(86))?;
+        writeln!(stdout, "{}", "-".repeat(118))?;
 
         for session in sessions {
             let created_str = session.created_at.as_ref().map_or_else(
@@ -156,10 +158,12 @@ impl ListSessionCommand {
                 _ => "Unknown",
             };
 
+            let title_str = session.title.unwrap_or_else(|| "N/A".to_string());
+
             writeln!(
                 stdout,
-                "{:<36} {:<20} {:<20} {:<10}",
-                session.id, created_str, updated_str, status_str,
+                "{:<36} {:<20} {:<20} {:<10} {:<30}",
+                session.id, created_str, updated_str, status_str, title_str,
             )?;
         }
 

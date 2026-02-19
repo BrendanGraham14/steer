@@ -65,6 +65,11 @@ impl Command for ShowSessionCommand {
                     "Last Model: {}",
                     info.last_model.unwrap_or_else(|| "N/A".to_string())
                 )?;
+                writeln!(
+                    stdout,
+                    "Title: {}",
+                    info.title.unwrap_or_else(|| "N/A".to_string())
+                )?;
             }
             None => {
                 return Err(eyre!("Session not found: {}", self.session_id));
@@ -131,6 +136,15 @@ impl ShowSessionCommand {
                 writeln!(stdout, "Messages: {}", state.messages.len())?;
                 writeln!(stdout, "Last Event Sequence: {}", state.last_event_sequence)?;
                 writeln!(stdout, "Approved Tools: {:?}", state.approved_tools)?;
+                writeln!(
+                    stdout,
+                    "Title: {}",
+                    state
+                        .config
+                        .as_ref()
+                        .and_then(|config| config.title.clone())
+                        .unwrap_or_else(|| "N/A".to_string())
+                )?;
 
                 if !state.metadata.is_empty() {
                     writeln!(stdout, "Metadata:")?;

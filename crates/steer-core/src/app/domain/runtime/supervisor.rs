@@ -612,7 +612,7 @@ impl RuntimeHandle {
         session_id: SessionId,
         content: Vec<UserContent>,
         model: ModelId,
-    ) -> Result<OpId, RuntimeError> {
+    ) -> Result<(OpId, MessageId), RuntimeError> {
         let has_text = content
             .iter()
             .any(|item| matches!(item, UserContent::Text { text } if !text.trim().is_empty()));
@@ -633,14 +633,14 @@ impl RuntimeHandle {
             session_id,
             content,
             op_id,
-            message_id,
+            message_id: message_id.clone(),
             model,
             timestamp,
         };
 
         self.dispatch_action(session_id, action).await?;
 
-        Ok(op_id)
+        Ok((op_id, message_id))
     }
 
     pub async fn submit_tool_approval(
@@ -871,6 +871,7 @@ mod tests {
             system_prompt: None,
             primary_agent_id: None,
             policy_overrides: crate::session::state::SessionPolicyOverrides::empty(),
+            title: None,
             metadata: std::collections::HashMap::new(),
             auto_compaction: crate::session::state::AutoCompactionConfig::default(),
         }

@@ -8,6 +8,7 @@ use crate::api::Client as ApiClient;
 use crate::api::provider::{CompletionResponse, StreamChunk};
 use crate::app::SystemContext;
 use crate::app::conversation::Message;
+use crate::app::domain::action::{ModelCallError, ModelCallRequestErrorKind};
 use crate::app::domain::delta::{StreamDelta, ToolCallDelta};
 use crate::app::domain::types::{MessageId, OpId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
@@ -68,7 +69,7 @@ impl EffectInterpreter {
         system_context: Option<SystemContext>,
         tools: Vec<ToolSchema>,
         cancel_token: CancellationToken,
-    ) -> Result<CompletionResponse, String> {
+    ) -> Result<CompletionResponse, ModelCallError> {
         self.call_model_with_deltas(model, messages, system_context, tools, cancel_token, None)
             .await
     }
@@ -81,7 +82,7 @@ impl EffectInterpreter {
         tools: Vec<ToolSchema>,
         cancel_token: CancellationToken,
         delta_stream: Option<DeltaStreamContext>,
-    ) -> Result<CompletionResponse, String> {
+    ) -> Result<CompletionResponse, ModelCallError> {
         let tools_option = if tools.is_empty() { None } else { Some(tools) };
 
         let mut stream = self
@@ -95,7 +96,10 @@ impl EffectInterpreter {
                 cancel_token,
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| ModelCallError::RequestStartFailed {
+                kind: ModelCallRequestErrorKind::from_api_error(&error),
+                message: error.to_string(),
+            })?;
 
         let mut final_response = None;
         while let Some(chunk) = stream.next().await {
@@ -148,13 +152,13 @@ impl EffectInterpreter {
                     final_response = Some(response);
                 }
                 StreamChunk::Error(err) => {
-                    return Err(err.to_string());
+                    return Err(ModelCallError::StreamFailed(err));
                 }
                 StreamChunk::ToolUseStart { .. } | StreamChunk::ContentBlockStop { .. } => {}
             }
         }
 
-        final_response.ok_or_else(|| "Stream ended without MessageComplete".to_string())
+        final_response.ok_or(ModelCallError::MissingCompletionResponse)
     }
 
     pub async fn execute_tool(
@@ -200,7 +204,7 @@ impl EffectInterpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::error::ApiError;
+    use crate::api::error::{ApiError, StreamError};
     use crate::api::provider::{CompletionResponse, Provider, TokenUsage};
     use crate::app::conversation::AssistantContent;
     use crate::app::validation::ValidatorRegistry;
@@ -210,6 +214,52 @@ mod tests {
     use crate::model_registry::ModelRegistry;
     use crate::tools::BackendRegistry;
     use async_trait::async_trait;
+
+    #[derive(Clone)]
+    struct StreamErrorProvider;
+
+    #[async_trait]
+    impl Provider for StreamErrorProvider {
+        fn name(&self) -> &'static str {
+            "stream-error"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: "unused".to_string(),
+                }],
+                usage: None,
+            })
+        }
+
+        async fn stream_complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<crate::api::provider::CompletionStream, ApiError> {
+            Ok(Box::pin(futures_util::stream::once(async {
+                StreamChunk::Error(StreamError::Provider {
+                    provider: "stream-error".to_string(),
+                    kind: crate::api::ProviderStreamErrorKind::StreamError,
+                    raw_error_type: Some("stream_error".to_string()),
+                    message: "stream failed".to_string(),
+                })
+            })))
+        }
+    }
 
     #[derive(Clone)]
     struct StubProvider;
@@ -277,6 +327,30 @@ mod tests {
         assert!(matches!(
             result.content.as_slice(),
             [AssistantContent::Text { text }] if text == "ok"
+        ));
+    }
+
+    #[tokio::test]
+    async fn call_model_returns_typed_stream_error() {
+        let (api_client, tool_executor) = create_test_deps().await;
+        let provider_id = ProviderId("stream-error".to_string());
+        api_client.insert_test_provider(provider_id.clone(), Arc::new(StreamErrorProvider));
+
+        let interpreter = EffectInterpreter::new(api_client, tool_executor);
+        let error = interpreter
+            .call_model(
+                ModelId::new(provider_id, "stream-error-model"),
+                vec![],
+                None,
+                vec![],
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("model call should fail when stream emits error");
+
+        assert!(matches!(
+            error,
+            ModelCallError::StreamFailed(StreamError::Provider { .. })
         ));
     }
 }

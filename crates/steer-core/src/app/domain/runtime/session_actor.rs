@@ -7,7 +7,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::Client as ApiClient;
 use crate::api::provider::CompletionResponse;
-use crate::app::domain::action::{Action, McpServerState, SchemaSource};
+use crate::app::domain::action::{
+    Action, McpServerState, ModelCallError, SchemaSource, SessionTitleGenerationError,
+};
 use crate::app::domain::delta::StreamDelta;
 use crate::app::domain::effect::{Effect, McpServerConfig};
 use crate::app::domain::event::SessionEvent;
@@ -408,10 +410,68 @@ impl SessionActor {
                                 timestamp: current_timestamp(),
                             }
                         }
-                        Err(e) => Action::ModelResponseError {
+                        Err(error) => Action::ModelResponseError {
                             session_id,
                             op_id,
-                            error: e.clone(),
+                            error: error.to_string(),
+                        },
+                    };
+
+                    let _ = action_tx.send(action).await;
+                });
+
+                Ok(())
+            }
+
+            Effect::GenerateSessionTitle {
+                op_id,
+                model,
+                user_prompt,
+                ..
+            } => {
+                let interpreter = self.interpreter.clone();
+                let action_tx = self.internal_action_tx.clone();
+                let session_id = self.session_id;
+                let system_context = self.state.cached_system_context.clone();
+                let cancel_token = self.active_operations.entry(op_id).or_default().clone();
+
+                tokio::spawn(async move {
+                    let title_request = vec![crate::app::conversation::Message {
+                        data: crate::app::conversation::MessageData::User {
+                            content: vec![crate::app::conversation::UserContent::Text {
+                                text: format!(
+                                    "Generate a concise session title (max 8 words). Return only the title.\n\nUser request:\n{}",
+                                    user_prompt
+                                ),
+                            }],
+                        },
+                        timestamp: current_timestamp(),
+                        id: uuid::Uuid::new_v4().to_string(),
+                        parent_message_id: None,
+                    }];
+
+                    let action = match interpreter
+                        .call_model(model, title_request, system_context, vec![], cancel_token)
+                        .await
+                    {
+                        Ok(response) => {
+                            let title = response
+                                .content
+                                .iter()
+                                .find_map(|item| match item {
+                                    crate::app::conversation::AssistantContent::Text { text } => {
+                                        Some(text.trim().to_string())
+                                    }
+                                    _ => None,
+                                })
+                                .filter(|title| !title.is_empty())
+                                .unwrap_or_else(|| "Untitled Session".to_string());
+
+                            Action::SessionTitleGenerated { session_id, title }
+                        }
+                        Err(error) => Action::SessionTitleGenerationFailed {
+                            session_id,
+                            error: SessionTitleGenerationError::from(error),
                         },
                     };
 
@@ -552,12 +612,7 @@ impl SessionActor {
                             Err(error) if is_context_window_exceeded_error(&error) => {
                                 let dropped = drop_earlier_tool_results(&mut compaction_messages);
                                 if dropped == 0 {
-                                    if dropped_tool_results == 0 {
-                                        break Err(error);
-                                    }
-                                    break Err(format!(
-                                        "{error} (compaction retried after dropping {dropped_tool_results} earlier tool results)"
-                                    ));
+                                    break Err(error);
                                 }
 
                                 dropped_tool_results += dropped;
@@ -599,10 +654,16 @@ impl SessionActor {
                                 timestamp: current_timestamp(),
                             }
                         }
-                        Err(e) => Action::CompactionFailed {
+                        Err(error) => Action::CompactionFailed {
                             session_id,
                             op_id,
-                            error: e,
+                            error: if dropped_tool_results > 0 {
+                                format!(
+                                    "{error} (compaction retried after dropping {dropped_tool_results} earlier tool results)"
+                                )
+                            } else {
+                                error.to_string()
+                            },
                         },
                     };
 
@@ -795,8 +856,8 @@ fn current_timestamp() -> u64 {
         .as_secs()
 }
 
-fn is_context_window_exceeded_error(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
+fn is_context_window_exceeded_error(error: &ModelCallError) -> bool {
+    let normalized = error.to_string().to_ascii_lowercase();
 
     let has_explicit_phrase = [
         "context length",
@@ -1066,7 +1127,7 @@ fn build_compaction_message() -> crate::app::conversation::Message {
 mod tests {
     use super::*;
     use crate::api::error::ApiError;
-    use crate::api::provider::{CompletionResponse, Provider, TokenUsage};
+    use crate::api::provider::{CompletionResponse, Provider, StreamChunk, TokenUsage};
     use crate::app::SystemContext;
     use crate::app::conversation::{
         AssistantContent, Message, MessageData, ThoughtContent, UserContent,
@@ -1074,6 +1135,7 @@ mod tests {
     use crate::app::domain::action::Action;
     use crate::app::domain::event::{CompactResult, CompactTrigger, SessionEvent};
     use crate::app::domain::session::event_store::InMemoryEventStore;
+    use crate::app::domain::state::OperationKind;
     use crate::app::domain::types::{MessageId, OpId, SessionId};
     use crate::app::validation::ValidatorRegistry;
     use crate::auth::ProviderRegistry;
@@ -1098,6 +1160,11 @@ mod tests {
     struct StubProviderWithUsage;
 
     #[derive(Clone)]
+    struct BlockingStreamProvider {
+        release_rx: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>,
+    }
+
+    #[derive(Clone)]
     struct ContextWindowLimitProvider {
         max_tool_messages: usize,
         observed_tool_message_counts: Arc<std::sync::Mutex<Vec<usize>>>,
@@ -1107,6 +1174,61 @@ mod tests {
     struct RepeatedReadThenOverflowProvider {
         file_path: String,
         overflow_char_limit: usize,
+    }
+    #[async_trait]
+    impl Provider for BlockingStreamProvider {
+        fn name(&self) -> &'static str {
+            "blocking-stream"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            Ok(CompletionResponse {
+                content: vec![AssistantContent::Text {
+                    text: "unused".to_string(),
+                }],
+                usage: None,
+            })
+        }
+
+        async fn stream_complete(
+            &self,
+            _model_id: &ModelId,
+            _messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            token: CancellationToken,
+        ) -> Result<crate::api::provider::CompletionStream, ApiError> {
+            let receiver = self
+                .release_rx
+                .lock()
+                .await
+                .take()
+                .expect("release receiver should be available");
+
+            Ok(Box::pin(futures_util::stream::once(async move {
+                tokio::select! {
+                    _ = token.cancelled() => StreamChunk::MessageComplete(CompletionResponse {
+                        content: vec![],
+                        usage: None,
+                    }),
+                    _ = receiver => StreamChunk::MessageComplete(CompletionResponse {
+                        content: vec![AssistantContent::Text {
+                            text: "late title".to_string(),
+                        }],
+                        usage: None,
+                    }),
+                }
+            })))
+        }
     }
 
     #[async_trait]
@@ -1541,6 +1663,76 @@ mod tests {
             }
             other => panic!("expected ModelResponseComplete, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn session_title_generation_uses_operation_cancel_token() {
+        let session_id = SessionId::new();
+        let mut state = AppState::new(session_id);
+        let model_id = ModelId::new(ProviderId("blocking-stream".to_string()), "blocking-model");
+
+        state.start_operation(OpId::new(), OperationKind::AgentLoop);
+        state.session_config = Some(crate::session::state::SessionConfig {
+            workspace: crate::session::state::WorkspaceConfig::default(),
+            workspace_ref: None,
+            workspace_id: None,
+            repo_ref: None,
+            parent_session_id: None,
+            workspace_name: None,
+            tool_config: crate::session::state::SessionToolConfig::default(),
+            system_prompt: None,
+            primary_agent_id: None,
+            policy_overrides: crate::session::state::SessionPolicyOverrides::empty(),
+            title: None,
+            metadata: std::collections::HashMap::new(),
+            default_model: model_id.clone(),
+            auto_compaction: crate::session::state::AutoCompactionConfig::default(),
+        });
+
+        let (event_store, api_client, tool_executor) = create_test_deps().await;
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        api_client.insert_test_provider(
+            model_id.provider.clone(),
+            Arc::new(BlockingStreamProvider {
+                release_rx: Arc::new(tokio::sync::Mutex::new(Some(release_rx))),
+            }),
+        );
+
+        let mut actor =
+            SessionActor::new(session_id, state, event_store, api_client, tool_executor);
+        let op_id = actor
+            .state
+            .current_operation
+            .as_ref()
+            .expect("operation should exist")
+            .op_id;
+
+        actor
+            .handle_effect(Effect::GenerateSessionTitle {
+                session_id,
+                op_id,
+                model: model_id,
+                user_prompt: "Summarize this task".to_string(),
+            })
+            .await
+            .expect("title generation effect should dispatch");
+
+        actor
+            .handle_effect(Effect::CancelOperation { session_id, op_id })
+            .await
+            .expect("cancel effect should succeed");
+
+        let _ = release_tx.send(());
+
+        let action = timeout(Duration::from_secs(2), actor.internal_action_rx.recv())
+            .await
+            .expect("timed out waiting for title action")
+            .expect("expected title generation action");
+
+        assert!(matches!(
+            action,
+            Action::SessionTitleGenerationFailed { .. }
+        ));
     }
 
     #[tokio::test]

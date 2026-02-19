@@ -34,6 +34,13 @@ pub enum Effect {
         tools: Vec<ToolSchema>,
     },
 
+    GenerateSessionTitle {
+        session_id: SessionId,
+        op_id: OpId,
+        model: ModelId,
+        user_prompt: String,
+    },
+
     ListWorkspaceFiles {
         session_id: SessionId,
     },
@@ -78,6 +85,7 @@ impl Effect {
             | Effect::RequestUserApproval { session_id, .. }
             | Effect::ExecuteTool { session_id, .. }
             | Effect::CallModel { session_id, .. }
+            | Effect::GenerateSessionTitle { session_id, .. }
             | Effect::ListWorkspaceFiles { session_id }
             | Effect::CancelOperation { session_id, .. }
             | Effect::ConnectMcpServer { session_id, .. }

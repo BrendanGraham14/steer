@@ -544,6 +544,7 @@ message SessionInfo {
   google.protobuf.Timestamp updated_at = 3;
   SessionStatus status = 4;
   SessionMetadata metadata = 5;
+  optional string title = 6;
 }
 
 message SessionState {
@@ -573,6 +574,7 @@ message SessionConfig {
   optional string primary_agent_id = 12;
   optional SessionPolicyOverrides policy_overrides = 13;
   optional AutoCompactionConfig auto_compaction = 14;
+  optional string title = 15;
 }
 
 // Environment management

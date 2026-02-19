@@ -518,6 +518,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             system_prompt: None,
             primary_agent_id: req.primary_agent_id,
             policy_overrides,
+            title: None,
             metadata: req.metadata,
             default_model,
             auto_compaction: req
@@ -548,6 +549,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                     updated_at: Some(prost_types::Timestamp::from(std::time::SystemTime::now())),
                     status: proto::SessionStatus::Active as i32,
                     metadata: None,
+                    title: session_config.title.clone(),
                 };
                 Ok(Response::new(CreateSessionResponse {
                     session: Some(session_info),
@@ -580,6 +582,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
                         )),
                         status: proto::SessionStatus::Active as i32,
                         metadata: None,
+                        title: s.title,
                     })
                     .collect();
 
@@ -842,7 +845,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .submit_user_input(session_id, content, model)
             .await
         {
-            Ok(op_id) => Ok(Response::new(SendMessageResponse {
+            Ok((op_id, _message_id)) => Ok(Response::new(SendMessageResponse {
                 operation: Some(Operation {
                     id: op_id.to_string(),
                     session_id: session_id.to_string(),

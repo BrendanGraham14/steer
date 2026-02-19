@@ -736,6 +736,7 @@ pub(crate) fn session_config_to_proto(config: &SessionConfig) -> proto::SessionC
             enabled: config.auto_compaction.enabled,
             threshold_percent: config.auto_compaction.threshold_percent,
         }),
+        title: config.title.clone(),
     }
 }
 
@@ -835,6 +836,7 @@ pub(crate) fn proto_to_session_config(
         system_prompt: proto_config.system_prompt,
         primary_agent_id: proto_config.primary_agent_id,
         policy_overrides,
+        title: proto_config.title,
         metadata: proto_config.metadata,
         auto_compaction: proto_config
             .auto_compaction

@@ -94,6 +94,7 @@ mod tests {
     enum EffectSnapshot {
         EmitEvent { event_type: String },
         CallModel,
+        GenerateSessionTitle,
         RequestUserApproval { tool_name: String },
         ExecuteTool { tool_name: String },
         CancelOperation,
@@ -143,6 +144,7 @@ mod tests {
                 },
             },
             Effect::CallModel { .. } => EffectSnapshot::CallModel,
+            Effect::GenerateSessionTitle { .. } => EffectSnapshot::GenerateSessionTitle,
             Effect::RequestUserApproval { tool_call, .. } => EffectSnapshot::RequestUserApproval {
                 tool_name: tool_call.name.clone(),
             },
@@ -318,6 +320,7 @@ mod tests {
                     event_type: "OperationStarted".to_string(),
                 },
                 EffectSnapshot::CallModel,
+                EffectSnapshot::GenerateSessionTitle,
             ],
             expected_state: StateSnapshot {
                 message_count: 1,
@@ -359,6 +362,7 @@ mod tests {
                     event_type: "OperationStarted".to_string(),
                 },
                 EffectSnapshot::CallModel,
+                EffectSnapshot::GenerateSessionTitle,
                 EffectSnapshot::EmitEvent {
                     event_type: "AssistantMessageAdded".to_string(),
                 },

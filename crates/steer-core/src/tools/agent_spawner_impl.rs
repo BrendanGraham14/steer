@@ -120,6 +120,7 @@ impl AgentSpawner for DefaultAgentSpawner {
                 .map(|context| context.prompt.clone()),
             primary_agent_id: None,
             policy_overrides,
+            title: None,
             metadata: HashMap::new(),
             default_model: config.model.clone(),
             auto_compaction: crate::session::state::AutoCompactionConfig::default(),

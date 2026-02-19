@@ -92,6 +92,7 @@ pub fn read_only_session_config(default_model: ModelId) -> SessionConfig {
         system_prompt: None,
         primary_agent_id: None,
         policy_overrides: SessionPolicyOverrides::empty(),
+        title: None,
         metadata: HashMap::new(),
         default_model,
         auto_compaction: AutoCompactionConfig::default(),

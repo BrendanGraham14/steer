@@ -155,6 +155,8 @@ pub struct SessionConfig {
     /// User-controlled policy overrides that apply on top of the primary agent base policy.
     #[serde(default = "SessionPolicyOverrides::empty")]
     pub policy_overrides: SessionPolicyOverrides,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub metadata: HashMap<String, String>,
     pub default_model: ModelId,
     #[serde(default)]
@@ -271,6 +273,7 @@ impl SessionConfig {
             system_prompt: None,
             primary_agent_id: None,
             policy_overrides: SessionPolicyOverrides::empty(),
+            title: None,
             metadata: HashMap::new(),
             default_model,
             auto_compaction: AutoCompactionConfig::default(),
@@ -903,6 +906,7 @@ pub struct SessionInfo {
     /// The last known model used in this session
     pub last_model: Option<ModelId>,
     pub message_count: usize,
+    pub title: Option<String>,
     pub metadata: HashMap<String, String>,
 }
 
@@ -914,6 +918,7 @@ impl From<&Session> for SessionInfo {
             updated_at: session.updated_at,
             last_model: None, // TODO: Track last model used from events
             message_count: session.state.message_count(),
+            title: session.config.title.clone(),
             metadata: session.config.metadata.clone(),
         }
     }
@@ -943,6 +948,7 @@ mod tests {
             system_prompt: None,
             primary_agent_id: None,
             policy_overrides: SessionPolicyOverrides::empty(),
+            title: None,
             metadata: HashMap::new(),
             default_model: test_model(),
             auto_compaction: AutoCompactionConfig::default(),
@@ -1261,6 +1267,7 @@ mod tests {
             system_prompt: None,
             primary_agent_id: None,
             policy_overrides: SessionPolicyOverrides::empty(),
+            title: None,
             metadata: HashMap::new(),
             default_model: test_model(),
             auto_compaction: AutoCompactionConfig::default(),

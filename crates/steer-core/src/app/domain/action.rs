@@ -1,12 +1,100 @@
 use crate::api::provider::TokenUsage;
+use crate::api::{ApiError, StreamError};
 use crate::app::conversation::UserContent;
 use crate::app::domain::types::{CompactionId, MessageId, OpId, RequestId, SessionId, ToolCallId};
 use crate::config::model::ModelId;
 use serde::{Deserialize, Serialize};
 use steer_tools::result::ToolResult;
 use steer_tools::{ToolCall, ToolError, ToolSchema};
+use thiserror::Error;
 
 use super::event::SessionEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelCallRequestErrorKind {
+    Network,
+    AuthenticationFailed,
+    AuthError,
+    RateLimited,
+    InvalidRequest,
+    ServerError,
+    Timeout,
+    Cancelled,
+    ResponseParsingError,
+    NoChoices,
+    RequestBlocked,
+    Unknown,
+    Configuration,
+    UnsupportedFeature,
+    StreamError,
+}
+
+impl ModelCallRequestErrorKind {
+    pub const fn from_api_error(error: &ApiError) -> Self {
+        match error {
+            ApiError::Network(_) => Self::Network,
+            ApiError::AuthenticationFailed { .. } => Self::AuthenticationFailed,
+            ApiError::AuthError(_) => Self::AuthError,
+            ApiError::RateLimited { .. } => Self::RateLimited,
+            ApiError::InvalidRequest { .. } => Self::InvalidRequest,
+            ApiError::ServerError { .. } => Self::ServerError,
+            ApiError::Timeout { .. } => Self::Timeout,
+            ApiError::Cancelled { .. } => Self::Cancelled,
+            ApiError::ResponseParsingError { .. } => Self::ResponseParsingError,
+            ApiError::NoChoices { .. } => Self::NoChoices,
+            ApiError::RequestBlocked { .. } => Self::RequestBlocked,
+            ApiError::Unknown { .. } => Self::Unknown,
+            ApiError::Configuration(_) => Self::Configuration,
+            ApiError::UnsupportedFeature { .. } => Self::UnsupportedFeature,
+            ApiError::StreamError { .. } => Self::StreamError,
+        }
+    }
+}
+
+impl std::fmt::Display for ModelCallRequestErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match self {
+            Self::Network => "network",
+            Self::AuthenticationFailed => "authentication_failed",
+            Self::AuthError => "auth_error",
+            Self::RateLimited => "rate_limited",
+            Self::InvalidRequest => "invalid_request",
+            Self::ServerError => "server_error",
+            Self::Timeout => "timeout",
+            Self::Cancelled => "cancelled",
+            Self::ResponseParsingError => "response_parsing_error",
+            Self::NoChoices => "no_choices",
+            Self::RequestBlocked => "request_blocked",
+            Self::Unknown => "unknown",
+            Self::Configuration => "configuration",
+            Self::UnsupportedFeature => "unsupported_feature",
+            Self::StreamError => "stream_error",
+        };
+
+        f.write_str(kind)
+    }
+}
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum ModelCallError {
+    #[error("Failed to start model stream ({kind}): {message}")]
+    RequestStartFailed {
+        kind: ModelCallRequestErrorKind,
+        message: String,
+    },
+
+    #[error("Model stream failed: {0}")]
+    StreamFailed(StreamError),
+
+    #[error("Model stream ended without completion response")]
+    MissingCompletionResponse,
+}
+
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum SessionTitleGenerationError {
+    #[error(transparent)]
+    ModelCall(#[from] ModelCallError),
+}
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -93,6 +181,16 @@ pub enum Action {
         session_id: SessionId,
         op_id: OpId,
         error: String,
+    },
+
+    SessionTitleGenerated {
+        session_id: SessionId,
+        title: String,
+    },
+
+    SessionTitleGenerationFailed {
+        session_id: SessionId,
+        error: SessionTitleGenerationError,
     },
 
     Cancel {
@@ -197,6 +295,8 @@ impl Action {
             | Action::McpServerStateChanged { session_id, .. }
             | Action::ModelResponseComplete { session_id, .. }
             | Action::ModelResponseError { session_id, .. }
+            | Action::SessionTitleGenerated { session_id, .. }
+            | Action::SessionTitleGenerationFailed { session_id, .. }
             | Action::Cancel { session_id, .. }
             | Action::DirectBashCommand { session_id, .. }
             | Action::DequeueQueuedItem { session_id, .. }

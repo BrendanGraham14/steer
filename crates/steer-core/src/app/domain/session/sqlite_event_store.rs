@@ -93,7 +93,8 @@ impl SqliteEventStore {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 config_json TEXT,
                 message_count INTEGER NOT NULL DEFAULT 0,
-                last_model TEXT
+                last_model TEXT,
+                title TEXT
             )
             ",
         )
@@ -193,6 +194,22 @@ impl SqliteEventStore {
                 .await
                 .map_err(|e| EventStoreError::Migration {
                     message: format!("Failed to add last_model column: {e}"),
+                })?;
+        }
+
+        let has_title: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('domain_sessions') WHERE name = 'title'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(false);
+
+        if !has_title {
+            sqlx::query("ALTER TABLE domain_sessions ADD COLUMN title TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| EventStoreError::Migration {
+                    message: format!("Failed to add title column: {e}"),
                 })?;
         }
 
@@ -715,7 +732,7 @@ impl SessionMetadataStore for SqliteEventStore {
         let session_id_str = session_id.0.to_string();
 
         let row = sqlx::query(
-            "SELECT id, created_at, updated_at, message_count, last_model FROM domain_sessions WHERE id = ?1",
+            "SELECT id, created_at, updated_at, message_count, last_model, title FROM domain_sessions WHERE id = ?1",
         )
         .bind(&session_id_str)
         .fetch_optional(&self.pool)
@@ -729,6 +746,7 @@ impl SessionMetadataStore for SqliteEventStore {
                 let updated_at_str: String = row.get("updated_at");
                 let message_count: i64 = row.get("message_count");
                 let last_model: Option<String> = row.get("last_model");
+                let title: Option<String> = row.get("title");
 
                 let uuid = uuid::Uuid::parse_str(&id_str).map_err(|e| {
                     SessionMetadataStoreError::serialization(format!("Invalid session ID: {e}"))
@@ -743,6 +761,7 @@ impl SessionMetadataStore for SqliteEventStore {
                     updated_at,
                     message_count: message_count as u32,
                     last_model,
+                    title,
                 }))
             }
             None => Ok(None),
@@ -758,7 +777,7 @@ impl SessionMetadataStore for SqliteEventStore {
 
         let rows = sqlx::query(
             r"
-            SELECT id, created_at, updated_at, message_count, last_model 
+            SELECT id, created_at, updated_at, message_count, last_model, title 
             FROM domain_sessions 
             ORDER BY updated_at DESC
             LIMIT ?1 OFFSET ?2
@@ -779,6 +798,7 @@ impl SessionMetadataStore for SqliteEventStore {
             let updated_at_str: String = row.get("updated_at");
             let message_count: i64 = row.get("message_count");
             let last_model: Option<String> = row.get("last_model");
+            let title: Option<String> = row.get("title");
 
             let uuid = uuid::Uuid::parse_str(&id_str).map_err(|e| {
                 SessionMetadataStoreError::serialization(format!("Invalid session ID: {e}"))
@@ -793,6 +813,7 @@ impl SessionMetadataStore for SqliteEventStore {
                 updated_at,
                 message_count: message_count as u32,
                 last_model,
+                title,
             });
         }
 
@@ -815,15 +836,18 @@ impl SessionMetadataStore for SqliteEventStore {
             })?;
 
             sqlx::query(
-                "UPDATE domain_sessions SET config_json = ?1, updated_at = ?2 WHERE id = ?3",
+                "UPDATE domain_sessions SET config_json = ?1, title = ?2, updated_at = ?3 WHERE id = ?4",
             )
             .bind(&config_json)
+            .bind(cfg.title.as_deref())
             .bind(&now)
             .bind(&session_id_str)
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                SessionMetadataStoreError::database(format!("Failed to update session config: {e}"))
+                SessionMetadataStoreError::database(format!(
+                    "Failed to update session config/title: {e}"
+                ))
             })?;
         }
 
@@ -1420,6 +1444,63 @@ mod tests {
 
         assert_eq!(summary.message_count, 2);
         assert_eq!(summary.last_model, Some(tool_model.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_tracks_title_from_config_field() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let mut initial = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        initial.title = Some("Initial".to_string());
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    config: Box::new(initial),
+                    metadata: HashMap::new(),
+                    parent_session_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let mut updated = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        updated.title = Some("Updated Title".to_string());
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionConfigUpdated {
+                    config: Box::new(updated),
+                    primary_agent_id: "normal".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let summary = store
+            .get_session_summary(session_id)
+            .await
+            .unwrap()
+            .expect("summary");
+        assert_eq!(summary.title.as_deref(), Some("Updated Title"));
+
+        let listed = store
+            .list_sessions(SessionFilter {
+                limit: Some(10),
+                offset: Some(0),
+            })
+            .await
+            .unwrap();
+        let listed_summary = listed
+            .into_iter()
+            .find(|entry| entry.id == session_id)
+            .expect("listed summary");
+        assert_eq!(listed_summary.title.as_deref(), Some("Updated Title"));
     }
 
     #[tokio::test]

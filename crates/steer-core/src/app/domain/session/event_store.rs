@@ -111,6 +111,7 @@ struct InMemoryCatalogEntry {
     updated_at: DateTime<Utc>,
     message_count: u32,
     last_model: Option<String>,
+    title: Option<String>,
 }
 
 fn catalog_update_for_event(
@@ -149,6 +150,7 @@ fn apply_catalog_update(
     let mut updated = false;
 
     if let Some(config) = config {
+        entry.title.clone_from(&config.title);
         entry.config = config.clone();
         updated = true;
     }
@@ -218,6 +220,7 @@ impl EventStore for InMemoryEventStore {
                         updated_at: now,
                         message_count: 0,
                         last_model: None,
+                        title: config.title.clone(),
                     },
                 );
             }
@@ -368,6 +371,7 @@ impl SessionMetadataStore for InMemoryEventStore {
             updated_at: e.updated_at,
             message_count: e.message_count,
             last_model: e.last_model.clone(),
+            title: e.title.clone(),
         }))
     }
 
@@ -387,6 +391,7 @@ impl SessionMetadataStore for InMemoryEventStore {
                 updated_at: e.updated_at,
                 message_count: e.message_count,
                 last_model: e.last_model.clone(),
+                title: e.title.clone(),
             })
             .collect();
 
@@ -417,6 +422,7 @@ impl SessionMetadataStore for InMemoryEventStore {
         if let Some(entry) = catalog.get_mut(&session_id) {
             if let Some(cfg) = config {
                 entry.config = cfg.clone();
+                entry.title.clone_from(&cfg.title);
             }
             if increment_message_count {
                 entry.message_count += 1;
@@ -435,6 +441,7 @@ impl SessionMetadataStore for InMemoryEventStore {
                     updated_at: now,
                     message_count: u32::from(increment_message_count),
                     last_model: new_model.map(String::from),
+                    title: cfg.title.clone(),
                 },
             );
         }
@@ -575,6 +582,51 @@ mod tests {
 
         assert_eq!(summary.message_count, 2);
         assert_eq!(summary.last_model, Some(tool_model.to_string()));
+        assert_eq!(summary.title, None);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_tracks_title_from_config_field() {
+        let store = InMemoryEventStore::new();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        config.title = Some("Initial Title".to_string());
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    config: Box::new(config),
+                    metadata: HashMap::new(),
+                    parent_session_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let mut updated = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        updated.title = Some("Updated Title".to_string());
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::SessionConfigUpdated {
+                    config: Box::new(updated),
+                    primary_agent_id: "plan".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let summary = store
+            .get_session_summary(session_id)
+            .await
+            .unwrap()
+            .expect("summary");
+        assert_eq!(summary.title.as_deref(), Some("Updated Title"));
     }
 
     #[tokio::test]

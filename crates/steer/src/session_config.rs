@@ -193,6 +193,7 @@ impl SessionConfigLoader {
                 system_prompt: None,
                 primary_agent_id: None,
                 policy_overrides: SessionPolicyOverrides::empty(),
+                title: None,
                 metadata: HashMap::new(),
                 auto_compaction: steer_core::session::state::AutoCompactionConfig::default(),
             })
@@ -307,6 +308,7 @@ impl SessionConfigLoader {
             primary_agent_id: None,
             policy_overrides,
             metadata: partial.metadata.unwrap_or_default(),
+            title: None,
             auto_compaction: partial
                 .auto_compaction
                 .map(|p| {

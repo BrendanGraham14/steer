@@ -47,6 +47,7 @@ pub struct SessionSummary {
     pub updated_at: DateTime<Utc>,
     pub message_count: u32,
     pub last_model: Option<String>,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

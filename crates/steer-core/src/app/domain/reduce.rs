@@ -26,6 +26,7 @@ use thiserror::Error;
 
 const MIN_MESSAGES_FOR_COMPACT: usize = 3;
 const ESTIMATED_CHARS_PER_TOKEN: f64 = 4.0;
+const SESSION_TITLE_MAX_CHARS: usize = 80;
 const COMPACTION_CONTINUE_PROMPT: &str =
     "Continue from the compaction summary and resume the conversation.";
 
@@ -413,6 +414,19 @@ pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, Reduc
             state, session_id, op_id, &error,
         )),
 
+        Action::SessionTitleGenerated { session_id, title } => {
+            Ok(handle_session_title_generated(state, session_id, title))
+        }
+
+        Action::SessionTitleGenerationFailed { session_id, error } => {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %error,
+                "Session title generation failed"
+            );
+            Ok(vec![])
+        }
+
         Action::Cancel { session_id, op_id } => Ok(handle_cancel(state, session_id, op_id)),
 
         Action::DirectBashCommand {
@@ -598,7 +612,7 @@ fn handle_user_input(
     effects.push(Effect::CallModel {
         session_id,
         op_id,
-        model,
+        model: model.clone(),
         messages: state
             .message_graph
             .get_thread_messages()
@@ -608,6 +622,17 @@ fn handle_user_input(
         system_context: state.cached_system_context.clone(),
         tools: state.tools.clone(),
     });
+
+    if let Some(title_prompt) = first_user_title_input(&message)
+        && session_title_missing(state)
+    {
+        effects.push(Effect::GenerateSessionTitle {
+            session_id,
+            op_id,
+            model,
+            user_prompt: title_prompt,
+        });
+    }
 
     effects
 }
@@ -1431,6 +1456,96 @@ struct ModelResponseCompleteParams {
     context_window_tokens: Option<u32>,
     configured_max_output_tokens: Option<u32>,
     timestamp: u64,
+}
+
+fn handle_session_title_generated(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    title: String,
+) -> Vec<Effect> {
+    if !session_title_missing(state) {
+        return vec![];
+    }
+
+    let Some(config) = state.session_config.as_ref() else {
+        return vec![];
+    };
+
+    let mut updated_config = config.clone();
+    updated_config.title = Some(sanitize_session_title(title));
+
+    let primary_agent_id = state.primary_agent_id.clone().unwrap_or_else(|| {
+        updated_config
+            .primary_agent_id
+            .clone()
+            .unwrap_or_else(|| default_primary_agent_id().to_string())
+    });
+
+    apply_session_config_state(
+        state,
+        &updated_config,
+        Some(primary_agent_id.clone()),
+        false,
+    );
+
+    vec![Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::SessionConfigUpdated {
+            config: Box::new(updated_config),
+            primary_agent_id,
+        },
+    }]
+}
+
+fn session_title_missing(state: &AppState) -> bool {
+    state
+        .session_config
+        .as_ref()
+        .and_then(|config| config.title.as_ref())
+        .is_none_or(|title| title.trim().is_empty())
+}
+
+fn first_user_title_input(message: &Message) -> Option<String> {
+    let MessageData::User { content } = &message.data else {
+        return None;
+    };
+
+    let mut parts = Vec::new();
+    for item in content {
+        match item {
+            UserContent::Text { text } => {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                }
+            }
+            UserContent::Image { image } => {
+                parts.push(format!("Image ({})", image.mime_type));
+            }
+            UserContent::CommandExecution { command, .. } => {
+                let trimmed = command.trim();
+                if !trimmed.is_empty() {
+                    parts.push(format!("Command: {trimmed}"));
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" | "))
+    }
+}
+
+fn sanitize_session_title(title: String) -> String {
+    let compact = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    compact
+        .chars()
+        .take(SESSION_TITLE_MAX_CHARS)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 fn handle_model_response_complete(
@@ -2647,7 +2762,7 @@ mod tests {
     }
 
     #[test]
-    fn test_user_input_starts_operation() {
+    fn test_user_input_starts_operation_and_requests_session_title() {
         let mut state = test_state();
         let session_id = state.session_id;
         let op_id = OpId::new();
@@ -2675,6 +2790,132 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Effect::CallModel { .. }))
         );
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::GenerateSessionTitle { op_id: title_op_id, .. } if *title_op_id == op_id
+        )));
+    }
+
+    #[test]
+    fn test_user_input_with_image_requests_session_title() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+        let model = builtin::claude_sonnet_4_5();
+
+        let effects = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                content: vec![UserContent::Image {
+                    image: crate::app::conversation::ImageContent {
+                        mime_type: "image/png".to_string(),
+                        source: crate::app::conversation::ImageSource::Url {
+                            url: "https://example.com/image.png".to_string(),
+                        },
+                        width: None,
+                        height: None,
+                        bytes: None,
+                        sha256: None,
+                    },
+                }],
+                op_id,
+                message_id,
+                model,
+                timestamp: 1_234_567_891,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::GenerateSessionTitle { op_id: title_op_id, user_prompt, .. }
+                if *title_op_id == op_id && user_prompt.contains("Image (image/png)")
+        )));
+    }
+
+    #[test]
+    fn test_user_input_retries_session_title_after_non_text_first_message() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let model = builtin::claude_sonnet_4_5();
+
+        let first_effects = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                content: vec![UserContent::Text {
+                    text: "   ".to_string(),
+                }],
+                op_id: OpId::new(),
+                message_id: MessageId::new(),
+                model: model.clone(),
+                timestamp: 1,
+            },
+        );
+
+        assert!(
+            !first_effects
+                .iter()
+                .any(|e| matches!(e, Effect::GenerateSessionTitle { .. }))
+        );
+
+        let _ = reduce(
+            &mut state,
+            Action::Cancel {
+                session_id,
+                op_id: None,
+            },
+        );
+
+        let second_effects = reduce(
+            &mut state,
+            Action::UserInput {
+                session_id,
+                content: vec![UserContent::Text {
+                    text: "real title seed".to_string(),
+                }],
+                op_id: OpId::new(),
+                message_id: MessageId::new(),
+                model,
+                timestamp: 2,
+            },
+        );
+
+        assert!(
+            second_effects
+                .iter()
+                .any(|e| matches!(e, Effect::GenerateSessionTitle { .. }))
+        );
+    }
+
+    #[test]
+    fn test_sanitize_session_title_handles_unicode_without_panicking() {
+        let title = "🙂".repeat(100);
+        let sanitized = sanitize_session_title(title);
+
+        assert_eq!(sanitized.chars().count(), SESSION_TITLE_MAX_CHARS);
+    }
+
+    #[test]
+    fn test_session_title_generation_failure_logs_without_effects() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+
+        let effects = reduce(
+            &mut state,
+            Action::SessionTitleGenerationFailed {
+                session_id,
+                error: crate::app::domain::action::SessionTitleGenerationError::from(
+                    crate::app::domain::action::ModelCallError::RequestStartFailed {
+                        kind: crate::app::domain::action::ModelCallRequestErrorKind::Cancelled,
+                        message: "cancelled".to_string(),
+                    },
+                ),
+            },
+        );
+
+        assert!(effects.is_empty());
     }
 
     #[test]

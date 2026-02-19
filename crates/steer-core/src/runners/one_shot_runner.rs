@@ -85,7 +85,7 @@ impl OneShotRunner {
 
         info!(session_id = %session_id, message = %message, "Sending message to session");
 
-        let op_id = runtime
+        let (op_id, _message_id) = runtime
             .submit_user_input(
                 session_id,
                 vec![UserContent::Text {
@@ -447,6 +447,7 @@ mod tests {
             system_prompt: None,
             primary_agent_id: None,
             policy_overrides: SessionPolicyOverrides::empty(),
+            title: None,
             metadata: std::collections::HashMap::new(),
             auto_compaction: crate::session::state::AutoCompactionConfig::default(),
         }
