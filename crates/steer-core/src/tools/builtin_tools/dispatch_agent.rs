@@ -30,7 +30,9 @@ use steer_tools::tools::dispatch_agent::{
 use steer_tools::tools::{GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 use tracing::warn;
 
-use super::{register_builtin_tools, workspace_manager_op_error, workspace_op_error};
+use super::{
+    register_builtin_tools_for_visibility, workspace_manager_op_error, workspace_op_error,
+};
 
 fn dispatch_agent_description() -> String {
     let agent_specs = agent_specs_prompt();
@@ -405,6 +407,7 @@ Notes:
 
 fn build_runtime_tool_executor(
     workspace: Arc<dyn Workspace>,
+    visibility: &crate::session::state::ToolVisibility,
     parent_services: &Arc<ToolServices>,
 ) -> Arc<ToolExecutor> {
     let mut services = ToolServices::new(
@@ -433,7 +436,7 @@ fn build_runtime_tool_executor(
     }
 
     let mut registry = ToolRegistry::new();
-    register_builtin_tools(&mut registry);
+    register_builtin_tools_for_visibility(&mut registry, visibility);
 
     Arc::new(
         ToolExecutor::with_components(
@@ -491,7 +494,11 @@ async fn resume_agent_session(
             })
         })?;
 
-    let tool_executor = build_runtime_tool_executor(workspace, &ctx.services);
+    let tool_executor = build_runtime_tool_executor(
+        workspace,
+        &session_config.tool_config.visibility,
+        &ctx.services,
+    );
     let runtime = RuntimeService::spawn(
         ctx.services.event_store.clone(),
         ctx.services.api_client.clone(),
@@ -539,6 +546,7 @@ mod tests {
         ToolFilter, ToolVisibility,
     };
     use crate::tools::McpTransport;
+    use crate::tools::builtin_tools::ALL_BUILTIN_TOOL_NAMES;
     use crate::tools::services::{AgentSpawner, SubAgentError, SubAgentResult, ToolServices};
     use async_trait::async_trait;
     use std::collections::{HashMap, HashSet};
@@ -826,23 +834,59 @@ mod tests {
             api_client,
         ));
 
-        let executor = build_runtime_tool_executor(workspace, &services);
-        let supported = executor.supported_tools().await;
+        let executor =
+            build_runtime_tool_executor(workspace, &crate::session::state::ToolVisibility::All, &services);
+        let mut supported = executor.supported_tools().await;
+        supported.sort_unstable();
 
-        assert_eq!(supported.len(), 13);
-        assert!(supported.contains(&steer_tools::tools::AST_GREP_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::BASH_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::DISPATCH_AGENT_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::EDIT_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::MULTI_EDIT_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::FETCH_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::GLOB_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::GREP_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::LS_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::REPLACE_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::TODO_READ_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::TODO_WRITE_TOOL_NAME.to_string()));
-        assert!(supported.contains(&steer_tools::tools::VIEW_TOOL_NAME.to_string()));
+        let mut expected = ALL_BUILTIN_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+
+        assert_eq!(supported, expected);
+    }
+
+    #[tokio::test]
+    async fn runtime_tool_executor_honors_whitelist_visibility() {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider().unwrap(),
+            provider_registry,
+            model_registry,
+        ));
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap(),
+            })
+            .await
+            .unwrap();
+
+        let services = Arc::new(ToolServices::new(
+            workspace.clone(),
+            event_store,
+            api_client,
+        ));
+
+        let visibility = ToolVisibility::Whitelist(HashSet::from([
+            steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+            steer_tools::tools::TODO_READ_TOOL_NAME.to_string(),
+        ]));
+
+        let executor = build_runtime_tool_executor(workspace, &visibility, &services);
+        let mut supported = executor.supported_tools().await;
+        supported.sort_unstable();
+
+        let mut expected = vec![
+            steer_tools::tools::TODO_READ_TOOL_NAME.to_string(),
+            steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+        ];
+        expected.sort_unstable();
+
+        assert_eq!(supported, expected);
     }
 
     #[tokio::test]
@@ -1577,7 +1621,7 @@ mod tests {
         let events = event_store.load_events(session_id).await.unwrap();
         let unknown = events.iter().any(|(_, event)| match event {
             SessionEvent::ToolCallFailed { name, error, .. } => {
-                name == "bash" && (error.contains("Unknown tool") || error.contains("denied"))
+                name == "bash" && error.contains("Unknown tool")
             }
             _ => false,
         });
