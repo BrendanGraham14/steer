@@ -6934,6 +6934,7 @@ dependencies = [
  "ast-grep-language",
  "async-trait",
  "chrono",
+ "criterion",
  "fuzzy-matcher",
  "gethostname 0.5.0",
  "gix 0.73.0",

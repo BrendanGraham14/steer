@@ -49,6 +49,11 @@ sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls"] }
 [dev-dependencies]
 tempfile = "3.20.0"
 tokio = { version = "1.46.1", features = ["full"] }
+criterion = { version = "0.5" }
+
+[[bench]]
+name = "grep_perf"
+harness = false
 
 [features]
 default = []
