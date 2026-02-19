@@ -125,7 +125,7 @@ impl ToolOutput for FetchResult {}
 impl ToolOutput for AgentResult {}
 impl ToolOutput for ToolResult {}
 
-// Manual From implementations to support StaticTool::Output conversions
+// Manual From implementations to support BuiltinTool::Output conversions
 impl From<SearchResult> for ToolResult {
     fn from(r: SearchResult) -> Self {
         Self::Search(r)

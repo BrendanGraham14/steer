@@ -1,4 +1,4 @@
-//! Tool capability system for static tools.
+//! Tool capability system for builtin tools.
 //!
 //! Capabilities define what runtime services a tool needs. The runtime
 //! advertises its available capabilities, and only tools whose requirements

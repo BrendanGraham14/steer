@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use super::workspace_op_error;
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::GlobResult;
 use steer_tools::tools::glob::{GlobError, GlobParams, GlobToolSpec};
 use steer_workspace::{GlobRequest, WorkspaceOpContext};
@@ -10,7 +10,7 @@ use steer_workspace::{GlobRequest, WorkspaceOpContext};
 pub struct GlobTool;
 
 #[async_trait]
-impl StaticTool for GlobTool {
+impl BuiltinTool for GlobTool {
     type Params = GlobParams;
     type Output = GlobResult;
     type Spec = GlobToolSpec;
@@ -25,8 +25,8 @@ impl StaticTool for GlobTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<GlobError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<GlobError>> {
         let request = GlobRequest {
             pattern: params.pattern,
             path: params.path,
@@ -37,6 +37,6 @@ impl StaticTool for GlobTool {
             .workspace
             .glob(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(GlobError::Workspace(workspace_op_error(e))))
+            .map_err(|e| BuiltinToolError::execution(GlobError::Workspace(workspace_op_error(e))))
     }
 }

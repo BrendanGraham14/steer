@@ -8,11 +8,11 @@ use crate::workspace::{RepoManager, Workspace, WorkspaceManager};
 
 use super::BackendRegistry;
 use super::agent_spawner_impl::DefaultAgentSpawner;
+use super::builtin_tools::register_builtin_tools;
 use super::executor::ToolExecutor;
 use super::model_caller_impl::DefaultModelCaller;
 use super::registry::ToolRegistry;
 use super::services::ToolServices;
-use super::static_tools::register_builtin_static_tools;
 
 pub struct ToolSystemBuilder {
     workspace: Arc<dyn Workspace>,
@@ -92,8 +92,8 @@ impl ToolSystemBuilder {
         let services = Arc::new(services);
 
         let mut registry = ToolRegistry::new();
-        register_builtin_static_tools(&mut registry);
+        register_builtin_tools(&mut registry);
 
-        Arc::new(base_executor.with_static_tools(Arc::new(registry), services))
+        Arc::new(base_executor.with_builtin_tools(Arc::new(registry), services))
     }
 }

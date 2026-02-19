@@ -11,7 +11,7 @@ use crate::session::state::{
     ToolVisibility, UnapprovedBehavior,
 };
 use crate::tools::DISPATCH_AGENT_TOOL_NAME;
-use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+use crate::tools::builtin_tools::READ_ONLY_TOOL_NAMES;
 
 pub const NORMAL_PRIMARY_AGENT_ID: &str = "normal";
 pub const PLANNER_PRIMARY_AGENT_ID: &str = "plan";
@@ -335,7 +335,7 @@ mod tests {
         ToolApprovalPolicyOverrides, ToolDecision, ToolRule, ToolRuleOverrides, WorkspaceConfig,
     };
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
-    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+    use crate::tools::builtin_tools::READ_ONLY_TOOL_NAMES;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use steer_tools::tools::{TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME};

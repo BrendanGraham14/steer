@@ -22,20 +22,20 @@ pub use replace::ReplaceTool;
 pub use todo::{TodoReadTool, TodoWriteTool};
 pub use view::ViewTool;
 
-pub fn register_builtin_static_tools(registry: &mut super::ToolRegistry) {
-    registry.register_static(GrepTool);
-    registry.register_static(GlobTool);
-    registry.register_static(LsTool);
-    registry.register_static(ViewTool);
-    registry.register_static(BashTool);
-    registry.register_static(EditTool);
-    registry.register_static(MultiEditTool);
-    registry.register_static(ReplaceTool);
-    registry.register_static(AstGrepTool);
-    registry.register_static(TodoReadTool);
-    registry.register_static(TodoWriteTool);
-    registry.register_static(DispatchAgentTool);
-    registry.register_static(FetchTool);
+pub fn register_builtin_tools(registry: &mut super::ToolRegistry) {
+    registry.register_builtin(GrepTool);
+    registry.register_builtin(GlobTool);
+    registry.register_builtin(LsTool);
+    registry.register_builtin(ViewTool);
+    registry.register_builtin(BashTool);
+    registry.register_builtin(EditTool);
+    registry.register_builtin(MultiEditTool);
+    registry.register_builtin(ReplaceTool);
+    registry.register_builtin(AstGrepTool);
+    registry.register_builtin(TodoReadTool);
+    registry.register_builtin(TodoWriteTool);
+    registry.register_builtin(DispatchAgentTool);
+    registry.register_builtin(FetchTool);
 }
 
 pub(crate) fn workspace_op_error(
@@ -87,11 +87,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn register_builtin_static_tools_registers_all_expected_names() {
+    fn register_builtin_tools_registers_all_expected_names() {
         let mut registry = crate::tools::ToolRegistry::new();
-        register_builtin_static_tools(&mut registry);
+        register_builtin_tools(&mut registry);
 
-        let mut names = registry.static_tool_names();
+        let mut names = registry.builtin_tool_names();
         names.sort_unstable();
 
         let mut expected = vec![

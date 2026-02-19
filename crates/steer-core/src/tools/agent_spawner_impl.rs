@@ -170,9 +170,9 @@ mod tests {
     use crate::model_registry::ModelRegistry;
     use crate::session::state::ToolVisibility;
     use crate::test_utils::test_llm_config_provider;
+    use crate::tools::builtin_tools::READ_ONLY_TOOL_NAMES;
     use crate::tools::services::AgentSpawner;
     use crate::tools::services::SubAgentConfig;
-    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
     use crate::workspace::WorkspaceConfig;
     use std::collections::HashSet;
     use std::sync::Arc;
@@ -232,7 +232,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_agent_tool_executor_includes_static_tools() {
+    async fn sub_agent_tool_executor_includes_builtin_tools() {
         let temp_dir = TempDir::new().expect("create temp dir");
         let workspace = crate::workspace::create_workspace(&WorkspaceConfig::Local {
             path: temp_dir.path().to_path_buf(),
@@ -269,8 +269,8 @@ mod tests {
             BASH_TOOL_NAME,
         ] {
             assert!(
-                tool_executor.is_static_tool(tool_name),
-                "expected sub-agent to have static tool: {tool_name}"
+                tool_executor.is_builtin_tool(tool_name),
+                "expected sub-agent to have builtin tool: {tool_name}"
             );
         }
     }

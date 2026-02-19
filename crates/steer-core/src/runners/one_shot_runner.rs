@@ -348,7 +348,7 @@ mod tests {
     use crate::session::state::{
         ApprovalRules, SessionToolConfig, UnapprovedBehavior, WorkspaceConfig,
     };
-    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+    use crate::tools::builtin_tools::READ_ONLY_TOOL_NAMES;
     use crate::tools::{BackendRegistry, ToolExecutor};
     use dotenvy::dotenv;
     use serde_json::json;

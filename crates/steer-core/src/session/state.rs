@@ -1,6 +1,6 @@
 use crate::config::model::ModelId;
 use crate::error::Result;
-use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+use crate::tools::builtin_tools::READ_ONLY_TOOL_NAMES;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -925,7 +925,7 @@ mod tests {
     use crate::app::conversation::{Message, MessageData, UserContent};
     use crate::config::model::builtin::claude_sonnet_4_5 as test_model;
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
-    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+    use crate::tools::builtin_tools::READ_ONLY_TOOL_NAMES;
     use steer_tools::tools::{BASH_TOOL_NAME, EDIT_TOOL_NAME};
 
     #[test]
@@ -1246,7 +1246,7 @@ mod tests {
     #[tokio::test]
     async fn test_session_config_build_registry_no_default_backends() {
         // Test that BackendRegistry only contains user-configured backends.
-        // Static tools (dispatch_agent, web_fetch) are now in ToolRegistry,
+        // Builtin tools (dispatch_agent, web_fetch) are now in ToolRegistry,
         // not BackendRegistry.
         let config = SessionConfig {
             workspace: WorkspaceConfig::Local {

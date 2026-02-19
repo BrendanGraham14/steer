@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use super::workspace_op_error;
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::AstGrepResult;
 use steer_tools::tools::astgrep::{AstGrepError, AstGrepParams, AstGrepToolSpec};
 use steer_workspace::{AstGrepRequest, WorkspaceOpContext};
@@ -10,7 +10,7 @@ use steer_workspace::{AstGrepRequest, WorkspaceOpContext};
 pub struct AstGrepTool;
 
 #[async_trait]
-impl StaticTool for AstGrepTool {
+impl BuiltinTool for AstGrepTool {
     type Params = AstGrepParams;
     type Output = AstGrepResult;
     type Spec = AstGrepToolSpec;
@@ -36,8 +36,8 @@ Automatically respects .gitignore files"#;
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<AstGrepError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<AstGrepError>> {
         let request = AstGrepRequest {
             pattern: params.pattern,
             lang: params.lang,
@@ -53,7 +53,7 @@ Automatically respects .gitignore files"#;
             .astgrep(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(AstGrepError::Workspace(workspace_op_error(e)))
+                BuiltinToolError::execution(AstGrepError::Workspace(workspace_op_error(e)))
             })?;
         Ok(AstGrepResult(result))
     }

@@ -2616,7 +2616,7 @@ mod tests {
         UnapprovedBehavior,
     };
     use crate::tools::DISPATCH_AGENT_TOOL_NAME;
-    use crate::tools::static_tools::READ_ONLY_TOOL_NAMES;
+    use crate::tools::builtin_tools::READ_ONLY_TOOL_NAMES;
     use schemars::schema_for;
     use serde_json::json;
     use std::collections::HashSet;

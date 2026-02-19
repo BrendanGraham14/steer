@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use super::workspace_op_error;
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::ReplaceResult;
 use steer_tools::tools::replace::{ReplaceError, ReplaceParams, ReplaceToolSpec};
 use steer_workspace::{WorkspaceOpContext, WriteFileRequest};
@@ -10,7 +10,7 @@ use steer_workspace::{WorkspaceOpContext, WriteFileRequest};
 pub struct ReplaceTool;
 
 #[async_trait]
-impl StaticTool for ReplaceTool {
+impl BuiltinTool for ReplaceTool {
     type Params = ReplaceParams;
     type Output = ReplaceResult;
     type Spec = ReplaceToolSpec;
@@ -29,8 +29,8 @@ Before using this tool:
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<ReplaceError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<ReplaceError>> {
         let request = WriteFileRequest {
             file_path: params.file_path,
             content: params.content,
@@ -43,7 +43,7 @@ Before using this tool:
             .write_file(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(ReplaceError::Workspace(workspace_op_error(e)))
+                BuiltinToolError::execution(ReplaceError::Workspace(workspace_op_error(e)))
             })?;
         Ok(ReplaceResult(result))
     }

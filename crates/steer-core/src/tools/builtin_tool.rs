@@ -16,7 +16,7 @@ use super::capability::Capabilities;
 use super::services::ToolServices;
 
 #[derive(Debug, Clone)]
-pub struct StaticToolContext {
+pub struct BuiltinToolContext {
     pub tool_call_id: ToolCallId,
     pub session_id: SessionId,
     pub invoking_model: Option<ModelId>,
@@ -24,14 +24,14 @@ pub struct StaticToolContext {
     pub services: Arc<ToolServices>,
 }
 
-impl StaticToolContext {
+impl BuiltinToolContext {
     pub fn is_cancelled(&self) -> bool {
         self.cancellation_token.is_cancelled()
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum StaticToolError<E: StdError + Send + Sync + 'static> {
+pub enum BuiltinToolError<E: StdError + Send + Sync + 'static> {
     #[error("Invalid parameters: {0}")]
     InvalidParams(String),
 
@@ -48,7 +48,7 @@ pub enum StaticToolError<E: StdError + Send + Sync + 'static> {
     Timeout,
 }
 
-impl<E: StdError + Send + Sync + 'static> StaticToolError<E> {
+impl<E: StdError + Send + Sync + 'static> BuiltinToolError<E> {
     pub fn invalid_params(msg: impl Into<String>) -> Self {
         Self::InvalidParams(msg.into())
     }
@@ -61,17 +61,17 @@ impl<E: StdError + Send + Sync + 'static> StaticToolError<E> {
         Self::MissingCapability(cap.to_string())
     }
 
-    pub fn map_execution<F, E2>(self, f: F) -> StaticToolError<E2>
+    pub fn map_execution<F, E2>(self, f: F) -> BuiltinToolError<E2>
     where
         F: FnOnce(E) -> E2,
         E2: StdError + Send + Sync + 'static,
     {
         match self {
-            StaticToolError::InvalidParams(msg) => StaticToolError::InvalidParams(msg),
-            StaticToolError::Execution(err) => StaticToolError::Execution(f(err)),
-            StaticToolError::MissingCapability(cap) => StaticToolError::MissingCapability(cap),
-            StaticToolError::Cancelled => StaticToolError::Cancelled,
-            StaticToolError::Timeout => StaticToolError::Timeout,
+            BuiltinToolError::InvalidParams(msg) => BuiltinToolError::InvalidParams(msg),
+            BuiltinToolError::Execution(err) => BuiltinToolError::Execution(f(err)),
+            BuiltinToolError::MissingCapability(cap) => BuiltinToolError::MissingCapability(cap),
+            BuiltinToolError::Cancelled => BuiltinToolError::Cancelled,
+            BuiltinToolError::Timeout => BuiltinToolError::Timeout,
         }
     }
 }
@@ -104,7 +104,7 @@ where
 }
 
 #[async_trait]
-pub trait StaticTool: Send + Sync + 'static {
+pub trait BuiltinTool: Send + Sync + 'static {
     type Params: DeserializeOwned + JsonSchema + Send;
     type Output: Into<ToolResult> + Send;
     type Spec: ToolSpec<Params = Self::Params, Result = Self::Output>;
@@ -116,8 +116,8 @@ pub trait StaticTool: Send + Sync + 'static {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<<Self::Spec as ToolSpec>::Error>>;
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<<Self::Spec as ToolSpec>::Error>>;
 
     fn schema() -> ToolSchema
     where
@@ -128,7 +128,7 @@ pub trait StaticTool: Send + Sync + 'static {
 }
 
 #[async_trait]
-pub trait StaticToolErased: Send + Sync {
+pub trait BuiltinToolErased: Send + Sync {
     fn name(&self) -> &'static str;
     fn requires_approval(&self) -> bool;
     fn required_capabilities(&self) -> Capabilities;
@@ -137,14 +137,14 @@ pub trait StaticToolErased: Send + Sync {
     async fn execute_erased(
         &self,
         params: serde_json::Value,
-        ctx: &StaticToolContext,
-    ) -> Result<ToolResult, StaticToolError<ToolExecutionError>>;
+        ctx: &BuiltinToolContext,
+    ) -> Result<ToolResult, BuiltinToolError<ToolExecutionError>>;
 }
 
 #[async_trait]
-impl<T> StaticToolErased for T
+impl<T> BuiltinToolErased for T
 where
-    T: StaticTool,
+    T: BuiltinTool,
 {
     fn name(&self) -> &'static str {
         T::Spec::NAME
@@ -165,13 +165,13 @@ where
     async fn execute_erased(
         &self,
         params: serde_json::Value,
-        ctx: &StaticToolContext,
-    ) -> Result<ToolResult, StaticToolError<ToolExecutionError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<ToolResult, BuiltinToolError<ToolExecutionError>> {
         let typed_params: T::Params = serde_json::from_value(params)
-            .map_err(|e| StaticToolError::invalid_params(e.to_string()))?;
+            .map_err(|e| BuiltinToolError::invalid_params(e.to_string()))?;
 
         if ctx.is_cancelled() {
-            return Err(StaticToolError::Cancelled);
+            return Err(BuiltinToolError::Cancelled);
         }
 
         let result = self

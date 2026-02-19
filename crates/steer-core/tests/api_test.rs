@@ -11,11 +11,11 @@ use steer_core::config::model::{ModelId, builtin};
 use serde_json::json;
 use steer_core::test_utils;
 use steer_core::tools::ToolRegistry;
-use steer_core::tools::capability::Capabilities;
-use steer_core::tools::static_tools::{
+use steer_core::tools::builtin_tools::{
     AstGrepTool, BashTool, DispatchAgentTool, EditTool, FetchTool, GlobTool, GrepTool, LsTool,
     MultiEditTool, ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool,
 };
+use steer_core::tools::capability::Capabilities;
 use steer_core::tools::{DispatchAgentParams, DispatchAgentTarget, WorkspaceTarget};
 use steer_tools::result::{EditResult, ExternalResult, FileContentResult, ToolResult};
 use steer_tools::tools::{DISPATCH_AGENT_TOOL_NAME, LS_TOOL_NAME, TODO_READ_TOOL_NAME};
@@ -115,19 +115,19 @@ fn test_client() -> Client {
 
 async fn default_tool_schemas() -> Vec<Tool> {
     let mut registry = ToolRegistry::new();
-    registry.register_static(GrepTool);
-    registry.register_static(GlobTool);
-    registry.register_static(LsTool);
-    registry.register_static(ViewTool);
-    registry.register_static(BashTool);
-    registry.register_static(EditTool);
-    registry.register_static(MultiEditTool);
-    registry.register_static(ReplaceTool);
-    registry.register_static(AstGrepTool);
-    registry.register_static(TodoReadTool);
-    registry.register_static(TodoWriteTool);
-    registry.register_static(DispatchAgentTool);
-    registry.register_static(FetchTool);
+    registry.register_builtin(GrepTool);
+    registry.register_builtin(GlobTool);
+    registry.register_builtin(LsTool);
+    registry.register_builtin(ViewTool);
+    registry.register_builtin(BashTool);
+    registry.register_builtin(EditTool);
+    registry.register_builtin(MultiEditTool);
+    registry.register_builtin(ReplaceTool);
+    registry.register_builtin(AstGrepTool);
+    registry.register_builtin(TodoReadTool);
+    registry.register_builtin(TodoWriteTool);
+    registry.register_builtin(DispatchAgentTool);
+    registry.register_builtin(FetchTool);
 
     registry.available_schemas(Capabilities::all()).await
 }

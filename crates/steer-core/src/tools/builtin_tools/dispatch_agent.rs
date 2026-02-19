@@ -12,11 +12,11 @@ use crate::app::validation::ValidatorRegistry;
 use crate::config::model::builtin::claude_sonnet_4_5 as default_model;
 use crate::runners::OneShotRunner;
 use crate::session::state::BackendConfig;
+use crate::tools::builtin_tool::{
+    BuiltinTool, BuiltinToolContext, BuiltinToolError, schema_with_description,
+};
 use crate::tools::capability::Capabilities;
 use crate::tools::services::{SubAgentConfig, SubAgentError, ToolServices};
-use crate::tools::static_tool::{
-    StaticTool, StaticToolContext, StaticToolError, schema_with_description,
-};
 use crate::tools::{BackendRegistry, ToolExecutor, ToolRegistry};
 use crate::workspace::{
     CreateWorkspaceRequest, EnvironmentId, RepoRef, VcsKind, VcsStatus, Workspace,
@@ -30,7 +30,7 @@ use steer_tools::tools::dispatch_agent::{
 use steer_tools::tools::{GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 use tracing::warn;
 
-use super::{register_builtin_static_tools, workspace_manager_op_error, workspace_op_error};
+use super::{register_builtin_tools, workspace_manager_op_error, workspace_op_error};
 
 fn dispatch_agent_description() -> String {
     let agent_specs = agent_specs_prompt();
@@ -107,7 +107,7 @@ New session options:
 pub struct DispatchAgentTool;
 
 #[async_trait]
-impl StaticTool for DispatchAgentTool {
+impl BuiltinTool for DispatchAgentTool {
     type Params = DispatchAgentParams;
     type Output = AgentResult;
     type Spec = DispatchAgentToolSpec;
@@ -123,14 +123,14 @@ impl StaticTool for DispatchAgentTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<DispatchAgentError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<DispatchAgentError>> {
         let DispatchAgentParams { prompt, target } = params;
 
         let (workspace_target, agent) = match target {
             DispatchAgentTarget::Resume { session_id } => {
                 let session_id = SessionId::parse(&session_id).ok_or_else(|| {
-                    StaticToolError::invalid_params(format!("Invalid session_id '{session_id}'"))
+                    BuiltinToolError::invalid_params(format!("Invalid session_id '{session_id}'"))
                 })?;
                 return resume_agent_session(session_id, prompt, ctx).await;
             }
@@ -140,7 +140,7 @@ impl StaticTool for DispatchAgentTool {
         let spawner = ctx
             .services
             .agent_spawner()
-            .ok_or_else(|| StaticToolError::missing_capability("agent_spawner"))?;
+            .ok_or_else(|| BuiltinToolError::missing_capability("agent_spawner"))?;
 
         let base_workspace = ctx.services.workspace.clone();
         let base_path = base_workspace.working_directory().to_path_buf();
@@ -200,11 +200,11 @@ impl StaticTool for DispatchAgentTool {
             let manager = ctx
                 .services
                 .workspace_manager()
-                .ok_or_else(|| StaticToolError::missing_capability("workspace_manager"))?;
+                .ok_or_else(|| BuiltinToolError::missing_capability("workspace_manager"))?;
             status_manager = Some(manager.clone());
 
             let base_repo_id = repo_id.ok_or_else(|| {
-                StaticToolError::execution(DispatchAgentError::WorkspaceUnavailable {
+                BuiltinToolError::execution(DispatchAgentError::WorkspaceUnavailable {
                     message:
                         "Current path is not a supported workspace; cannot create new workspace"
                             .to_string(),
@@ -230,7 +230,7 @@ impl StaticTool for DispatchAgentTool {
                 .create_workspace(create_request)
                 .await
                 .map_err(|e| {
-                    StaticToolError::execution(DispatchAgentError::Workspace(
+                    BuiltinToolError::execution(DispatchAgentError::Workspace(
                         workspace_manager_op_error(e),
                     ))
                 })?;
@@ -239,7 +239,7 @@ impl StaticTool for DispatchAgentTool {
                 .open_workspace(info.workspace_id)
                 .await
                 .map_err(|e| {
-                    StaticToolError::execution(DispatchAgentError::Workspace(
+                    BuiltinToolError::execution(DispatchAgentError::Workspace(
                         workspace_manager_op_error(e),
                     ))
                 })?;
@@ -268,7 +268,7 @@ impl StaticTool for DispatchAgentTool {
         }
 
         let env_info = workspace.environment().await.map_err(|e| {
-            StaticToolError::execution(DispatchAgentError::Workspace(workspace_op_error(e)))
+            BuiltinToolError::execution(DispatchAgentError::Workspace(workspace_op_error(e)))
         })?;
 
         let system_prompt = format!(
@@ -295,7 +295,7 @@ Notes:
                 .map(|spec| spec.id)
                 .collect::<Vec<_>>()
                 .join(", ");
-            StaticToolError::invalid_params(format!(
+            BuiltinToolError::invalid_params(format!(
                 "Unknown agent spec '{agent_id}'. Available: {available}"
             ))
         })?;
@@ -389,8 +389,8 @@ Notes:
         }
 
         let result = spawn_result.map_err(|e| match e {
-            SubAgentError::Cancelled => StaticToolError::Cancelled,
-            other => StaticToolError::execution(DispatchAgentError::SpawnFailed {
+            SubAgentError::Cancelled => BuiltinToolError::Cancelled,
+            other => BuiltinToolError::execution(DispatchAgentError::SpawnFailed {
                 message: other.to_string(),
             }),
         })?;
@@ -433,29 +433,29 @@ fn build_runtime_tool_executor(
     }
 
     let mut registry = ToolRegistry::new();
-    register_builtin_static_tools(&mut registry);
+    register_builtin_tools(&mut registry);
 
     Arc::new(
         ToolExecutor::with_components(
             Arc::new(BackendRegistry::new()),
             Arc::new(ValidatorRegistry::new()),
         )
-        .with_static_tools(Arc::new(registry), Arc::new(services)),
+        .with_builtin_tools(Arc::new(registry), Arc::new(services)),
     )
 }
 
 async fn resume_agent_session(
     session_id: SessionId,
     prompt: String,
-    ctx: &StaticToolContext,
-) -> Result<AgentResult, StaticToolError<DispatchAgentError>> {
+    ctx: &BuiltinToolContext,
+) -> Result<AgentResult, BuiltinToolError<DispatchAgentError>> {
     let events = ctx
         .services
         .event_store
         .load_events(session_id)
         .await
         .map_err(|e| {
-            StaticToolError::execution(DispatchAgentError::SessionLoadFailed {
+            BuiltinToolError::execution(DispatchAgentError::SessionLoadFailed {
                 session_id: session_id.to_string(),
                 message: e.to_string(),
             })
@@ -468,13 +468,13 @@ async fn resume_agent_session(
             _ => None,
         })
         .ok_or_else(|| {
-            StaticToolError::execution(DispatchAgentError::MissingSessionCreatedEvent {
+            BuiltinToolError::execution(DispatchAgentError::MissingSessionCreatedEvent {
                 session_id: session_id.to_string(),
             })
         })?;
 
     if session_config.parent_session_id != Some(ctx.session_id) {
-        return Err(StaticToolError::execution(
+        return Err(BuiltinToolError::execution(
             DispatchAgentError::InvalidParentSession {
                 session_id: session_id.to_string(),
                 parent_session_id: ctx.session_id.to_string(),
@@ -485,7 +485,7 @@ async fn resume_agent_session(
     let workspace = create_workspace_from_session_config(&session_config.workspace)
         .await
         .map_err(|e| {
-            StaticToolError::execution(DispatchAgentError::WorkspaceOpenFailed {
+            BuiltinToolError::execution(DispatchAgentError::WorkspaceOpenFailed {
                 session_id: session_id.to_string(),
                 message: e.to_string(),
             })
@@ -510,8 +510,8 @@ async fn resume_agent_session(
     runtime.shutdown().await;
 
     let run_result = run_result.map_err(|e| match e {
-        crate::error::Error::Cancelled => StaticToolError::Cancelled,
-        other => StaticToolError::execution(DispatchAgentError::SpawnFailed {
+        crate::error::Error::Cancelled => BuiltinToolError::Cancelled,
+        other => BuiltinToolError::execution(DispatchAgentError::SpawnFailed {
             message: other.to_string(),
         }),
     })?;
@@ -882,7 +882,7 @@ mod tests {
 
         let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: SessionId::new(),
             invoking_model: None,
@@ -894,7 +894,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(StaticToolError::Execution(
+            Err(BuiltinToolError::Execution(
                 DispatchAgentError::InvalidParentSession {
                     session_id: actual,
                     parent_session_id
@@ -925,7 +925,7 @@ mod tests {
 
         let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: SessionId::new(),
             invoking_model: None,
@@ -937,7 +937,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(StaticToolError::Execution(
+            Err(BuiltinToolError::Execution(
                 DispatchAgentError::MissingSessionCreatedEvent { session_id: actual }
             )) if actual == session_id.to_string()
         ));
@@ -963,7 +963,7 @@ mod tests {
         let session_id = SessionId::new();
         let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: SessionId::new(),
             invoking_model: None,
@@ -975,7 +975,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(StaticToolError::Execution(
+            Err(BuiltinToolError::Execution(
                 DispatchAgentError::SessionLoadFailed {
                     session_id: actual,
                     ..
@@ -1025,7 +1025,7 @@ mod tests {
 
         let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
             invoking_model: None,
@@ -1037,7 +1037,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(StaticToolError::Execution(
+            Err(BuiltinToolError::Execution(
                 DispatchAgentError::WorkspaceOpenFailed {
                     session_id: actual,
                     ..
@@ -1088,7 +1088,7 @@ mod tests {
 
         let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
             invoking_model: None,
@@ -1147,7 +1147,7 @@ mod tests {
         let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
 
         let cancel_token = CancellationToken::new();
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
             invoking_model: None,
@@ -1163,7 +1163,7 @@ mod tests {
         let result = resume_agent_session(session_id, "ping".to_string(), &ctx).await;
         let _ = cancel_task.await;
 
-        assert!(matches!(result, Err(StaticToolError::Cancelled)));
+        assert!(matches!(result, Err(BuiltinToolError::Cancelled)));
     }
 
     #[tokio::test]
@@ -1194,7 +1194,7 @@ mod tests {
                 .with_agent_spawner(Arc::new(spawner)),
         );
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: SessionId::new(),
             invoking_model: None,
@@ -1299,7 +1299,7 @@ mod tests {
                 .with_agent_spawner(Arc::new(spawner)),
         );
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
             invoking_model: None,
@@ -1391,7 +1391,7 @@ mod tests {
                 .with_agent_spawner(Arc::new(spawner)),
         );
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
             invoking_model: None,
@@ -1475,7 +1475,7 @@ mod tests {
                 .with_agent_spawner(Arc::new(spawner)),
         );
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
             invoking_model: None,
@@ -1562,7 +1562,7 @@ mod tests {
             api_client,
         ));
 
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId::new(),
             session_id: parent_session_id,
             invoking_model: None,
@@ -1577,7 +1577,7 @@ mod tests {
         let events = event_store.load_events(session_id).await.unwrap();
         let unknown = events.iter().any(|(_, event)| match event {
             SessionEvent::ToolCallFailed { name, error, .. } => {
-                name == "bash" && ( error.contains("Unknown tool") || error.contains("denied"))
+                name == "bash" && (error.contains("Unknown tool") || error.contains("denied"))
             }
             _ => false,
         });

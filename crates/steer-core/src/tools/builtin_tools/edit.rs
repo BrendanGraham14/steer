@@ -1,6 +1,6 @@
 use super::workspace_op_error;
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use async_trait::async_trait;
 use steer_tools::result::{EditResult, MultiEditResult};
 use steer_tools::tools::edit::multi_edit::{MultiEditError, MultiEditParams, MultiEditToolSpec};
@@ -59,7 +59,7 @@ If you want to create a new file, use:
 Remember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each.";
 
 #[async_trait]
-impl StaticTool for EditTool {
+impl BuiltinTool for EditTool {
     type Params = EditParams;
     type Output = EditResult;
     type Spec = EditToolSpec;
@@ -71,8 +71,8 @@ impl StaticTool for EditTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<EditError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<EditError>> {
         let request = ApplyEditsRequest {
             file_path: params.file_path,
             edits: vec![EditOperation {
@@ -86,14 +86,14 @@ impl StaticTool for EditTool {
             .workspace
             .apply_edits(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(EditError::Workspace(workspace_op_error(e))))
+            .map_err(|e| BuiltinToolError::execution(EditError::Workspace(workspace_op_error(e))))
     }
 }
 
 pub struct MultiEditTool;
 
 #[async_trait]
-impl StaticTool for MultiEditTool {
+impl BuiltinTool for MultiEditTool {
     type Params = MultiEditParams;
     type Output = MultiEditResult;
     type Spec = MultiEditToolSpec;
@@ -105,8 +105,8 @@ impl StaticTool for MultiEditTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<MultiEditError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<MultiEditError>> {
         let request = ApplyEditsRequest {
             file_path: params.file_path,
             edits: params
@@ -126,7 +126,7 @@ impl StaticTool for MultiEditTool {
             .apply_edits(request, &op_ctx)
             .await
             .map_err(|e| {
-                StaticToolError::execution(MultiEditError::Workspace(workspace_op_error(e)))
+                BuiltinToolError::execution(MultiEditError::Workspace(workspace_op_error(e)))
             })?;
         Ok(MultiEditResult(result))
     }

@@ -7,10 +7,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Span, debug, error, instrument};
 
 use crate::app::validation::{ValidationContext, ValidatorRegistry};
+use crate::tools::builtin_tool::{BuiltinToolContext, BuiltinToolError};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::resolver::BackendResolver;
 use crate::tools::services::ToolServices;
-use crate::tools::static_tool::{StaticToolContext, StaticToolError};
 use crate::tools::{BackendRegistry, ExecutionContext};
 use steer_tools::{ToolCall, ToolSchema, result::ToolResult};
 
@@ -51,7 +51,7 @@ impl ToolExecutor {
         }
     }
 
-    pub fn with_static_tools(
+    pub fn with_builtin_tools(
         mut self,
         registry: Arc<ToolRegistry>,
         services: Arc<ToolServices>,
@@ -63,7 +63,7 @@ impl ToolExecutor {
 
     pub async fn requires_approval(&self, tool_name: &str) -> Result<bool> {
         if let Some(registry) = &self.tool_registry
-            && registry.is_static_tool(tool_name)
+            && registry.is_builtin_tool(tool_name)
         {
             return Ok(registry.requires_approval(tool_name));
         }
@@ -104,26 +104,26 @@ impl ToolExecutor {
         session_resolver: Option<&dyn BackendResolver>,
     ) -> Vec<ToolSchema> {
         let mut schemas = Vec::new();
-        let mut static_tool_names = std::collections::HashSet::new();
+        let mut builtin_tool_names = std::collections::HashSet::new();
 
         if let Some(registry) = &self.tool_registry {
-            let static_schemas = registry.available_schemas(capabilities).await;
-            for schema in &static_schemas {
-                static_tool_names.insert(schema.name.clone());
+            let builtin_schemas = registry.available_schemas(capabilities).await;
+            for schema in &builtin_schemas {
+                builtin_tool_names.insert(schema.name.clone());
             }
-            schemas.extend(static_schemas);
+            schemas.extend(builtin_schemas);
         }
 
         if let Some(resolver) = session_resolver {
             for schema in resolver.get_tool_schemas().await {
-                if !static_tool_names.contains(&schema.name) {
+                if !builtin_tool_names.contains(&schema.name) {
                     schemas.push(schema);
                 }
             }
         }
 
         for schema in self.backend_registry.get_tool_schemas().await {
-            if !static_tool_names.contains(&schema.name) {
+            if !builtin_tool_names.contains(&schema.name) {
                 schemas.push(schema);
             }
         }
@@ -131,10 +131,10 @@ impl ToolExecutor {
         schemas
     }
 
-    pub fn is_static_tool(&self, tool_name: &str) -> bool {
+    pub fn is_builtin_tool(&self, tool_name: &str) -> bool {
         self.tool_registry
             .as_ref()
-            .is_some_and(|r| r.is_static_tool(tool_name))
+            .is_some_and(|r| r.is_builtin_tool(tool_name))
     }
 
     /// Get the list of supported tools
@@ -178,11 +178,11 @@ impl ToolExecutor {
 
         if let Some((registry, services)) =
             self.tool_registry.as_ref().zip(self.tool_services.as_ref())
-            && let Some(tool) = registry.static_tool(tool_name)
+            && let Some(tool) = registry.builtin_tool(tool_name)
         {
-            debug!(target: "tool_executor", "Executing static tool: {}", tool_name);
+            debug!(target: "tool_executor", "Executing builtin tool: {}", tool_name);
             return self
-                .execute_static_tool(tool, tool_call, session_id, invoking_model, services, token)
+                .execute_builtin_tool(tool, tool_call, session_id, invoking_model, services, token)
                 .await;
         }
 
@@ -270,16 +270,16 @@ impl ToolExecutor {
         backend.execute(tool_call, &context).await
     }
 
-    async fn execute_static_tool(
+    async fn execute_builtin_tool(
         &self,
-        tool: &dyn super::static_tool::StaticToolErased,
+        tool: &dyn super::builtin_tool::BuiltinToolErased,
         tool_call: &ToolCall,
         session_id: SessionId,
         invoking_model: Option<ModelId>,
         services: &Arc<ToolServices>,
         token: CancellationToken,
     ) -> std::result::Result<ToolResult, steer_tools::ToolError> {
-        let ctx = StaticToolContext {
+        let ctx = BuiltinToolContext {
             tool_call_id: ToolCallId(tool_call.id.clone()),
             session_id,
             invoking_model,
@@ -291,18 +291,20 @@ impl ToolExecutor {
             .execute_erased(tool_call.parameters.clone(), &ctx)
             .await
             .map_err(|e| match e {
-                StaticToolError::InvalidParams(msg) => steer_tools::ToolError::InvalidParams {
+                BuiltinToolError::InvalidParams(msg) => steer_tools::ToolError::InvalidParams {
                     tool_name: tool_call.name.clone(),
                     message: msg,
                 },
-                StaticToolError::Execution(err) => steer_tools::ToolError::Execution(err),
-                StaticToolError::MissingCapability(cap) => {
+                BuiltinToolError::Execution(err) => steer_tools::ToolError::Execution(err),
+                BuiltinToolError::MissingCapability(cap) => {
                     steer_tools::ToolError::InternalError(format!("Missing capability: {cap}"))
                 }
-                StaticToolError::Cancelled => {
+                BuiltinToolError::Cancelled => {
                     steer_tools::ToolError::Cancelled(tool_call.name.clone())
                 }
-                StaticToolError::Timeout => steer_tools::ToolError::Timeout(tool_call.name.clone()),
+                BuiltinToolError::Timeout => {
+                    steer_tools::ToolError::Timeout(tool_call.name.clone())
+                }
             })?;
 
         Ok(output)
@@ -323,16 +325,16 @@ impl ToolExecutor {
 
         if let Some((registry, services)) =
             self.tool_registry.as_ref().zip(self.tool_services.as_ref())
-            && let Some(tool) = registry.static_tool(tool_name)
+            && let Some(tool) = registry.builtin_tool(tool_name)
         {
             debug!(
                 target: "app.tool_executor.execute_tool_direct",
-                "Executing static tool {} ({}) directly (no validation)",
+                "Executing builtin tool {} ({}) directly (no validation)",
                 tool_name,
                 tool_id
             );
             return self
-                .execute_static_tool(tool, tool_call, SessionId::new(), None, services, token)
+                .execute_builtin_tool(tool, tool_call, SessionId::new(), None, services, token)
                 .await;
         }
 

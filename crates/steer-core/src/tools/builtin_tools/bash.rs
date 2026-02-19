@@ -5,8 +5,8 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::BashResult;
 use steer_tools::tools::bash::{BashError, BashParams, BashToolSpec};
 
@@ -17,7 +17,7 @@ const TIMEOUT_EXIT_CODE: i32 = 124;
 pub struct BashTool;
 
 #[async_trait]
-impl StaticTool for BashTool {
+impl BuiltinTool for BashTool {
     type Params = BashParams;
     type Output = BashResult;
     type Spec = BashToolSpec;
@@ -29,14 +29,14 @@ impl StaticTool for BashTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<BashError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<BashError>> {
         if ctx.is_cancelled() {
-            return Err(StaticToolError::Cancelled);
+            return Err(BuiltinToolError::Cancelled);
         }
 
         if is_banned_command(&params.command) {
-            return Err(StaticToolError::execution(BashError::DisallowedCommand {
+            return Err(BuiltinToolError::execution(BashError::DisallowedCommand {
                 command: params.command,
             }));
         }
@@ -68,7 +68,7 @@ async fn run_command(
     working_directory: &std::path::Path,
     timeout_duration: Duration,
     cancellation_token: tokio_util::sync::CancellationToken,
-) -> Result<BashResult, StaticToolError<BashError>> {
+) -> Result<BashResult, BuiltinToolError<BashError>> {
     let mut cmd = Command::new("/bin/bash");
     cmd.arg("-c")
         .arg(command)
@@ -78,18 +78,18 @@ async fn run_command(
         .kill_on_drop(true);
 
     let mut child = cmd.spawn().map_err(|e| {
-        StaticToolError::execution(BashError::Io {
+        BuiltinToolError::execution(BashError::Io {
             message: e.to_string(),
         })
     })?;
 
     let mut stdout = child.stdout.take().ok_or_else(|| {
-        StaticToolError::execution(BashError::Io {
+        BuiltinToolError::execution(BashError::Io {
             message: "Failed to capture stdout".to_string(),
         })
     })?;
     let mut stderr = child.stderr.take().ok_or_else(|| {
-        StaticToolError::execution(BashError::Io {
+        BuiltinToolError::execution(BashError::Io {
             message: "Failed to capture stderr".to_string(),
         })
     })?;
@@ -109,11 +109,11 @@ async fn run_command(
             let _ = child.kill().await;
             stdout_handle.abort();
             stderr_handle.abort();
-            return Err(StaticToolError::Cancelled);
+            return Err(BuiltinToolError::Cancelled);
         }
         status = child.wait() => {
             let status = status.map_err(|e| {
-                StaticToolError::execution(BashError::Io {
+                BuiltinToolError::execution(BashError::Io {
                     message: e.to_string(),
                 })
             })?;
@@ -122,7 +122,7 @@ async fn run_command(
         () = tokio::time::sleep(timeout_duration) => {
             let _ = child.kill().await;
             child.wait().await.map_err(|e| {
-                StaticToolError::execution(BashError::Io {
+                BuiltinToolError::execution(BashError::Io {
                     message: format!("Failed to wait for timed out command: {e}"),
                 })
             })?;
@@ -132,18 +132,18 @@ async fn run_command(
 
     let (stdout_result, stderr_result) =
         tokio::try_join!(stdout_handle, stderr_handle).map_err(|e| {
-            StaticToolError::execution(BashError::Io {
+            BuiltinToolError::execution(BashError::Io {
                 message: format!("Failed to join read tasks: {e}"),
             })
         })?;
 
     let stdout_bytes = stdout_result.map_err(|e| {
-        StaticToolError::execution(BashError::Io {
+        BuiltinToolError::execution(BashError::Io {
             message: format!("Failed to read stdout: {e}"),
         })
     })?;
     let stderr_bytes = stderr_result.map_err(|e| {
-        StaticToolError::execution(BashError::Io {
+        BuiltinToolError::execution(BashError::Io {
             message: format!("Failed to read stderr: {e}"),
         })
     })?;
@@ -177,7 +177,7 @@ static BANNED_COMMAND_REGEXES: std::sync::LazyLock<Vec<Regex>> = std::sync::Lazy
     banned_commands
         .iter()
         .filter_map(|cmd| {
-            let pattern = format!(r"^\\s*(\\S*/)?{}\\b", regex::escape(cmd));
+            let pattern = format!(r"^\s*(\S*/)?{}\b", regex::escape(cmd));
             match Regex::new(&pattern) {
                 Ok(regex) => Some(regex),
                 Err(err) => {

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::{TodoListResult, TodoWriteResult};
 use steer_tools::tools::todo::TodoWriteFileOperation;
 use steer_tools::tools::todo::read::{TodoReadError, TodoReadParams, TodoReadToolSpec};
@@ -51,7 +51,7 @@ Task Management:
 pub struct TodoReadTool;
 
 #[async_trait]
-impl StaticTool for TodoReadTool {
+impl BuiltinTool for TodoReadTool {
     type Params = TodoReadParams;
     type Output = TodoListResult;
     type Spec = TodoReadToolSpec;
@@ -63,10 +63,10 @@ impl StaticTool for TodoReadTool {
     async fn execute(
         &self,
         _params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<TodoReadError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<TodoReadError>> {
         if ctx.is_cancelled() {
-            return Err(StaticToolError::Cancelled);
+            return Err(BuiltinToolError::Cancelled);
         }
 
         let todos = ctx
@@ -75,7 +75,7 @@ impl StaticTool for TodoReadTool {
             .load_todos(ctx.session_id)
             .await
             .map_err(|e| {
-                StaticToolError::execution(TodoReadError::Io {
+                BuiltinToolError::execution(TodoReadError::Io {
                     message: e.to_string(),
                 })
             })?
@@ -88,7 +88,7 @@ impl StaticTool for TodoReadTool {
 pub struct TodoWriteTool;
 
 #[async_trait]
-impl StaticTool for TodoWriteTool {
+impl BuiltinTool for TodoWriteTool {
     type Params = TodoWriteParams;
     type Output = TodoWriteResult;
     type Spec = TodoWriteToolSpec;
@@ -100,10 +100,10 @@ impl StaticTool for TodoWriteTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<TodoWriteError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<TodoWriteError>> {
         if ctx.is_cancelled() {
-            return Err(StaticToolError::Cancelled);
+            return Err(BuiltinToolError::Cancelled);
         }
 
         let existing = ctx
@@ -112,7 +112,7 @@ impl StaticTool for TodoWriteTool {
             .load_todos(ctx.session_id)
             .await
             .map_err(|e| {
-                StaticToolError::execution(TodoWriteError::Io {
+                BuiltinToolError::execution(TodoWriteError::Io {
                     message: e.to_string(),
                 })
             })?;
@@ -122,7 +122,7 @@ impl StaticTool for TodoWriteTool {
             .save_todos(ctx.session_id, &params.todos)
             .await
             .map_err(|e| {
-                StaticToolError::execution(TodoWriteError::Io {
+                BuiltinToolError::execution(TodoWriteError::Io {
                     message: e.to_string(),
                 })
             })?;

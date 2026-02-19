@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use super::workspace_op_error;
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::FileContentResult;
 use steer_tools::tools::view::{ViewError, ViewParams, ViewToolSpec};
 use steer_workspace::{ReadFileRequest, WorkspaceOpContext};
@@ -10,7 +10,7 @@ use steer_workspace::{ReadFileRequest, WorkspaceOpContext};
 pub struct ViewTool;
 
 #[async_trait]
-impl StaticTool for ViewTool {
+impl BuiltinTool for ViewTool {
     type Params = ViewParams;
     type Output = FileContentResult;
     type Spec = ViewToolSpec;
@@ -27,8 +27,8 @@ impl StaticTool for ViewTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<ViewError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<ViewError>> {
         let request = ReadFileRequest {
             file_path: params.file_path,
             offset: params.offset,
@@ -40,6 +40,6 @@ impl StaticTool for ViewTool {
             .workspace
             .read_file(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(ViewError::Workspace(workspace_op_error(e))))
+            .map_err(|e| BuiltinToolError::execution(ViewError::Workspace(workspace_op_error(e))))
     }
 }

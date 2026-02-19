@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
 use super::workspace_op_error;
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::FileListResult;
 use steer_tools::tools::ls::{LsError, LsParams, LsToolSpec};
 use steer_workspace::{ListDirectoryRequest, WorkspaceOpContext};
@@ -10,7 +10,7 @@ use steer_workspace::{ListDirectoryRequest, WorkspaceOpContext};
 pub struct LsTool;
 
 #[async_trait]
-impl StaticTool for LsTool {
+impl BuiltinTool for LsTool {
     type Params = LsParams;
     type Output = FileListResult;
     type Spec = LsToolSpec;
@@ -22,8 +22,8 @@ impl StaticTool for LsTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<LsError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<LsError>> {
         let request = ListDirectoryRequest {
             path: params.path,
             ignore: params.ignore,
@@ -34,6 +34,6 @@ impl StaticTool for LsTool {
             .workspace
             .list_directory(request, &op_ctx)
             .await
-            .map_err(|e| StaticToolError::execution(LsError::Workspace(workspace_op_error(e))))
+            .map_err(|e| BuiltinToolError::execution(LsError::Workspace(workspace_op_error(e))))
     }
 }

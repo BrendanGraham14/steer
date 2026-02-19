@@ -5,9 +5,9 @@ use futures_util::StreamExt;
 use url::Host;
 
 use crate::app::conversation::{Message, MessageData, UserContent};
+use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
 use crate::tools::services::ModelCallError;
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::FetchResult;
 use steer_tools::tools::fetch::{FetchError, FetchParams, FetchToolSpec};
 
@@ -33,7 +33,7 @@ const REQUEST_TIMEOUT_SECONDS: u64 = 20;
 pub struct FetchTool;
 
 #[async_trait]
-impl StaticTool for FetchTool {
+impl BuiltinTool for FetchTool {
     type Params = FetchParams;
     type Output = FetchResult;
     type Spec = FetchToolSpec;
@@ -47,15 +47,15 @@ impl StaticTool for FetchTool {
     async fn execute(
         &self,
         params: Self::Params,
-        ctx: &StaticToolContext,
-    ) -> Result<Self::Output, StaticToolError<FetchError>> {
+        ctx: &BuiltinToolContext,
+    ) -> Result<Self::Output, BuiltinToolError<FetchError>> {
         let model_caller = ctx
             .services
             .model_caller()
-            .ok_or_else(|| StaticToolError::missing_capability("model_caller"))?;
+            .ok_or_else(|| BuiltinToolError::missing_capability("model_caller"))?;
 
         let normalized_url =
-            normalize_fetch_url(&params.url).map_err(StaticToolError::execution)?;
+            normalize_fetch_url(&params.url).map_err(BuiltinToolError::execution)?;
         let content = fetch_url(&normalized_url, &ctx.cancellation_token).await?;
         let summary_input = truncate_for_summary(&content);
 
@@ -87,7 +87,7 @@ Provide a concise response based only on relevant facts from the content above.
         let response = model_caller
             .call(
                 ctx.invoking_model.as_ref().ok_or_else(|| {
-                    StaticToolError::execution(FetchError::ModelCallFailed {
+                    BuiltinToolError::execution(FetchError::ModelCallFailed {
                         message: "missing invoking model for fetch summarization".to_string(),
                     })
                 })?,
@@ -98,9 +98,9 @@ Provide a concise response based only on relevant facts from the content above.
             .await
             .map_err(|e| match e {
                 ModelCallError::Api(msg) => {
-                    StaticToolError::execution(FetchError::ModelCallFailed { message: msg })
+                    BuiltinToolError::execution(FetchError::ModelCallFailed { message: msg })
                 }
-                ModelCallError::Cancelled => StaticToolError::Cancelled,
+                ModelCallError::Cancelled => BuiltinToolError::Cancelled,
             })?;
 
         let result_content = response.extract_text().trim().to_string();
@@ -160,12 +160,12 @@ fn truncate_for_summary(content: &str) -> String {
 async fn fetch_url(
     url: &url::Url,
     token: &tokio_util::sync::CancellationToken,
-) -> Result<String, StaticToolError<FetchError>> {
+) -> Result<String, BuiltinToolError<FetchError>> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
         .build()
         .map_err(|e| {
-            StaticToolError::execution(FetchError::RequestFailed {
+            BuiltinToolError::execution(FetchError::RequestFailed {
                 message: format!("failed to configure HTTP client: {e}"),
             })
         })?;
@@ -174,7 +174,7 @@ async fn fetch_url(
 
     let response = tokio::select! {
         result = request.send() => result,
-        () = token.cancelled() => return Err(StaticToolError::Cancelled),
+        () = token.cancelled() => return Err(BuiltinToolError::Cancelled),
     };
 
     match response {
@@ -183,7 +183,7 @@ async fn fetch_url(
             let response_url = response.url().to_string();
 
             if !status.is_success() {
-                return Err(StaticToolError::execution(FetchError::Http {
+                return Err(BuiltinToolError::execution(FetchError::Http {
                     status: status.as_u16(),
                     url: response_url,
                 }));
@@ -195,7 +195,7 @@ async fn fetch_url(
             loop {
                 let next_chunk = tokio::select! {
                     chunk = stream.next() => chunk,
-                    () = token.cancelled() => return Err(StaticToolError::Cancelled),
+                    () = token.cancelled() => return Err(BuiltinToolError::Cancelled),
                 };
 
                 let Some(chunk) = next_chunk else {
@@ -203,14 +203,14 @@ async fn fetch_url(
                 };
 
                 let chunk = chunk.map_err(|e| {
-                    StaticToolError::execution(FetchError::ReadFailed {
+                    BuiltinToolError::execution(FetchError::ReadFailed {
                         url: response_url.clone(),
                         message: e.to_string(),
                     })
                 })?;
 
                 if bytes.len().saturating_add(chunk.len()) > MAX_FETCH_BYTES {
-                    return Err(StaticToolError::execution(FetchError::ReadFailed {
+                    return Err(BuiltinToolError::execution(FetchError::ReadFailed {
                         url: response_url,
                         message: format!(
                             "response exceeded maximum size of {MAX_FETCH_BYTES} bytes"
@@ -223,7 +223,7 @@ async fn fetch_url(
 
             Ok(String::from_utf8_lossy(&bytes).to_string())
         }
-        Err(e) => Err(StaticToolError::execution(FetchError::RequestFailed {
+        Err(e) => Err(BuiltinToolError::execution(FetchError::RequestFailed {
             message: format!("Request to URL {url} failed: {e}"),
         })),
     }
