@@ -115,8 +115,7 @@ impl StaticTool for DispatchAgentTool {
     type Output = AgentResult;
     type Spec = DispatchAgentToolSpec;
 
-    const DESCRIPTION: &'static str =
-        "Launch a sub-agent with full context for focused search, implementation, or parallel subtasks";
+    const DESCRIPTION: &'static str = "Launch a sub-agent with full context for focused search, implementation, or parallel subtasks";
     const REQUIRES_APPROVAL: bool = false;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::AGENT;
 
@@ -1260,7 +1259,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resume_session_denies_disallowed_tools() {
+    async fn resume_session_rejects_invisible_tools_as_unknown() {
         let event_store = Arc::new(InMemoryEventStore::new());
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
         let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
@@ -1337,13 +1336,16 @@ mod tests {
             .unwrap();
 
         let events = event_store.load_events(session_id).await.unwrap();
-        let denied = events.iter().any(|(_, event)| match event {
+        let unknown = events.iter().any(|(_, event)| match event {
             SessionEvent::ToolCallFailed { name, error, .. } => {
-                name == "bash" && error.contains("denied by policy")
+                name == "bash" && error.contains("Unknown tool")
             }
             _ => false,
         });
 
-        assert!(denied, "expected denied ToolCallFailed event for bash");
+        assert!(
+            unknown,
+            "expected unknown-tool ToolCallFailed event for invisible bash"
+        );
     }
 }

@@ -581,7 +581,7 @@ fn validate_tool_call(
     }
 
     let Some(schema) = state.tools.iter().find(|s| s.name == tool_call.name) else {
-        return Ok(());
+        return Err(ToolError::UnknownTool(tool_call.name.clone()));
     };
 
     validate_against_json_schema(
@@ -3021,6 +3021,73 @@ mod tests {
         );
 
         assert_eq!(state.approval_queue.len(), 1);
+    }
+
+    #[test]
+    fn test_unknown_tool_is_treated_as_nonexistent_and_never_prompts() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        state.tools.push(test_schema("view"));
+
+        let tool_call = ToolCall {
+            id: "tc_unknown".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({ "command": "echo hi" }),
+        };
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolApprovalRequested {
+                session_id,
+                request_id: RequestId::new(),
+                tool_call,
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolCallFailed { .. },
+                ..
+            }
+        )));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolMessageAdded { .. },
+                ..
+            }
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestUserApproval { .. }))
+        );
+        assert!(state.pending_approval.is_none());
+        assert!(state.approval_queue.is_empty());
+        assert_eq!(state.message_graph.messages.len(), 1);
+
+        match &state.message_graph.messages[0].data {
+            MessageData::Tool { result, .. } => match result {
+                ToolResult::Error(error) => {
+                    assert!(matches!(error, ToolError::UnknownTool(name) if name == "bash"));
+                }
+                _ => panic!("expected unknown tool error"),
+            },
+            _ => panic!("expected tool message"),
+        }
     }
 
     #[test]
