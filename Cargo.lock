@@ -6611,7 +6611,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "steer"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6675,7 +6675,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-anthropic"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6692,7 +6692,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-openai"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6713,7 +6713,7 @@ dependencies = [
 
 [[package]]
 name = "steer-auth-plugin"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "keyring",
@@ -6724,7 +6724,7 @@ dependencies = [
 
 [[package]]
 name = "steer-core"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "aes-gcm",
  "async-stream",
@@ -6803,7 +6803,7 @@ dependencies = [
 
 [[package]]
 name = "steer-grpc"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6831,7 +6831,7 @@ dependencies = [
 
 [[package]]
 name = "steer-proto"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "prost 0.13.5",
  "prost-build",
@@ -6843,7 +6843,7 @@ dependencies = [
 
 [[package]]
 name = "steer-remote-workspace"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "clap",
  "gethostname 0.5.0",
@@ -6863,7 +6863,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tools"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "schemars",
  "serde",
@@ -6875,7 +6875,7 @@ dependencies = [
 
 [[package]]
 name = "steer-tui"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "arboard",
  "async-trait",
@@ -6928,7 +6928,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -6964,7 +6964,7 @@ dependencies = [
 
 [[package]]
 name = "steer-workspace-client"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "async-trait",
  "serde",

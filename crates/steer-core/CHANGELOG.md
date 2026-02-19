@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.14.0...steer-core-v0.14.1) - 2026-02-19
+
+### Added
+
+- enhance subagent prompting to encourage passing more detailed context
+
+### Fixed
+
+- *(core)* harden grep cancellation and clear stale pending tool state
+- *(core)* treat invisible tools as unknown in dispatch-agent flows
+
 ## [0.14.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.13.1...steer-core-v0.14.0) - 2026-02-18
 
 ### Added
