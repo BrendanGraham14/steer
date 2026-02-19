@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -316,6 +316,7 @@ fn grep_search_internal(
         .transpose()?;
 
     let mut all_matches = Vec::new();
+    let mut file_mtimes: BTreeMap<String, std::time::SystemTime> = BTreeMap::new();
     let mut files_searched = 0usize;
 
     for result in walker.build() {
@@ -346,6 +347,15 @@ fn grep_search_internal(
         files_searched += 1;
 
         let mut matches_in_file = Vec::new();
+        let display_path = match path.canonicalize() {
+            Ok(canonical) => canonical.display().to_string(),
+            Err(_) => path.display().to_string(),
+        };
+        let file_mtime = path
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
         let search_result = searcher.search_path(
             &matcher,
             path,
@@ -354,12 +364,8 @@ fn grep_search_internal(
                     return Err(SinkError::error_message("Operation cancelled".to_string()));
                 }
 
-                let display_path = match path.canonicalize() {
-                    Ok(canonical) => canonical.display().to_string(),
-                    Err(_) => path.display().to_string(),
-                };
                 matches_in_file.push(SearchMatch {
-                    file_path: display_path,
+                    file_path: display_path.clone(),
                     line_number: line_num as usize,
                     line_content: line.trim_end().to_string(),
                     column_range: None,
@@ -373,7 +379,10 @@ fn grep_search_internal(
                 if cancellation_token.is_cancelled()
                     && err.to_string().contains("Operation cancelled") =>
             {
-                all_matches.extend(matches_in_file);
+                if !matches_in_file.is_empty() {
+                    all_matches.extend(matches_in_file);
+                    file_mtimes.insert(display_path, file_mtime);
+                }
                 return Ok(SearchResult {
                     matches: all_matches,
                     total_files_searched: files_searched,
@@ -382,7 +391,10 @@ fn grep_search_internal(
             }
             Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {}
             Err(_) | Ok(()) => {
-                all_matches.extend(matches_in_file);
+                if !matches_in_file.is_empty() {
+                    all_matches.extend(matches_in_file);
+                    file_mtimes.insert(display_path, file_mtime);
+                }
             }
         }
     }
@@ -396,8 +408,12 @@ fn grep_search_internal(
                 .push(match_item);
         }
 
-        let mut sorted_files: Vec<(String, std::time::SystemTime)> = Vec::new();
-        for file_path in file_groups.keys() {
+        let mut sorted_files: Vec<(String, std::time::SystemTime)> =
+            file_mtimes.into_iter().collect();
+        sorted_files.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+        let mut sorted_matches = Vec::new();
+        for (file_path, _) in sorted_files {
             if cancellation_token.is_cancelled() {
                 return Ok(SearchResult {
                     matches: Vec::new(),
@@ -406,16 +422,6 @@ fn grep_search_internal(
                 });
             }
 
-            let mtime = Path::new(file_path)
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            sorted_files.push((file_path.clone(), mtime));
-        }
-        sorted_files.sort_by(|a, b| b.1.cmp(&a.1));
-
-        let mut sorted_matches = Vec::new();
-        for (file_path, _) in sorted_files {
             if let Some(file_matches) = file_groups.remove(&file_path) {
                 sorted_matches.extend(file_matches);
             }
@@ -1067,6 +1073,7 @@ impl Workspace for LocalWorkspace {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
     async fn test_local_workspace_creation() {
@@ -1214,5 +1221,55 @@ mod tests {
             .unwrap();
 
         assert_eq!(workspace.working_directory(), temp_dir.path());
+    }
+
+    #[tokio::test]
+    async fn test_grep_orders_matches_by_mtime_then_path() {
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path();
+
+        let b_file = root.join("b.rs");
+        let a_file = root.join("a.rs");
+
+        std::fs::write(&b_file, "needle from b\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&a_file, "needle from a\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        // Refresh b so it has the newest mtime and should appear first.
+        std::fs::write(&b_file, "needle from b updated\n").unwrap();
+
+        let workspace = LocalWorkspace::with_path(root.to_path_buf()).await.unwrap();
+
+        let context = WorkspaceOpContext::new("test-grep-order", CancellationToken::new());
+        let result = workspace
+            .grep(
+                GrepRequest {
+                    pattern: "needle".to_string(),
+                    include: Some("*.rs".to_string()),
+                    path: Some(".".to_string()),
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.search_completed);
+        assert_eq!(result.total_files_searched, 2);
+        assert_eq!(result.matches.len(), 2);
+
+        let first = std::path::Path::new(&result.matches[0].file_path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let second = std::path::Path::new(&result.matches[1].file_path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+
+        assert_eq!(first, "b.rs");
+        assert_eq!(second, "a.rs");
     }
 }
