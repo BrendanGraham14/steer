@@ -283,27 +283,34 @@ fn grep_search_internal(
     base_path: &Path,
     cancellation_token: &CancellationToken,
 ) -> std::result::Result<SearchResult, String> {
+    struct FileMatchBucket {
+        mtime: std::time::SystemTime,
+        matches: Vec<(usize, String)>,
+    }
+
     if !base_path.exists() {
         return Err(format!("Path does not exist: {}", base_path.display()));
     }
 
-    let matcher = if let Ok(m) = RegexMatcherBuilder::new()
+    let matcher_pattern = if RegexMatcherBuilder::new()
         .line_terminator(Some(b'\n'))
         .build(pattern)
+        .is_ok()
     {
-        m
+        pattern.to_string()
     } else {
         let escaped = regex::escape(pattern);
         RegexMatcherBuilder::new()
             .line_terminator(Some(b'\n'))
             .build(&escaped)
-            .map_err(|e| format!("Failed to create matcher: {e}"))?
+            .map_err(|e| format!("Failed to create matcher: {e}"))?;
+        escaped
     };
 
-    let mut searcher = SearcherBuilder::new()
-        .binary_detection(BinaryDetection::quit(b'\x00'))
-        .line_number(true)
-        .build();
+    let include_glob = include.map(ToOwned::to_owned);
+    if let Some(include_pattern) = include_glob.as_deref() {
+        glob::Pattern::new(include_pattern).map_err(|e| format!("Invalid glob pattern: {e}"))?;
+    }
 
     let mut walker = WalkBuilder::new(base_path);
     walker.hidden(false);
@@ -315,17 +322,12 @@ fn grep_search_internal(
         .map(|p| glob::Pattern::new(p).map_err(|e| format!("Invalid glob pattern: {e}")))
         .transpose()?;
 
-    let mut all_matches = Vec::new();
-    let mut file_mtimes: BTreeMap<String, std::time::SystemTime> = BTreeMap::new();
+    let mut file_buckets: BTreeMap<String, FileMatchBucket> = BTreeMap::new();
     let mut files_searched = 0usize;
 
     for result in walker.build() {
         if cancellation_token.is_cancelled() {
-            return Ok(SearchResult {
-                matches: all_matches,
-                total_files_searched: files_searched,
-                search_completed: false,
-            });
+            break;
         }
 
         let entry = match result {
@@ -346,7 +348,6 @@ fn grep_search_internal(
 
         files_searched += 1;
 
-        let mut matches_in_file = Vec::new();
         let display_path = match path.canonicalize() {
             Ok(canonical) => canonical.display().to_string(),
             Err(_) => path.display().to_string(),
@@ -356,6 +357,16 @@ fn grep_search_internal(
             .and_then(|m| m.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
+        let mut lines_in_file = Vec::new();
+        let matcher = RegexMatcherBuilder::new()
+            .line_terminator(Some(b'\n'))
+            .build(&matcher_pattern)
+            .map_err(|e| format!("Failed to create matcher: {e}"))?;
+        let mut searcher = SearcherBuilder::new()
+            .binary_detection(BinaryDetection::quit(b'\x00'))
+            .line_number(true)
+            .build();
+
         let search_result = searcher.search_path(
             &matcher,
             path,
@@ -364,75 +375,80 @@ fn grep_search_internal(
                     return Err(SinkError::error_message("Operation cancelled".to_string()));
                 }
 
-                matches_in_file.push(SearchMatch {
-                    file_path: display_path.clone(),
-                    line_number: line_num as usize,
-                    line_content: line.trim_end().to_string(),
-                    column_range: None,
-                });
+                lines_in_file.push((line_num as usize, line.trim_end().to_string()));
                 Ok(true)
             }),
         );
+
+        let append_file_matches =
+            |buckets: &mut BTreeMap<String, FileMatchBucket>,
+             file_matches: Vec<(usize, String)>| {
+                if file_matches.is_empty() {
+                    return;
+                }
+
+                let bucket =
+                    buckets
+                        .entry(display_path.clone())
+                        .or_insert_with(|| FileMatchBucket {
+                            mtime: file_mtime,
+                            matches: Vec::new(),
+                        });
+                if file_mtime > bucket.mtime {
+                    bucket.mtime = file_mtime;
+                }
+                bucket.matches.extend(file_matches);
+            };
 
         match search_result {
             Err(err)
                 if cancellation_token.is_cancelled()
                     && err.to_string().contains("Operation cancelled") =>
             {
-                if !matches_in_file.is_empty() {
-                    all_matches.extend(matches_in_file);
-                    file_mtimes.insert(display_path, file_mtime);
-                }
-                return Ok(SearchResult {
-                    matches: all_matches,
-                    total_files_searched: files_searched,
-                    search_completed: false,
-                });
+                append_file_matches(&mut file_buckets, lines_in_file);
+                break;
             }
             Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {}
             Err(_) | Ok(()) => {
-                if !matches_in_file.is_empty() {
-                    all_matches.extend(matches_in_file);
-                    file_mtimes.insert(display_path, file_mtime);
-                }
+                append_file_matches(&mut file_buckets, lines_in_file);
             }
         }
     }
 
-    if !all_matches.is_empty() {
-        let mut file_groups: HashMap<String, Vec<SearchMatch>> = HashMap::new();
-        for match_item in all_matches {
-            file_groups
-                .entry(match_item.file_path.clone())
-                .or_default()
-                .push(match_item);
+    let search_completed = !cancellation_token.is_cancelled();
+    if file_buckets.is_empty() {
+        return Ok(SearchResult {
+            matches: Vec::new(),
+            total_files_searched: files_searched,
+            search_completed,
+        });
+    }
+
+    let mut sorted_files: Vec<(String, FileMatchBucket)> = file_buckets.into_iter().collect();
+    if sorted_files.len() > 1 {
+        sorted_files.sort_by(|a, b| b.1.mtime.cmp(&a.1.mtime).then_with(|| a.0.cmp(&b.0)));
+    }
+
+    let total_matches = sorted_files
+        .iter()
+        .map(|(_, bucket)| bucket.matches.len())
+        .sum();
+    let mut matches = Vec::with_capacity(total_matches);
+    for (file_path, mut bucket) in sorted_files {
+        for (line_number, line_content) in bucket.matches.drain(..) {
+            matches.push(SearchMatch {
+                file_path: file_path.clone(),
+                line_number,
+                line_content,
+                column_range: None,
+            });
         }
-
-        let mut sorted_files: Vec<(String, std::time::SystemTime)> =
-            file_mtimes.into_iter().collect();
-        sorted_files.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-
-        let mut sorted_matches = Vec::new();
-        for (file_path, _) in sorted_files {
-            if cancellation_token.is_cancelled() {
-                return Ok(SearchResult {
-                    matches: Vec::new(),
-                    total_files_searched: files_searched,
-                    search_completed: false,
-                });
-            }
-
-            if let Some(file_matches) = file_groups.remove(&file_path) {
-                sorted_matches.extend(file_matches);
-            }
-        }
-        all_matches = sorted_matches;
     }
 
     Ok(SearchResult {
-        matches: all_matches,
+        matches,
         total_files_searched: files_searched,
-        search_completed: true,
+        search_completed,
     })
 }
 
