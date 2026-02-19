@@ -25,4 +25,4 @@ tracing = "0.1.41"
 url = { version = "2.5", features = ["serde"] }
 hyper = { version = "1.6.0", features = ["full"] }
 hyper-util = { version = "0.1.14", features = ["server", "server-auto", "tokio"] }
-steer-tools = { version = "0.14.1", path = "../steer-tools" }
+steer-tools = { version = "0.14.2", path = "../steer-tools" }
