@@ -14,13 +14,14 @@ use crate::runners::OneShotRunner;
 use crate::session::state::BackendConfig;
 use crate::tools::capability::Capabilities;
 use crate::tools::services::{SubAgentConfig, SubAgentError, ToolServices};
-use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
+use crate::tools::static_tool::{
+    StaticTool, StaticToolContext, StaticToolError, schema_with_description,
+};
 use crate::tools::{BackendRegistry, ToolExecutor, ToolRegistry};
 use crate::workspace::{
     CreateWorkspaceRequest, EnvironmentId, RepoRef, VcsKind, VcsStatus, Workspace,
     WorkspaceCreateStrategy, WorkspaceRef, create_workspace_from_session_config,
 };
-use steer_tools::ToolSpec;
 use steer_tools::result::{AgentResult, AgentWorkspaceInfo, AgentWorkspaceRevision};
 use steer_tools::tools::dispatch_agent::{
     DispatchAgentError, DispatchAgentParams, DispatchAgentTarget, DispatchAgentToolSpec,
@@ -29,11 +30,7 @@ use steer_tools::tools::dispatch_agent::{
 use steer_tools::tools::{GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
 use tracing::warn;
 
-use super::{
-    AstGrepTool, BashTool, EditTool, FetchTool, GlobTool, GrepTool, LsTool, MultiEditTool,
-    ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool, workspace_manager_op_error,
-    workspace_op_error,
-};
+use super::{register_builtin_static_tools, workspace_manager_op_error, workspace_op_error};
 
 fn dispatch_agent_description() -> String {
     let agent_specs = agent_specs_prompt();
@@ -120,18 +117,7 @@ impl StaticTool for DispatchAgentTool {
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::AGENT;
 
     fn schema() -> steer_tools::ToolSchema {
-        let settings = schemars::generate::SchemaSettings::draft07().with(|s| {
-            s.inline_subschemas = true;
-        });
-        let schema_gen = settings.into_generator();
-        let input_schema = schema_gen.into_root_schema_for::<Self::Params>();
-
-        steer_tools::ToolSchema {
-            name: Self::Spec::NAME.to_string(),
-            display_name: Self::Spec::DISPLAY_NAME.to_string(),
-            description: dispatch_agent_description(),
-            input_schema: input_schema.into(),
-        }
+        schema_with_description::<Self::Params, Self::Spec>(dispatch_agent_description())
     }
 
     async fn execute(
@@ -447,19 +433,7 @@ fn build_runtime_tool_executor(
     }
 
     let mut registry = ToolRegistry::new();
-    registry.register_static(GrepTool);
-    registry.register_static(GlobTool);
-    registry.register_static(LsTool);
-    registry.register_static(ViewTool);
-    registry.register_static(BashTool);
-    registry.register_static(EditTool);
-    registry.register_static(MultiEditTool);
-    registry.register_static(ReplaceTool);
-    registry.register_static(AstGrepTool);
-    registry.register_static(TodoReadTool);
-    registry.register_static(TodoWriteTool);
-    registry.register_static(DispatchAgentTool);
-    registry.register_static(FetchTool);
+    register_builtin_static_tools(&mut registry);
 
     Arc::new(
         ToolExecutor::with_components(
@@ -481,8 +455,9 @@ async fn resume_agent_session(
         .load_events(session_id)
         .await
         .map_err(|e| {
-            StaticToolError::execution(DispatchAgentError::SpawnFailed {
-                message: format!("Failed to load session {session_id}: {e}"),
+            StaticToolError::execution(DispatchAgentError::SessionLoadFailed {
+                session_id: session_id.to_string(),
+                message: e.to_string(),
             })
         })?;
 
@@ -493,23 +468,26 @@ async fn resume_agent_session(
             _ => None,
         })
         .ok_or_else(|| {
-            StaticToolError::execution(DispatchAgentError::SpawnFailed {
-                message: format!("Session {session_id} is missing a SessionCreated event"),
+            StaticToolError::execution(DispatchAgentError::MissingSessionCreatedEvent {
+                session_id: session_id.to_string(),
             })
         })?;
 
     if session_config.parent_session_id != Some(ctx.session_id) {
-        return Err(StaticToolError::invalid_params(format!(
-            "Session {session_id} is not a child of current session {}",
-            ctx.session_id
-        )));
+        return Err(StaticToolError::execution(
+            DispatchAgentError::InvalidParentSession {
+                session_id: session_id.to_string(),
+                parent_session_id: ctx.session_id.to_string(),
+            },
+        ));
     }
 
     let workspace = create_workspace_from_session_config(&session_config.workspace)
         .await
         .map_err(|e| {
-            StaticToolError::execution(DispatchAgentError::SpawnFailed {
-                message: format!("Failed to open workspace for session {session_id}: {e}"),
+            StaticToolError::execution(DispatchAgentError::WorkspaceOpenFailed {
+                session_id: session_id.to_string(),
+                message: e.to_string(),
             })
         })?;
 
@@ -552,8 +530,7 @@ mod tests {
     use crate::api::Client as ApiClient;
     use crate::api::{ApiError, CompletionResponse, Provider};
     use crate::app::conversation::{AssistantContent, Message, MessageData};
-    use crate::app::domain::session::EventStore;
-    use crate::app::domain::session::event_store::InMemoryEventStore;
+    use crate::app::domain::session::{EventStore, EventStoreError, InMemoryEventStore};
     use crate::app::domain::types::ToolCallId;
     use crate::config::model::builtin;
     use crate::model_registry::ModelRegistry;
@@ -569,6 +546,75 @@ mod tests {
     use tokio::time::{Duration, sleep};
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
+
+    #[derive(Default)]
+    struct FailingLoadEventStore;
+
+    #[async_trait]
+    impl EventStore for FailingLoadEventStore {
+        async fn append(
+            &self,
+            _session_id: SessionId,
+            _event: &SessionEvent,
+        ) -> Result<u64, EventStoreError> {
+            Ok(0)
+        }
+
+        async fn load_events(
+            &self,
+            _session_id: SessionId,
+        ) -> Result<Vec<(u64, SessionEvent)>, EventStoreError> {
+            Err(EventStoreError::Database {
+                message: "boom".to_string(),
+            })
+        }
+
+        async fn load_events_after(
+            &self,
+            _session_id: SessionId,
+            _after_seq: u64,
+        ) -> Result<Vec<(u64, SessionEvent)>, EventStoreError> {
+            Ok(Vec::new())
+        }
+
+        async fn latest_sequence(
+            &self,
+            _session_id: SessionId,
+        ) -> Result<Option<u64>, EventStoreError> {
+            Ok(None)
+        }
+
+        async fn session_exists(&self, _session_id: SessionId) -> Result<bool, EventStoreError> {
+            Ok(false)
+        }
+
+        async fn create_session(&self, _session_id: SessionId) -> Result<(), EventStoreError> {
+            Ok(())
+        }
+
+        async fn delete_session(&self, _session_id: SessionId) -> Result<(), EventStoreError> {
+            Ok(())
+        }
+
+        async fn list_session_ids(&self) -> Result<Vec<SessionId>, EventStoreError> {
+            Ok(Vec::new())
+        }
+
+        async fn load_todos(
+            &self,
+            _session_id: SessionId,
+        ) -> Result<Option<Vec<steer_tools::tools::todo::TodoItem>>, EventStoreError> {
+            Ok(None)
+        }
+
+        async fn save_todos(
+            &self,
+            _session_id: SessionId,
+            _todos: &[steer_tools::tools::todo::TodoItem],
+        ) -> Result<(), EventStoreError> {
+            Ok(())
+        }
+    }
 
     #[derive(Clone)]
     struct StubProvider {
@@ -758,6 +804,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_tool_executor_registers_all_builtin_tools() {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider().unwrap(),
+            provider_registry,
+            model_registry,
+        ));
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap(),
+            })
+            .await
+            .unwrap();
+
+        let services = Arc::new(ToolServices::new(
+            workspace.clone(),
+            event_store,
+            api_client,
+        ));
+
+        let executor = build_runtime_tool_executor(workspace, &services);
+        let supported = executor.supported_tools().await;
+
+        assert_eq!(supported.len(), 13);
+        assert!(supported.contains(&steer_tools::tools::AST_GREP_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::BASH_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::DISPATCH_AGENT_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::EDIT_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::MULTI_EDIT_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::FETCH_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::GLOB_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::GREP_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::LS_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::REPLACE_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::TODO_READ_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::TODO_WRITE_TOOL_NAME.to_string()));
+        assert!(supported.contains(&steer_tools::tools::VIEW_TOOL_NAME.to_string()));
+    }
+
+    #[tokio::test]
     async fn resume_session_rejects_non_child() {
         let event_store = Arc::new(InMemoryEventStore::new());
         let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
@@ -804,7 +892,158 @@ mod tests {
 
         let result = resume_agent_session(session_id, "ping".to_string(), &ctx).await;
 
-        assert!(matches!(result, Err(StaticToolError::InvalidParams(_))));
+        assert!(matches!(
+            result,
+            Err(StaticToolError::Execution(
+                DispatchAgentError::InvalidParentSession {
+                    session_id: actual,
+                    parent_session_id
+                }
+            )) if actual == session_id.to_string() && parent_session_id == ctx.session_id.to_string()
+        ));
+    }
+
+    #[tokio::test]
+    async fn resume_session_returns_missing_session_created_event_error() {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider().unwrap(),
+            provider_registry,
+            model_registry,
+        ));
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap(),
+            })
+            .await
+            .unwrap();
+
+        let session_id = SessionId::new();
+        event_store.create_session(session_id).await.unwrap();
+
+        let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
+
+        let ctx = StaticToolContext {
+            tool_call_id: ToolCallId::new(),
+            session_id: SessionId::new(),
+            invoking_model: None,
+            cancellation_token: CancellationToken::new(),
+            services,
+        };
+
+        let result = resume_agent_session(session_id, "ping".to_string(), &ctx).await;
+
+        assert!(matches!(
+            result,
+            Err(StaticToolError::Execution(
+                DispatchAgentError::MissingSessionCreatedEvent { session_id: actual }
+            )) if actual == session_id.to_string()
+        ));
+    }
+
+    #[tokio::test]
+    async fn resume_session_returns_session_load_failed_on_event_store_error() {
+        let event_store = Arc::new(FailingLoadEventStore);
+        let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider().unwrap(),
+            provider_registry,
+            model_registry,
+        ));
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap(),
+            })
+            .await
+            .unwrap();
+
+        let session_id = SessionId::new();
+        let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
+
+        let ctx = StaticToolContext {
+            tool_call_id: ToolCallId::new(),
+            session_id: SessionId::new(),
+            invoking_model: None,
+            cancellation_token: CancellationToken::new(),
+            services,
+        };
+
+        let result = resume_agent_session(session_id, "ping".to_string(), &ctx).await;
+
+        assert!(matches!(
+            result,
+            Err(StaticToolError::Execution(
+                DispatchAgentError::SessionLoadFailed {
+                    session_id: actual,
+                    ..
+                }
+            )) if actual == session_id.to_string()
+        ));
+    }
+
+    #[tokio::test]
+    async fn resume_session_returns_workspace_open_failed_for_invalid_remote_workspace() {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider().unwrap(),
+            provider_registry,
+            model_registry,
+        ));
+        let workspace =
+            crate::workspace::create_workspace(&steer_workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().unwrap(),
+            })
+            .await
+            .unwrap();
+
+        let parent_session_id = SessionId::new();
+        let session_id = SessionId::new();
+        let mut session_config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        session_config.parent_session_id = Some(parent_session_id);
+        session_config.workspace = crate::session::state::WorkspaceConfig::Remote {
+            agent_address: "invalid-address".to_string(),
+            auth: None,
+        };
+
+        event_store.create_session(session_id).await.unwrap();
+        event_store
+            .append(
+                session_id,
+                &SessionEvent::SessionCreated {
+                    config: Box::new(session_config),
+                    metadata: HashMap::new(),
+                    parent_session_id: Some(parent_session_id),
+                },
+            )
+            .await
+            .unwrap();
+
+        let services = Arc::new(ToolServices::new(workspace, event_store, api_client));
+
+        let ctx = StaticToolContext {
+            tool_call_id: ToolCallId::new(),
+            session_id: parent_session_id,
+            invoking_model: None,
+            cancellation_token: CancellationToken::new(),
+            services,
+        };
+
+        let result = resume_agent_session(session_id, "ping".to_string(), &ctx).await;
+
+        assert!(matches!(
+            result,
+            Err(StaticToolError::Execution(
+                DispatchAgentError::WorkspaceOpenFailed {
+                    session_id: actual,
+                    ..
+                }
+            )) if actual == session_id.to_string()
+        ));
     }
 
     #[tokio::test]
@@ -1338,7 +1577,7 @@ mod tests {
         let events = event_store.load_events(session_id).await.unwrap();
         let unknown = events.iter().any(|(_, event)| match event {
             SessionEvent::ToolCallFailed { name, error, .. } => {
-                name == "bash" && error.contains("Unknown tool")
+                name == "bash" && ( error.contains("Unknown tool") || error.contains("denied"))
             }
             _ => false,
         });

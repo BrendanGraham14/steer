@@ -76,6 +76,33 @@ impl<E: StdError + Send + Sync + 'static> StaticToolError<E> {
     }
 }
 
+fn build_tool_schema<P, S>(description: String) -> ToolSchema
+where
+    P: JsonSchema,
+    S: ToolSpec<Params = P>,
+{
+    let settings = schemars::generate::SchemaSettings::draft07().with(|s| {
+        s.inline_subschemas = true;
+    });
+    let schema_gen = settings.into_generator();
+    let input_schema = schema_gen.into_root_schema_for::<P>();
+
+    ToolSchema {
+        name: S::NAME.to_string(),
+        display_name: S::DISPLAY_NAME.to_string(),
+        description,
+        input_schema: input_schema.into(),
+    }
+}
+
+pub fn schema_with_description<P, S>(description: impl Into<String>) -> ToolSchema
+where
+    P: JsonSchema,
+    S: ToolSpec<Params = P>,
+{
+    build_tool_schema::<P, S>(description.into())
+}
+
 #[async_trait]
 pub trait StaticTool: Send + Sync + 'static {
     type Params: DeserializeOwned + JsonSchema + Send;
@@ -96,26 +123,13 @@ pub trait StaticTool: Send + Sync + 'static {
     where
         Self: Sized,
     {
-        let settings = schemars::generate::SchemaSettings::draft07().with(|s| {
-            s.inline_subschemas = true;
-        });
-        let schema_gen = settings.into_generator();
-        let input_schema = schema_gen.into_root_schema_for::<Self::Params>();
-
-        ToolSchema {
-            name: Self::Spec::NAME.to_string(),
-            display_name: Self::Spec::DISPLAY_NAME.to_string(),
-            description: Self::DESCRIPTION.to_string(),
-            input_schema: input_schema.into(),
-        }
+        build_tool_schema::<Self::Params, Self::Spec>(Self::DESCRIPTION.to_string())
     }
 }
 
 #[async_trait]
 pub trait StaticToolErased: Send + Sync {
     fn name(&self) -> &'static str;
-    fn display_name(&self) -> &'static str;
-    fn description(&self) -> &'static str;
     fn requires_approval(&self) -> bool;
     fn required_capabilities(&self) -> Capabilities;
     fn schema(&self) -> ToolSchema;
@@ -134,14 +148,6 @@ where
 {
     fn name(&self) -> &'static str {
         T::Spec::NAME
-    }
-
-    fn display_name(&self) -> &'static str {
-        T::Spec::DISPLAY_NAME
-    }
-
-    fn description(&self) -> &'static str {
-        T::DESCRIPTION
     }
 
     fn requires_approval(&self) -> bool {

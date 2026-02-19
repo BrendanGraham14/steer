@@ -12,10 +12,7 @@ use super::executor::ToolExecutor;
 use super::model_caller_impl::DefaultModelCaller;
 use super::registry::ToolRegistry;
 use super::services::ToolServices;
-use super::static_tools::{
-    AstGrepTool, BashTool, DispatchAgentTool, EditTool, FetchTool, GlobTool, GrepTool, LsTool,
-    MultiEditTool, ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool,
-};
+use super::static_tools::register_builtin_static_tools;
 
 pub struct ToolSystemBuilder {
     workspace: Arc<dyn Workspace>,
@@ -95,20 +92,7 @@ impl ToolSystemBuilder {
         let services = Arc::new(services);
 
         let mut registry = ToolRegistry::new();
-
-        registry.register_static(GrepTool);
-        registry.register_static(GlobTool);
-        registry.register_static(LsTool);
-        registry.register_static(ViewTool);
-        registry.register_static(BashTool);
-        registry.register_static(EditTool);
-        registry.register_static(MultiEditTool);
-        registry.register_static(ReplaceTool);
-        registry.register_static(AstGrepTool);
-        registry.register_static(TodoReadTool);
-        registry.register_static(TodoWriteTool);
-        registry.register_static(DispatchAgentTool);
-        registry.register_static(FetchTool);
+        register_builtin_static_tools(&mut registry);
 
         Arc::new(base_executor.with_static_tools(Arc::new(registry), services))
     }
