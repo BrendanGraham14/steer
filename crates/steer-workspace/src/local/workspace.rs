@@ -1272,4 +1272,72 @@ mod tests {
         assert_eq!(first, "b.rs");
         assert_eq!(second, "a.rs");
     }
+
+    #[tokio::test]
+    async fn test_grep_include_filters_files() {
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path();
+
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+
+        std::fs::write(root.join("src/lib.rs"), "needle in rust\n").unwrap();
+        std::fs::write(root.join("src/readme.txt"), "needle in text\n").unwrap();
+        std::fs::write(root.join("docs/guide.md"), "needle in markdown\n").unwrap();
+
+        let workspace = LocalWorkspace::with_path(root.to_path_buf()).await.unwrap();
+        let context = WorkspaceOpContext::new("test-grep-include", CancellationToken::new());
+        let result = workspace
+            .grep(
+                GrepRequest {
+                    pattern: "needle".to_string(),
+                    include: Some("*.rs".to_string()),
+                    path: Some(".".to_string()),
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.search_completed);
+        assert_eq!(result.total_files_searched, 1);
+        assert_eq!(result.matches.len(), 1);
+
+        let file_name = std::path::Path::new(&result.matches[0].file_path)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(file_name, "lib.rs");
+    }
+
+    #[tokio::test]
+    async fn test_grep_pre_cancelled_returns_incomplete_result() {
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path();
+
+        std::fs::write(root.join("a.rs"), "needle\n").unwrap();
+        std::fs::write(root.join("b.rs"), "needle\n").unwrap();
+
+        let workspace = LocalWorkspace::with_path(root.to_path_buf()).await.unwrap();
+        let cancellation_token = CancellationToken::new();
+        cancellation_token.cancel();
+        let context = WorkspaceOpContext::new("test-grep-cancelled", cancellation_token);
+
+        let result = workspace
+            .grep(
+                GrepRequest {
+                    pattern: "needle".to_string(),
+                    include: Some("*.rs".to_string()),
+                    path: Some(".".to_string()),
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.search_completed);
+        assert_eq!(result.total_files_searched, 0);
+        assert!(result.matches.is_empty());
+    }
 }
