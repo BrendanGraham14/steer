@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/BrendanGraham14/steer/compare/steer-workspace-v0.14.0...steer-workspace-v0.14.1) - 2026-02-19
+
+### Fixed
+
+- *(core)* harden grep cancellation and clear stale pending tool state
+
+### Other
+
+- *(workspace)* streamline grep match aggregation
+- *(workspace)* add grep include and cancellation regressions
+- *(workspace)* optimize grep match path and mtime handling
+- *(workspace)* grep perf
+
 ## [0.9.0](https://github.com/BrendanGraham14/steer/compare/steer-workspace-v0.8.2...steer-workspace-v0.9.0) - 2026-02-12
 
 ### Added
