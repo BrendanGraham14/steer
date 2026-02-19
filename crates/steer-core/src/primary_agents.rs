@@ -52,6 +52,7 @@ Output protocol:
 - Include concrete file paths, interfaces, and validation commands whenever possible.
 - When presenting options, recommend one path and state why. Leave options open only when the decision requires user input.
 - Do not include empty sections.
+- Do not use archetype names as headings. Write a specific, informative heading that describes the actual task.
 
 Plan structure archetypes (examples/templates):
 
