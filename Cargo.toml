@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.14.1"
+version = "0.14.2"
 authors = ["Brendan Graham <brendanigraham@gmail.com>"]
 edition = "2024"
 license = "AGPL-3.0-or-later"
@@ -11,18 +11,18 @@ homepage = "https://github.com/BrendanGraham14/steer"
 repository = "https://github.com/BrendanGraham14/steer"
 
 [workspace.dependencies]
-steer = { version = "0.14.1", path = "crates/steer" }
-steer-auth-anthropic = { version = "0.14.1", path = "crates/steer-auth-anthropic" }
-steer-auth-openai = { version = "0.14.1", path = "crates/steer-auth-openai" }
-steer-auth-plugin = { version = "0.14.1", path = "crates/steer-auth-plugin" }
-steer-core = { version = "0.14.1", path = "crates/steer-core" }
-steer-grpc = { version = "0.14.1", path = "crates/steer-grpc" }
-steer-proto = { version = "0.14.1", path = "crates/steer-proto" }
-steer-remote-workspace = { version = "0.14.1", path = "crates/steer-remote-workspace" }
-steer-tools = { version = "0.14.1", path = "crates/steer-tools" }
-steer-tui = { version = "0.14.1", path = "crates/steer-tui" }
-steer-workspace = { version = "0.14.1", path = "crates/steer-workspace" }
-steer-workspace-client = { version = "0.14.1", path = "crates/steer-workspace-client" }
+steer = { version = "0.14.2", path = "crates/steer" }
+steer-auth-anthropic = { version = "0.14.2", path = "crates/steer-auth-anthropic" }
+steer-auth-openai = { version = "0.14.2", path = "crates/steer-auth-openai" }
+steer-auth-plugin = { version = "0.14.2", path = "crates/steer-auth-plugin" }
+steer-core = { version = "0.14.2", path = "crates/steer-core" }
+steer-grpc = { version = "0.14.2", path = "crates/steer-grpc" }
+steer-proto = { version = "0.14.2", path = "crates/steer-proto" }
+steer-remote-workspace = { version = "0.14.2", path = "crates/steer-remote-workspace" }
+steer-tools = { version = "0.14.2", path = "crates/steer-tools" }
+steer-tui = { version = "0.14.2", path = "crates/steer-tui" }
+steer-workspace = { version = "0.14.2", path = "crates/steer-workspace" }
+steer-workspace-client = { version = "0.14.2", path = "crates/steer-workspace-client" }
 
 [workspace.lints.rust]
 unused_must_use = "deny"

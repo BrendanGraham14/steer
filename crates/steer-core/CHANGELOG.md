@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.14.1...steer-core-v0.14.2) - 2026-02-19
+
+### Added
+
+- *(core)* add archetypes, workflow, and plan step rules to planner prompt
+
+### Fixed
+
+- *(core)* instruct planner to use task-specific headings instead of archetype names
+
 ## [0.14.1](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.14.0...steer-core-v0.14.1) - 2026-02-19
 
 ### Added
