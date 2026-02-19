@@ -13,12 +13,8 @@ workspace = true
 [dependencies]
 steer-grpc.workspace = true
 
-# CLI framework
-clap = { version = "4.4", features = ["derive", "env"] }
-
 # TUI dependencies
 ratatui = { version = "0.29", features = ["crossterm"] }
-crossterm = { version = "0.28", features = ["event-stream"] }
 tui-textarea = "0.7"
 
 # Async runtime
@@ -38,10 +34,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 steer-tools.workspace = true
 textwrap = "0.16"
-once_cell = "1.17"
 similar = "2.2"
-lazy_static = "1.4"
-tui-widgets = { version = "0.4.1", features = ["scrollview"] }
 
 # Logging
 tracing = "0.1"
@@ -49,7 +42,6 @@ time = { version = "0.3.41", features = ["formatting", "macros"] }
 ulid = "1.2.1"
 unicode-width = "0.2.0"
 fuzzy-matcher = "0.3.7"
-regex = "1.11.1"
 toml = "0.8.23"
 pulldown-cmark = "0.9"
 itertools = "0.12"
@@ -57,7 +49,6 @@ open = "5.0"
 tui-big-text = "0.7.1"
 syntect = "5.2.0"
 strum = { version = "0.27.1", features = ["derive"] }
-strum_macros = "0.27.1"
 indexmap = { version = "2.0", features = ["std"] }
 directories = "6.0.0"
 base64 = "0.22.1"
@@ -67,6 +58,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Update checker
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 semver = "1"
+crossterm = { version = "0.28", features = ["event-stream"] }
 
 [dev-dependencies]
 steer-proto.workspace = true
