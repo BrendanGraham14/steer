@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use steer_core::app::conversation::UserContent;
 use steer_core::app::domain::runtime::{RuntimeError, RuntimeHandle};
-use steer_core::app::domain::session::{SessionCatalog, SessionFilter};
+use steer_core::app::domain::session::{SessionFilter, SessionMetadataStore};
 use steer_core::app::domain::types::SessionId;
 use steer_core::auth::api_key::ApiKeyAuthFlow;
 use steer_core::auth::{
@@ -42,7 +42,7 @@ use uuid::Uuid;
 
 pub struct RuntimeAgentService {
     runtime: RuntimeHandle,
-    catalog: Arc<dyn SessionCatalog>,
+    catalog: Arc<dyn SessionMetadataStore>,
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     provider_registry: Arc<steer_core::auth::ProviderRegistry>,
     llm_config_provider: steer_core::config::LlmConfigProvider,
@@ -88,7 +88,7 @@ impl AuthFlowManager {
 
 pub struct RuntimeAgentDeps {
     pub runtime: RuntimeHandle,
-    pub catalog: Arc<dyn SessionCatalog>,
+    pub catalog: Arc<dyn SessionMetadataStore>,
     pub llm_config_provider: steer_core::config::LlmConfigProvider,
     pub model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     pub provider_registry: Arc<steer_core::auth::ProviderRegistry>,
@@ -533,7 +533,7 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             Ok(session_id) => {
                 if let Err(e) = self
                     .catalog
-                    .update_session_catalog(session_id, Some(&session_config), false, None)
+                    .update_session_metadata(session_id, Some(&session_config), false, None)
                     .await
                 {
                     error!("Failed to update session catalog: {}", e);

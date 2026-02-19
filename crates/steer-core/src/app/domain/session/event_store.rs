@@ -7,7 +7,9 @@ use crate::app::domain::types::SessionId;
 use crate::session::state::SessionConfig;
 use steer_tools::tools::todo::TodoItem;
 
-use super::catalog::{SessionCatalog, SessionCatalogError, SessionFilter, SessionSummary};
+use super::metadata_store::{
+    SessionFilter, SessionMetadataStore, SessionMetadataStoreError, SessionSummary,
+};
 
 #[derive(Debug, Error)]
 pub enum EventStoreError {
@@ -111,6 +113,61 @@ struct InMemoryCatalogEntry {
     last_model: Option<String>,
 }
 
+fn catalog_update_for_event(
+    event: &SessionEvent,
+) -> (Option<&SessionConfig>, bool, Option<String>) {
+    let config = match event {
+        SessionEvent::SessionCreated { config, .. }
+        | SessionEvent::SessionConfigUpdated { config, .. } => Some(config.as_ref()),
+        _ => None,
+    };
+
+    let increment_message_count = matches!(
+        event,
+        SessionEvent::AssistantMessageAdded { .. }
+            | SessionEvent::UserMessageAdded { .. }
+            | SessionEvent::ToolMessageAdded { .. }
+    );
+
+    let new_model = match event {
+        SessionEvent::AssistantMessageAdded { model, .. }
+        | SessionEvent::ToolCallStarted { model, .. }
+        | SessionEvent::ToolCallCompleted { model, .. }
+        | SessionEvent::ToolCallFailed { model, .. }
+        | SessionEvent::LlmUsageUpdated { model, .. } => Some(model.to_string()),
+        SessionEvent::ConversationCompacted { record } => Some(record.model.clone()),
+        _ => None,
+    };
+
+    (config, increment_message_count, new_model)
+}
+
+fn apply_catalog_update(
+    entry: &mut InMemoryCatalogEntry,
+    (config, increment_message_count, new_model): (Option<&SessionConfig>, bool, Option<String>),
+) {
+    let mut updated = false;
+
+    if let Some(config) = config {
+        entry.config = config.clone();
+        updated = true;
+    }
+
+    if increment_message_count {
+        entry.message_count += 1;
+        updated = true;
+    }
+
+    if let Some(model) = new_model {
+        entry.last_model = Some(model);
+        updated = true;
+    }
+
+    if updated {
+        entry.updated_at = Utc::now();
+    }
+}
+
 impl InMemoryEventStore {
     pub fn new() -> Self {
         Self {
@@ -145,12 +202,13 @@ impl EventStore for InMemoryEventStore {
 
         drop(events);
 
+        let mut catalog = self
+            .catalog
+            .write()
+            .map_err(|_| EventStoreError::lock_poisoned("catalog"))?;
+
         match event {
             SessionEvent::SessionCreated { config, .. } => {
-                let mut catalog = self
-                    .catalog
-                    .write()
-                    .map_err(|_| EventStoreError::lock_poisoned("catalog"))?;
                 let now = Utc::now();
                 catalog.insert(
                     session_id,
@@ -163,17 +221,12 @@ impl EventStore for InMemoryEventStore {
                     },
                 );
             }
-            SessionEvent::SessionConfigUpdated { config, .. } => {
-                let mut catalog = self
-                    .catalog
-                    .write()
-                    .map_err(|_| EventStoreError::lock_poisoned("catalog"))?;
+            _ => {
                 if let Some(entry) = catalog.get_mut(&session_id) {
-                    entry.config = *config.clone();
-                    entry.updated_at = Utc::now();
+                    let update = catalog_update_for_event(event);
+                    apply_catalog_update(entry, update);
                 }
             }
-            _ => {}
         }
 
         Ok(seq)
@@ -289,26 +342,26 @@ impl EventStore for InMemoryEventStore {
 }
 
 #[async_trait]
-impl SessionCatalog for InMemoryEventStore {
+impl SessionMetadataStore for InMemoryEventStore {
     async fn get_session_config(
         &self,
         session_id: SessionId,
-    ) -> Result<Option<SessionConfig>, SessionCatalogError> {
+    ) -> Result<Option<SessionConfig>, SessionMetadataStoreError> {
         let catalog = self
             .catalog
             .read()
-            .map_err(|_| SessionCatalogError::lock_poisoned("catalog"))?;
+            .map_err(|_| SessionMetadataStoreError::lock_poisoned("catalog"))?;
         Ok(catalog.get(&session_id).map(|e| e.config.clone()))
     }
 
     async fn get_session_summary(
         &self,
         session_id: SessionId,
-    ) -> Result<Option<SessionSummary>, SessionCatalogError> {
+    ) -> Result<Option<SessionSummary>, SessionMetadataStoreError> {
         let catalog = self
             .catalog
             .read()
-            .map_err(|_| SessionCatalogError::lock_poisoned("catalog"))?;
+            .map_err(|_| SessionMetadataStoreError::lock_poisoned("catalog"))?;
         Ok(catalog.get(&session_id).map(|e| SessionSummary {
             id: session_id,
             created_at: e.created_at,
@@ -321,11 +374,11 @@ impl SessionCatalog for InMemoryEventStore {
     async fn list_sessions(
         &self,
         filter: SessionFilter,
-    ) -> Result<Vec<SessionSummary>, SessionCatalogError> {
+    ) -> Result<Vec<SessionSummary>, SessionMetadataStoreError> {
         let catalog = self
             .catalog
             .read()
-            .map_err(|_| SessionCatalogError::lock_poisoned("catalog"))?;
+            .map_err(|_| SessionMetadataStoreError::lock_poisoned("catalog"))?;
         let mut summaries: Vec<SessionSummary> = catalog
             .iter()
             .map(|(id, e)| SessionSummary {
@@ -349,17 +402,17 @@ impl SessionCatalog for InMemoryEventStore {
         Ok(summaries)
     }
 
-    async fn update_session_catalog(
+    async fn update_session_metadata(
         &self,
         session_id: SessionId,
         config: Option<&SessionConfig>,
         increment_message_count: bool,
         new_model: Option<&str>,
-    ) -> Result<(), SessionCatalogError> {
+    ) -> Result<(), SessionMetadataStoreError> {
         let mut catalog = self
             .catalog
             .write()
-            .map_err(|_| SessionCatalogError::lock_poisoned("catalog"))?;
+            .map_err(|_| SessionMetadataStoreError::lock_poisoned("catalog"))?;
 
         if let Some(entry) = catalog.get_mut(&session_id) {
             if let Some(cfg) = config {
@@ -393,8 +446,11 @@ impl SessionCatalog for InMemoryEventStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::conversation::{AssistantContent, Message, MessageData, UserContent};
     use crate::app::domain::event::SessionEvent;
-    use crate::config::model::builtin;
+    use crate::app::domain::types::ToolCallId;
+    use crate::config::model::{ModelId, builtin};
+    use crate::config::provider::ProviderId;
     use crate::session::state::SessionConfig;
     use std::collections::HashMap;
     use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
@@ -433,6 +489,92 @@ mod tests {
         let events = store.load_events(session_id).await.unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].0, 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_store_updates_message_count_and_last_model_from_events() {
+        let store = InMemoryEventStore::new();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        config.system_prompt = Some("initial".to_string());
+
+        let created = SessionEvent::SessionCreated {
+            config: Box::new(config),
+            metadata: HashMap::new(),
+            parent_session_id: None,
+        };
+        store.append(session_id, &created).await.unwrap();
+
+        let user_message = Message {
+            timestamp: 1,
+            id: "user-msg".to_string(),
+            parent_message_id: None,
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: "hello".to_string(),
+                }],
+            },
+        };
+
+        let assistant_model = ModelId::new(ProviderId::from("provider-a"), "model-a");
+        let assistant_message = Message {
+            timestamp: 2,
+            id: "assistant-msg".to_string(),
+            parent_message_id: Some("user-msg".to_string()),
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: "hi there".to_string(),
+                }],
+            },
+        };
+
+        let tool_model = ModelId::new(ProviderId::from("provider-b"), "model-b");
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::UserMessageAdded {
+                    message: user_message,
+                },
+            )
+            .await
+            .unwrap();
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::AssistantMessageAdded {
+                    message: assistant_message,
+                    model: assistant_model,
+                },
+            )
+            .await
+            .unwrap();
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::ToolCallStarted {
+                    id: ToolCallId::new(),
+                    name: "read_file".to_string(),
+                    parameters: serde_json::json!({"path": "README.md"}),
+                    model: tool_model.clone(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let summary = store
+            .get_session_summary(session_id)
+            .await
+            .unwrap()
+            .expect("summary");
+
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.last_model, Some(tool_model.to_string()));
     }
 
     #[tokio::test]

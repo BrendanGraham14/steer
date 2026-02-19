@@ -834,8 +834,11 @@ mod tests {
             api_client,
         ));
 
-        let executor =
-            build_runtime_tool_executor(workspace, &crate::session::state::ToolVisibility::All, &services);
+        let executor = build_runtime_tool_executor(
+            workspace,
+            &crate::session::state::ToolVisibility::All,
+            &services,
+        );
         let mut supported = executor.supported_tools().await;
         supported.sort_unstable();
 

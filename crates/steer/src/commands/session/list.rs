@@ -5,7 +5,7 @@ use std::io::Write;
 
 use super::super::Command;
 
-use steer_core::app::domain::session::{SessionCatalog, SessionFilter, SqliteEventStore};
+use steer_core::app::domain::session::{SessionFilter, SessionMetadataStore, SqliteEventStore};
 
 pub struct ListSessionCommand {
     pub active: bool,

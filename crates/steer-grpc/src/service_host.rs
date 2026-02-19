@@ -10,7 +10,7 @@ use tracing::{error, info};
 use crate::grpc::RuntimeAgentService;
 use steer_core::api::Client as ApiClient;
 use steer_core::app::domain::runtime::{RuntimeHandle, RuntimeService};
-use steer_core::app::domain::session::{SessionCatalog, SqliteEventStore};
+use steer_core::app::domain::session::{SessionMetadataStore, SqliteEventStore};
 use steer_core::auth::storage::AuthStorage;
 use steer_core::catalog::CatalogConfig;
 use steer_core::tools::ToolSystemBuilder;
@@ -77,7 +77,7 @@ impl ServiceHostConfig {
 pub struct ServiceHost {
     runtime_service: RuntimeService,
     runtime_handle: RuntimeHandle,
-    catalog: Arc<dyn SessionCatalog>,
+    catalog: Arc<dyn SessionMetadataStore>,
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     provider_registry: Arc<steer_core::auth::ProviderRegistry>,
     llm_config_provider: steer_core::config::LlmConfigProvider,
@@ -95,7 +95,7 @@ impl ServiceHost {
             }
         })?);
 
-        let catalog: Arc<dyn SessionCatalog> = event_store.clone();
+        let catalog: Arc<dyn SessionMetadataStore> = event_store.clone();
 
         let model_registry = Arc::new(
             steer_core::model_registry::ModelRegistry::load(&config.catalog_config.catalog_paths)

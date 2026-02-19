@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use base64::Engine as _;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{
     Row,
@@ -11,8 +11,10 @@ use sqlx::{
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use super::catalog::{SessionCatalog, SessionCatalogError, SessionFilter, SessionSummary};
 use super::event_store::{EventStore, EventStoreError};
+use super::metadata_store::{
+    SessionFilter, SessionMetadataStore, SessionMetadataStoreError, SessionSummary,
+};
 use crate::app::conversation::{
     AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
 };
@@ -379,6 +381,49 @@ impl SqliteEventStore {
     }
 }
 
+fn parse_catalog_timestamp(timestamp: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(timestamp)
+        .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|_| {
+            NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%d %H:%M:%S%.f")
+                .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+        })
+        .or_else(|_| {
+            NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%d %H:%M:%S")
+                .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+        })
+        .unwrap_or_else(|_| Utc::now())
+}
+
+fn catalog_update_for_event(
+    event: &SessionEvent,
+) -> (Option<&SessionConfig>, bool, Option<String>) {
+    let config = match event {
+        SessionEvent::SessionCreated { config, .. }
+        | SessionEvent::SessionConfigUpdated { config, .. } => Some(config.as_ref()),
+        _ => None,
+    };
+
+    let increment_message_count = matches!(
+        event,
+        SessionEvent::AssistantMessageAdded { .. }
+            | SessionEvent::UserMessageAdded { .. }
+            | SessionEvent::ToolMessageAdded { .. }
+    );
+
+    let new_model = match event {
+        SessionEvent::AssistantMessageAdded { model, .. }
+        | SessionEvent::ToolCallStarted { model, .. }
+        | SessionEvent::ToolCallCompleted { model, .. }
+        | SessionEvent::ToolCallFailed { model, .. }
+        | SessionEvent::LlmUsageUpdated { model, .. } => Some(model.to_string()),
+        SessionEvent::ConversationCompacted { record } => Some(record.model.clone()),
+        _ => None,
+    };
+
+    (config, increment_message_count, new_model)
+}
+
 #[async_trait]
 impl EventStore for SqliteEventStore {
     async fn append(
@@ -415,14 +460,21 @@ impl EventStore for SqliteEventStore {
         .await
         .map_err(|e| EventStoreError::database(format!("Failed to append event: {e}")))?;
 
-        if let SessionEvent::SessionConfigUpdated { config, .. } = &prepared_event {
-            self.update_session_catalog(session_id, Some(config), false, None)
-                .await
-                .map_err(|e| {
-                    EventStoreError::database(format!(
-                        "Failed to update session config after event append: {e}"
-                    ))
-                })?;
+        let (config, increment_message_count, new_model) =
+            catalog_update_for_event(&prepared_event);
+        if config.is_some() || increment_message_count || new_model.is_some() {
+            self.update_session_metadata(
+                session_id,
+                config,
+                increment_message_count,
+                new_model.as_deref(),
+            )
+            .await
+            .map_err(|e| {
+                EventStoreError::database(format!(
+                    "Failed to update session catalog after event append: {e}"
+                ))
+            })?;
         }
 
         Ok(next_seq as u64)
@@ -622,18 +674,20 @@ impl EventStore for SqliteEventStore {
 }
 
 #[async_trait]
-impl SessionCatalog for SqliteEventStore {
+impl SessionMetadataStore for SqliteEventStore {
     async fn get_session_config(
         &self,
         session_id: SessionId,
-    ) -> Result<Option<SessionConfig>, SessionCatalogError> {
+    ) -> Result<Option<SessionConfig>, SessionMetadataStoreError> {
         let session_id_str = session_id.0.to_string();
 
         let row = sqlx::query("SELECT config_json FROM domain_sessions WHERE id = ?1")
             .bind(&session_id_str)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| SessionCatalogError::database(format!("Failed to get session: {e}")))?;
+            .map_err(|e| {
+                SessionMetadataStoreError::database(format!("Failed to get session: {e}"))
+            })?;
 
         match row {
             Some(row) => {
@@ -641,7 +695,7 @@ impl SessionCatalog for SqliteEventStore {
                 match config_json {
                     Some(json) => {
                         let config: SessionConfig = serde_json::from_str(&json).map_err(|e| {
-                            SessionCatalogError::serialization(format!(
+                            SessionMetadataStoreError::serialization(format!(
                                 "Failed to parse config: {e}"
                             ))
                         })?;
@@ -657,7 +711,7 @@ impl SessionCatalog for SqliteEventStore {
     async fn get_session_summary(
         &self,
         session_id: SessionId,
-    ) -> Result<Option<SessionSummary>, SessionCatalogError> {
+    ) -> Result<Option<SessionSummary>, SessionMetadataStoreError> {
         let session_id_str = session_id.0.to_string();
 
         let row = sqlx::query(
@@ -666,7 +720,7 @@ impl SessionCatalog for SqliteEventStore {
         .bind(&session_id_str)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| SessionCatalogError::database(format!("Failed to get session: {e}")))?;
+        .map_err(|e| SessionMetadataStoreError::database(format!("Failed to get session: {e}")))?;
 
         match row {
             Some(row) => {
@@ -677,14 +731,11 @@ impl SessionCatalog for SqliteEventStore {
                 let last_model: Option<String> = row.get("last_model");
 
                 let uuid = uuid::Uuid::parse_str(&id_str).map_err(|e| {
-                    SessionCatalogError::serialization(format!("Invalid session ID: {e}"))
+                    SessionMetadataStoreError::serialization(format!("Invalid session ID: {e}"))
                 })?;
 
-                let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
-
-                let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
-                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
+                let created_at = parse_catalog_timestamp(&created_at_str);
+                let updated_at = parse_catalog_timestamp(&updated_at_str);
 
                 Ok(Some(SessionSummary {
                     id: SessionId(uuid),
@@ -701,7 +752,7 @@ impl SessionCatalog for SqliteEventStore {
     async fn list_sessions(
         &self,
         filter: SessionFilter,
-    ) -> Result<Vec<SessionSummary>, SessionCatalogError> {
+    ) -> Result<Vec<SessionSummary>, SessionMetadataStoreError> {
         let limit = filter.limit.unwrap_or(100) as i64;
         let offset = filter.offset.unwrap_or(0) as i64;
 
@@ -717,7 +768,9 @@ impl SessionCatalog for SqliteEventStore {
         .bind(offset)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| SessionCatalogError::database(format!("Failed to list sessions: {e}")))?;
+        .map_err(|e| {
+            SessionMetadataStoreError::database(format!("Failed to list sessions: {e}"))
+        })?;
 
         let mut summaries = Vec::with_capacity(rows.len());
         for row in rows {
@@ -728,14 +781,11 @@ impl SessionCatalog for SqliteEventStore {
             let last_model: Option<String> = row.get("last_model");
 
             let uuid = uuid::Uuid::parse_str(&id_str).map_err(|e| {
-                SessionCatalogError::serialization(format!("Invalid session ID: {e}"))
+                SessionMetadataStoreError::serialization(format!("Invalid session ID: {e}"))
             })?;
 
-            let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-                .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
-
-            let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
-                .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
+            let created_at = parse_catalog_timestamp(&created_at_str);
+            let updated_at = parse_catalog_timestamp(&updated_at_str);
 
             summaries.push(SessionSummary {
                 id: SessionId(uuid),
@@ -749,19 +799,19 @@ impl SessionCatalog for SqliteEventStore {
         Ok(summaries)
     }
 
-    async fn update_session_catalog(
+    async fn update_session_metadata(
         &self,
         session_id: SessionId,
         config: Option<&SessionConfig>,
         increment_message_count: bool,
         new_model: Option<&str>,
-    ) -> Result<(), SessionCatalogError> {
+    ) -> Result<(), SessionMetadataStoreError> {
         let session_id_str = session_id.0.to_string();
         let now = Utc::now().to_rfc3339();
 
         if let Some(cfg) = config {
             let config_json = serde_json::to_string(cfg).map_err(|e| {
-                SessionCatalogError::serialization(format!("Failed to serialize config: {e}"))
+                SessionMetadataStoreError::serialization(format!("Failed to serialize config: {e}"))
             })?;
 
             sqlx::query(
@@ -773,7 +823,7 @@ impl SessionCatalog for SqliteEventStore {
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                SessionCatalogError::database(format!("Failed to update session config: {e}"))
+                SessionMetadataStoreError::database(format!("Failed to update session config: {e}"))
             })?;
         }
 
@@ -786,7 +836,7 @@ impl SessionCatalog for SqliteEventStore {
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                SessionCatalogError::database(format!("Failed to increment message count: {e}"))
+                SessionMetadataStoreError::database(format!("Failed to increment message count: {e}"))
             })?;
         }
 
@@ -800,7 +850,7 @@ impl SessionCatalog for SqliteEventStore {
             .execute(&self.pool)
             .await
             .map_err(|e| {
-                SessionCatalogError::database(format!("Failed to update last model: {e}"))
+                SessionMetadataStoreError::database(format!("Failed to update last model: {e}"))
             })?;
         }
 
@@ -896,10 +946,13 @@ fn decode_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
 mod tests {
     use super::*;
     use crate::api::provider::TokenUsage;
-    use crate::app::conversation::{ImageContent, ImageSource, Message, MessageData, UserContent};
+    use crate::app::conversation::{
+        AssistantContent, ImageContent, ImageSource, Message, MessageData, UserContent,
+    };
     use crate::app::domain::event::{ContextWindowUsage, SessionEvent};
     use crate::app::domain::types::{OpId, ToolCallId};
-    use crate::config::model::builtin;
+    use crate::config::model::{ModelId, builtin};
+    use crate::config::provider::ProviderId;
     use crate::session::state::{SessionConfig, ToolVisibility};
     use std::collections::{HashMap, HashSet};
     use steer_tools::error::{ToolError, ToolExecutionError, WorkspaceOpError};
@@ -937,6 +990,36 @@ mod tests {
             parent_message_id: None,
             data: MessageData::User {
                 content: vec![UserContent::Image { image }],
+            },
+        }
+    }
+
+    fn user_text_message(message_id: &str, text: &str) -> Message {
+        Message {
+            timestamp: 0,
+            id: message_id.to_string(),
+            parent_message_id: None,
+            data: MessageData::User {
+                content: vec![UserContent::Text {
+                    text: text.to_string(),
+                }],
+            },
+        }
+    }
+
+    fn assistant_text_message(
+        message_id: &str,
+        text: &str,
+        parent_message_id: Option<&str>,
+    ) -> Message {
+        Message {
+            timestamp: 0,
+            id: message_id.to_string(),
+            parent_message_id: parent_message_id.map(std::string::ToString::to_string),
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Text {
+                    text: text.to_string(),
+                }],
             },
         }
     }
@@ -1224,6 +1307,119 @@ mod tests {
         let sessions = store.list_session_ids().await.unwrap();
         assert_eq!(sessions.len(), 2);
         assert!(sessions.contains(&session_a) || sessions.contains(&session_b));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_parses_sqlite_timestamps_in_catalog_queries() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let created_at_raw = "2026-02-18 19:44:07";
+        let updated_at_raw = "2026-02-19 10:08:24.123";
+
+        sqlx::query("UPDATE domain_sessions SET created_at = ?1, updated_at = ?2 WHERE id = ?3")
+            .bind(created_at_raw)
+            .bind(updated_at_raw)
+            .bind(session_id.to_string())
+            .execute(&store.pool)
+            .await
+            .unwrap();
+
+        let expected_created = DateTime::<Utc>::from_naive_utc_and_offset(
+            NaiveDateTime::parse_from_str(created_at_raw, "%Y-%m-%d %H:%M:%S").unwrap(),
+            Utc,
+        );
+        let expected_updated = DateTime::<Utc>::from_naive_utc_and_offset(
+            NaiveDateTime::parse_from_str(updated_at_raw, "%Y-%m-%d %H:%M:%S%.f").unwrap(),
+            Utc,
+        );
+
+        let summary = store
+            .get_session_summary(session_id)
+            .await
+            .unwrap()
+            .expect("summary");
+        assert_eq!(summary.created_at, expected_created);
+        assert_eq!(summary.updated_at, expected_updated);
+
+        let sessions = store
+            .list_sessions(SessionFilter {
+                limit: Some(10),
+                offset: None,
+            })
+            .await
+            .unwrap();
+
+        let listed = sessions
+            .into_iter()
+            .find(|session| session.id == session_id)
+            .expect("session in list");
+        assert_eq!(listed.created_at, expected_created);
+        assert_eq!(listed.updated_at, expected_updated);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_store_updates_catalog_message_count_and_last_model_from_events() {
+        let store = SqliteEventStore::new_in_memory().await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        let created = SessionEvent::SessionCreated {
+            config: Box::new(config),
+            metadata: HashMap::new(),
+            parent_session_id: None,
+        };
+        store.append(session_id, &created).await.unwrap();
+
+        let assistant_model = ModelId::new(ProviderId::from("provider-a"), "model-a");
+        let tool_model = ModelId::new(ProviderId::from("provider-b"), "model-b");
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::UserMessageAdded {
+                    message: user_text_message("user-msg", "hello"),
+                },
+            )
+            .await
+            .unwrap();
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::AssistantMessageAdded {
+                    message: assistant_text_message("assistant-msg", "hi", Some("user-msg")),
+                    model: assistant_model,
+                },
+            )
+            .await
+            .unwrap();
+
+        store
+            .append(
+                session_id,
+                &SessionEvent::ToolCallStarted {
+                    id: ToolCallId::new(),
+                    name: "read_file".to_string(),
+                    parameters: serde_json::json!({"path": "README.md"}),
+                    model: tool_model.clone(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let summary = store
+            .get_session_summary(session_id)
+            .await
+            .unwrap()
+            .expect("summary");
+
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.last_model, Some(tool_model.to_string()));
     }
 
     #[tokio::test]

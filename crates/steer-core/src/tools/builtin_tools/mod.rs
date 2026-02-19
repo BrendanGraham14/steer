@@ -49,24 +49,54 @@ pub(crate) fn register_builtin_tools_for_visibility(
     registry: &mut super::ToolRegistry,
     visibility: &ToolVisibility,
 ) {
-    register_if_visible(registry, visibility, steer_tools::tools::GREP_TOOL_NAME, |registry| {
-        registry.register_builtin(GrepTool);
-    });
-    register_if_visible(registry, visibility, steer_tools::tools::GLOB_TOOL_NAME, |registry| {
-        registry.register_builtin(GlobTool);
-    });
-    register_if_visible(registry, visibility, steer_tools::tools::LS_TOOL_NAME, |registry| {
-        registry.register_builtin(LsTool);
-    });
-    register_if_visible(registry, visibility, steer_tools::tools::VIEW_TOOL_NAME, |registry| {
-        registry.register_builtin(ViewTool);
-    });
-    register_if_visible(registry, visibility, steer_tools::tools::BASH_TOOL_NAME, |registry| {
-        registry.register_builtin(BashTool);
-    });
-    register_if_visible(registry, visibility, steer_tools::tools::EDIT_TOOL_NAME, |registry| {
-        registry.register_builtin(EditTool);
-    });
+    register_if_visible(
+        registry,
+        visibility,
+        steer_tools::tools::GREP_TOOL_NAME,
+        |registry| {
+            registry.register_builtin(GrepTool);
+        },
+    );
+    register_if_visible(
+        registry,
+        visibility,
+        steer_tools::tools::GLOB_TOOL_NAME,
+        |registry| {
+            registry.register_builtin(GlobTool);
+        },
+    );
+    register_if_visible(
+        registry,
+        visibility,
+        steer_tools::tools::LS_TOOL_NAME,
+        |registry| {
+            registry.register_builtin(LsTool);
+        },
+    );
+    register_if_visible(
+        registry,
+        visibility,
+        steer_tools::tools::VIEW_TOOL_NAME,
+        |registry| {
+            registry.register_builtin(ViewTool);
+        },
+    );
+    register_if_visible(
+        registry,
+        visibility,
+        steer_tools::tools::BASH_TOOL_NAME,
+        |registry| {
+            registry.register_builtin(BashTool);
+        },
+    );
+    register_if_visible(
+        registry,
+        visibility,
+        steer_tools::tools::EDIT_TOOL_NAME,
+        |registry| {
+            registry.register_builtin(EditTool);
+        },
+    );
     register_if_visible(
         registry,
         visibility,
@@ -103,9 +133,14 @@ pub(crate) fn register_builtin_tools_for_visibility(
         steer_tools::tools::DISPATCH_AGENT_TOOL_NAME,
         |registry| registry.register_builtin(DispatchAgentTool),
     );
-    register_if_visible(registry, visibility, steer_tools::tools::FETCH_TOOL_NAME, |registry| {
-        registry.register_builtin(FetchTool);
-    });
+    register_if_visible(
+        registry,
+        visibility,
+        steer_tools::tools::FETCH_TOOL_NAME,
+        |registry| {
+            registry.register_builtin(FetchTool);
+        },
+    );
 }
 
 fn register_if_visible(

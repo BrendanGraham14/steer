@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use super::super::Command;
 
-use steer_core::app::domain::session::{SessionCatalog, SqliteEventStore};
+use steer_core::app::domain::session::{SessionMetadataStore, SqliteEventStore};
 use steer_core::app::domain::types::SessionId;
 
 pub struct ShowSessionCommand {

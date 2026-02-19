@@ -6,7 +6,7 @@ use crate::app::domain::types::SessionId;
 use crate::session::state::SessionConfig;
 
 #[derive(Debug, Error)]
-pub enum SessionCatalogError {
+pub enum SessionMetadataStoreError {
     #[error("Session not found: {session_id}")]
     SessionNotFound { session_id: String },
 
@@ -20,7 +20,7 @@ pub enum SessionCatalogError {
     LockPoisoned { message: String },
 }
 
-impl SessionCatalogError {
+impl SessionMetadataStoreError {
     pub fn database(message: impl Into<String>) -> Self {
         Self::Database {
             message: message.into(),
@@ -56,27 +56,27 @@ pub struct SessionFilter {
 }
 
 #[async_trait]
-pub trait SessionCatalog: Send + Sync {
+pub trait SessionMetadataStore: Send + Sync {
     async fn get_session_config(
         &self,
         session_id: SessionId,
-    ) -> Result<Option<SessionConfig>, SessionCatalogError>;
+    ) -> Result<Option<SessionConfig>, SessionMetadataStoreError>;
 
     async fn get_session_summary(
         &self,
         session_id: SessionId,
-    ) -> Result<Option<SessionSummary>, SessionCatalogError>;
+    ) -> Result<Option<SessionSummary>, SessionMetadataStoreError>;
 
     async fn list_sessions(
         &self,
         filter: SessionFilter,
-    ) -> Result<Vec<SessionSummary>, SessionCatalogError>;
+    ) -> Result<Vec<SessionSummary>, SessionMetadataStoreError>;
 
-    async fn update_session_catalog(
+    async fn update_session_metadata(
         &self,
         session_id: SessionId,
         config: Option<&SessionConfig>,
         increment_message_count: bool,
         new_model: Option<&str>,
-    ) -> Result<(), SessionCatalogError>;
+    ) -> Result<(), SessionMetadataStoreError>;
 }

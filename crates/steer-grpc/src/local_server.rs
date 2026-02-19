@@ -4,7 +4,7 @@ type Result<T> = std::result::Result<T, GrpcError>;
 use std::sync::Arc;
 use steer_core::api::Client as ApiClient;
 use steer_core::app::domain::runtime::RuntimeService;
-use steer_core::app::domain::session::{InMemoryEventStore, SessionCatalog};
+use steer_core::app::domain::session::{InMemoryEventStore, SessionMetadataStore};
 use steer_core::catalog::CatalogConfig;
 use steer_core::config::model::ModelId;
 use steer_core::tools::ToolSystemBuilder;
@@ -15,7 +15,7 @@ use tonic::transport::{Channel, Server};
 
 pub async fn create_local_channel(
     runtime_service: &RuntimeService,
-    catalog: Arc<dyn SessionCatalog>,
+    catalog: Arc<dyn SessionMetadataStore>,
     model_registry: Arc<steer_core::model_registry::ModelRegistry>,
     provider_registry: Arc<steer_core::auth::ProviderRegistry>,
     llm_config_provider: steer_core::config::LlmConfigProvider,
@@ -107,7 +107,7 @@ pub async fn setup_local_grpc_with_catalog(
 ) -> Result<LocalGrpcSetup> {
     let (event_store, catalog): (
         Arc<dyn steer_core::app::domain::session::EventStore>,
-        Arc<dyn SessionCatalog>,
+        Arc<dyn SessionMetadataStore>,
     ) = if let Some(db_path) = session_db_path {
         let sqlite_store = Arc::new(
             steer_core::app::domain::session::SqliteEventStore::new(&db_path)
@@ -270,7 +270,7 @@ mod tests {
         let in_memory_store = Arc::new(InMemoryEventStore::new());
         let event_store: Arc<dyn steer_core::app::domain::session::EventStore> =
             in_memory_store.clone();
-        let catalog: Arc<dyn SessionCatalog> = in_memory_store;
+        let catalog: Arc<dyn SessionMetadataStore> = in_memory_store;
         let catalog_config = CatalogConfig::default();
 
         let model_registry = Arc::new(
@@ -349,7 +349,7 @@ mod tests {
     ) -> Result<LocalGrpcSetup> {
         let (event_store, catalog): (
             Arc<dyn steer_core::app::domain::session::EventStore>,
-            Arc<dyn SessionCatalog>,
+            Arc<dyn SessionMetadataStore>,
         ) = if let Some(db_path) = session_db_path {
             let sqlite_store = Arc::new(
                 steer_core::app::domain::session::SqliteEventStore::new(&db_path)
