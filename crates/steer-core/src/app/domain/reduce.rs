@@ -25,6 +25,7 @@ use steer_tools::tools::BASH_TOOL_NAME;
 use thiserror::Error;
 
 const MIN_MESSAGES_FOR_COMPACT: usize = 3;
+const ESTIMATED_CHARS_PER_TOKEN: f64 = 4.0;
 const COMPACTION_CONTINUE_PROMPT: &str =
     "Continue from the compaction summary and resume the conversation.";
 
@@ -78,6 +79,230 @@ fn derive_context_window_usage(
             estimated,
         }
     })
+}
+
+fn should_auto_compact(
+    state: &AppState,
+    usage: Option<TokenUsage>,
+    context_window_tokens: Option<u32>,
+    configured_max_output_tokens: Option<u32>,
+    require_no_active_operation: bool,
+) -> bool {
+    // Guard 1: config exists and auto-compaction is enabled.
+    let config = match &state.session_config {
+        Some(c) if c.auto_compaction.enabled => c,
+        _ => return false,
+    };
+    let threshold = config.auto_compaction.threshold_ratio();
+
+    // Guard 2: we have usage data.
+    let usage = match usage {
+        Some(u) => u,
+        None => return false,
+    };
+
+    // Guard 3: context window utilization is above threshold (non-estimated).
+    let cw = match derive_context_window_usage(
+        usage.total_tokens,
+        context_window_tokens,
+        configured_max_output_tokens,
+    ) {
+        Some(cw) if !cw.estimated => cw,
+        _ => return false,
+    };
+    let ratio = match cw.utilization_ratio {
+        Some(r) if r >= threshold => r,
+        _ => return false,
+    };
+    let _ = ratio; // used only in guard
+
+    // Guard 4: enough messages to compact.
+    if state.message_graph.get_thread_messages().len() < MIN_MESSAGES_FOR_COMPACT {
+        return false;
+    }
+
+    // Guard 5: no queued work pending.
+    if !state.queued_work.is_empty() {
+        return false;
+    }
+
+    // Guard 6: no active operation (when required by caller).
+    if require_no_active_operation && state.has_active_operation() {
+        return false;
+    }
+
+    true
+}
+
+fn assistant_content_has_request_relevant_content(content: &[AssistantContent]) -> bool {
+    content
+        .iter()
+        .any(|block| !matches!(block, AssistantContent::Thought { .. }))
+}
+
+fn prune_assistant_tool_calls(content: &[AssistantContent]) -> Option<Vec<AssistantContent>> {
+    let mut pruned = Vec::with_capacity(content.len());
+    for block in content {
+        if !matches!(block, AssistantContent::ToolCall { .. }) {
+            pruned.push(block.clone());
+        }
+    }
+
+    if assistant_content_has_request_relevant_content(&pruned) {
+        Some(pruned)
+    } else {
+        None
+    }
+}
+
+fn estimated_additional_tokens_from_message(message: &Message) -> u32 {
+    let chars = match &message.data {
+        MessageData::Tool { result, .. } => result.llm_format().chars().count(),
+        MessageData::Assistant { content } => content
+            .iter()
+            .map(|block| match block {
+                AssistantContent::Text { text } => text.chars().count(),
+                AssistantContent::Image { image } => image.mime_type.chars().count(),
+                AssistantContent::ToolCall { tool_call, .. } => {
+                    tool_call.name.chars().count()
+                        + tool_call.parameters.to_string().chars().count()
+                }
+                AssistantContent::Thought { thought } => thought.display_text().chars().count(),
+            })
+            .sum(),
+        MessageData::User { content } => content
+            .iter()
+            .map(|block| match block {
+                UserContent::Text { text } => text.chars().count(),
+                UserContent::Image { image } => image.mime_type.chars().count(),
+                UserContent::CommandExecution {
+                    command,
+                    stdout,
+                    stderr,
+                    ..
+                } => command.chars().count() + stdout.chars().count() + stderr.chars().count(),
+            })
+            .sum(),
+    };
+
+    ((chars as f64) / ESTIMATED_CHARS_PER_TOKEN).ceil() as u32
+}
+
+fn estimated_additional_tokens_from_trailing_tool_messages(state: &AppState) -> u32 {
+    state
+        .message_graph
+        .get_thread_messages()
+        .into_iter()
+        .rev()
+        .take_while(|message| matches!(&message.data, MessageData::Tool { .. }))
+        .fold(0u32, |total, message| {
+            total.saturating_add(estimated_additional_tokens_from_message(message))
+        })
+}
+
+fn latest_final_usage_total_tokens(state: &AppState) -> Option<u32> {
+    state
+        .llm_usage_by_op
+        .values()
+        .map(|snapshot| snapshot.usage.total_tokens)
+        .max()
+}
+
+fn should_auto_compact_for_projected_context(
+    state: &AppState,
+    projected_total_tokens: Option<u32>,
+    context_window_tokens: Option<u32>,
+    configured_max_output_tokens: Option<u32>,
+    require_no_active_operation: bool,
+) -> bool {
+    let usage = projected_total_tokens.map(|total_tokens| TokenUsage::new(0, 0, total_tokens));
+    should_auto_compact(
+        state,
+        usage,
+        context_window_tokens,
+        configured_max_output_tokens,
+        require_no_active_operation,
+    )
+}
+
+fn is_context_window_exceeded_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+
+    let has_explicit_phrase = [
+        "context length",
+        "context window",
+        "maximum context",
+        "max context",
+        "context_length_exceeded",
+        "too many tokens",
+        "token limit",
+        "prompt is too long",
+        "input is too long",
+    ]
+    .iter()
+    .any(|phrase| normalized.contains(phrase));
+
+    has_explicit_phrase
+        || (normalized.contains("context") && normalized.contains("exceed"))
+        || (normalized.contains("token")
+            && (normalized.contains("exceed")
+                || normalized.contains("too many")
+                || normalized.contains("limit")))
+}
+
+fn maybe_prepare_auto_compaction_from_tool_results(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    op_id: crate::app::domain::types::OpId,
+    model: &crate::config::model::ModelId,
+) -> Option<Vec<Effect>> {
+    let latest_usage_total = latest_final_usage_total_tokens(state)?;
+    let projected_tool_growth = estimated_additional_tokens_from_trailing_tool_messages(state);
+    if projected_tool_growth == 0 {
+        return None;
+    }
+    let projected_total_tokens = latest_usage_total.saturating_add(projected_tool_growth);
+    let context_window_tokens = state
+        .llm_usage_by_op
+        .values()
+        .filter_map(|snapshot| snapshot.context_window.as_ref())
+        .filter_map(|cw| cw.max_context_tokens)
+        .max();
+
+    if !should_auto_compact_for_projected_context(
+        state,
+        Some(projected_total_tokens),
+        context_window_tokens,
+        None,
+        false,
+    ) {
+        return None;
+    }
+
+    state.complete_operation(op_id);
+    state.pending_approval = None;
+    state.approval_queue.clear();
+
+    let mut effects = vec![Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::OperationCompleted { op_id },
+    }];
+
+    let auto = maybe_auto_compact(
+        state,
+        session_id,
+        Some(TokenUsage::new(0, 0, projected_total_tokens)),
+        context_window_tokens,
+        None,
+        model,
+    );
+    if auto.is_empty() {
+        effects.extend(maybe_start_queued_work(state, session_id));
+    } else {
+        effects.extend(auto);
+    }
+
+    Some(effects)
 }
 
 pub fn reduce(state: &mut AppState, action: Action) -> Result<Vec<Effect>, ReduceError> {
@@ -1162,7 +1387,7 @@ fn handle_tool_result(
     effects.push(Effect::EmitEvent {
         session_id,
         event: SessionEvent::ToolMessageAdded {
-            message: tool_message,
+            message: tool_message.clone(),
         },
     });
 
@@ -1173,6 +1398,13 @@ fn handle_tool_result(
     let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
 
     if all_tools_complete && no_pending_approvals {
+        if let Some(compact_effects) =
+            maybe_prepare_auto_compaction_from_tool_results(state, session_id, op_id, &model)
+        {
+            effects.extend(compact_effects);
+            return effects;
+        }
+
         effects.push(Effect::CallModel {
             session_id,
             op_id,
@@ -1233,20 +1465,6 @@ fn handle_model_response_complete(
         })
         .collect();
 
-    let parent_id = state.message_graph.active_message_id.clone();
-
-    let message = Message {
-        data: MessageData::Assistant {
-            content: content.clone(),
-        },
-        timestamp,
-        id: message_id.0.clone(),
-        parent_message_id: parent_id,
-    };
-
-    state.message_graph.add_message(message.clone());
-    state.message_graph.active_message_id = Some(message_id.0.clone());
-
     let model = match state.operation_models.get(&op_id).cloned() {
         Some(model) => model,
         None => {
@@ -1259,16 +1477,47 @@ fn handle_model_response_complete(
         }
     };
 
-    effects.push(Effect::EmitEvent {
-        session_id,
-        event: SessionEvent::AssistantMessageAdded {
-            message,
-            model: model.clone(),
-        },
-    });
-
     // Capture usage before shadowing – TokenUsage is Copy.
     let outer_usage = usage;
+
+    let preempt_with_auto_compaction = !tool_calls.is_empty()
+        && should_auto_compact(
+            state,
+            outer_usage,
+            context_window_tokens,
+            configured_max_output_tokens,
+            false,
+        );
+
+    let maybe_pruned_content = if preempt_with_auto_compaction {
+        prune_assistant_tool_calls(&content)
+    } else {
+        Some(content.clone())
+    };
+
+    if let Some(message_content) = maybe_pruned_content {
+        let parent_id = state.message_graph.active_message_id.clone();
+
+        let message = Message {
+            data: MessageData::Assistant {
+                content: message_content,
+            },
+            timestamp,
+            id: message_id.0.clone(),
+            parent_message_id: parent_id,
+        };
+
+        state.message_graph.add_message(message.clone());
+        state.message_graph.active_message_id = Some(message_id.0.clone());
+
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::AssistantMessageAdded {
+                message,
+                model: model.clone(),
+            },
+        });
+    }
 
     if let Some(usage) = outer_usage {
         let context_window = derive_context_window_usage(
@@ -1286,6 +1535,32 @@ fn handle_model_response_complete(
                 context_window,
             },
         });
+    }
+
+    if preempt_with_auto_compaction {
+        state.complete_operation(op_id);
+        state.pending_approval = None;
+        state.approval_queue.clear();
+        effects.push(Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationCompleted { op_id },
+        });
+
+        let auto = maybe_auto_compact(
+            state,
+            session_id,
+            outer_usage,
+            context_window_tokens,
+            configured_max_output_tokens,
+            &model,
+        );
+        if auto.is_empty() {
+            effects.extend(maybe_start_queued_work(state, session_id));
+        } else {
+            effects.extend(auto);
+        }
+
+        return effects;
     }
 
     if tool_calls.is_empty() {
@@ -1332,7 +1607,42 @@ fn handle_model_response_error(
         return effects;
     }
 
+    let trigger = state
+        .current_operation
+        .as_ref()
+        .and_then(|op| match op.kind {
+            OperationKind::Compact { trigger } => Some(trigger),
+            _ => None,
+        })
+        .unwrap_or(CompactTrigger::Manual);
+    let model = state.operation_models.get(&op_id).cloned();
+
     state.complete_operation(op_id);
+
+    if is_context_window_exceeded_error(error)
+        && !matches!(trigger, CompactTrigger::Auto)
+        && let Some(model) = model
+    {
+        let mut compact_effects = vec![Effect::EmitEvent {
+            session_id,
+            event: SessionEvent::OperationCompleted { op_id },
+        }];
+
+        let auto = maybe_force_auto_compact_after_context_overflow(state, session_id, &model);
+        if auto.is_empty() {
+            compact_effects.push(Effect::EmitEvent {
+                session_id,
+                event: SessionEvent::Error {
+                    message: error.to_string(),
+                },
+            });
+            compact_effects.extend(maybe_start_queued_work(state, session_id));
+        } else {
+            compact_effects.extend(auto);
+        }
+
+        return compact_effects;
+    }
 
     effects.push(Effect::EmitEvent {
         session_id,
@@ -1452,57 +1762,11 @@ fn handle_dequeue_queued_item(
     }
 }
 
-fn maybe_auto_compact(
+fn start_auto_compaction(
     state: &mut AppState,
     session_id: crate::app::domain::types::SessionId,
-    usage: Option<TokenUsage>,
-    context_window_tokens: Option<u32>,
-    configured_max_output_tokens: Option<u32>,
     model: &crate::config::model::ModelId,
 ) -> Vec<Effect> {
-    // Guard 1: config exists and auto-compaction is enabled.
-    let config = match &state.session_config {
-        Some(c) if c.auto_compaction.enabled => c,
-        _ => return vec![],
-    };
-    let threshold = config.auto_compaction.threshold_ratio();
-
-    // Guard 2: we have usage data.
-    let usage = match usage {
-        Some(u) => u,
-        None => return vec![],
-    };
-
-    // Guard 3: context window utilization is above threshold (non-estimated).
-    let cw = match derive_context_window_usage(
-        usage.total_tokens,
-        context_window_tokens,
-        configured_max_output_tokens,
-    ) {
-        Some(cw) if !cw.estimated => cw,
-        _ => return vec![],
-    };
-    let ratio = match cw.utilization_ratio {
-        Some(r) if r >= threshold => r,
-        _ => return vec![],
-    };
-    let _ = ratio; // used only in guard
-
-    // Guard 4: enough messages to compact.
-    if state.message_graph.get_thread_messages().len() < MIN_MESSAGES_FOR_COMPACT {
-        return vec![];
-    }
-
-    // Guard 5: no queued work pending.
-    if !state.queued_work.is_empty() {
-        return vec![];
-    }
-
-    // Guard 6: no active operation (operation was completed before this call).
-    if state.has_active_operation() {
-        return vec![];
-    }
-
     let op_id = crate::app::domain::types::OpId::new();
     let kind = OperationKind::Compact {
         trigger: CompactTrigger::Auto,
@@ -1521,6 +1785,51 @@ fn maybe_auto_compact(
             model: model.clone(),
         },
     ]
+}
+
+fn maybe_force_auto_compact_after_context_overflow(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    model: &crate::config::model::ModelId,
+) -> Vec<Effect> {
+    if !state
+        .session_config
+        .as_ref()
+        .is_some_and(|config| config.auto_compaction.enabled)
+    {
+        return vec![];
+    }
+
+    if state.message_graph.get_thread_messages().len() < MIN_MESSAGES_FOR_COMPACT {
+        return vec![];
+    }
+
+    if !state.queued_work.is_empty() || state.has_active_operation() {
+        return vec![];
+    }
+
+    start_auto_compaction(state, session_id, model)
+}
+
+fn maybe_auto_compact(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    usage: Option<TokenUsage>,
+    context_window_tokens: Option<u32>,
+    configured_max_output_tokens: Option<u32>,
+    model: &crate::config::model::ModelId,
+) -> Vec<Effect> {
+    if !should_auto_compact(
+        state,
+        usage,
+        context_window_tokens,
+        configured_max_output_tokens,
+        true,
+    ) {
+        return vec![];
+    }
+
+    start_auto_compaction(state, session_id, model)
 }
 
 fn maybe_start_queued_work(
@@ -3219,6 +3528,217 @@ mod tests {
     }
 
     #[test]
+    fn test_model_response_with_tool_calls_auto_compacts_without_requesting_approval() {
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+        let model = builtin::claude_sonnet_4_5();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state.operation_models.insert(op_id, model.clone());
+
+        let tool_call = steer_tools::ToolCall {
+            id: "tc_auto_1".to_string(),
+            name: "bash".to_string(),
+            parameters: serde_json::json!({"command": "ls"}),
+        };
+
+        let content = vec![
+            AssistantContent::Text {
+                text: "Let me list the files.".to_string(),
+            },
+            AssistantContent::ToolCall {
+                tool_call: tool_call.clone(),
+                thought_signature: None,
+            },
+        ];
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id: message_id.clone(),
+                content,
+                usage: Some(TokenUsage::new(80_000, 15_000, 95_000)),
+                context_window_tokens: Some(100_000),
+                configured_max_output_tokens: Some(10_000),
+                timestamp: 12345,
+            },
+        );
+
+        assert!(state.pending_approval.is_none());
+        assert!(state.approval_queue.is_empty());
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestUserApproval { .. }))
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. }))
+        );
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::OperationCompleted { op_id: completed_op_id },
+                ..
+            } if *completed_op_id == op_id
+        )));
+
+        let stored_message = state
+            .message_graph
+            .messages
+            .iter()
+            .find(|m| m.id() == message_id.to_string())
+            .expect("assistant message should be stored");
+
+        let MessageData::Assistant { content } = &stored_message.data else {
+            panic!("expected assistant message");
+        };
+
+        assert!(
+            content
+                .iter()
+                .all(|block| !matches!(block, AssistantContent::ToolCall { .. })),
+            "assistant message persisted for compaction should not contain tool call blocks"
+        );
+        assert!(
+            content
+                .iter()
+                .any(|block| matches!(block, AssistantContent::Text { .. })),
+            "non-tool assistant text should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_model_response_tool_only_blocks_auto_compact_drops_assistant_message() {
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+        let model = builtin::claude_sonnet_4_5();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state.operation_models.insert(op_id, model);
+
+        let tool_call = steer_tools::ToolCall {
+            id: "tc_auto_only".to_string(),
+            name: "bash".to_string(),
+            parameters: serde_json::json!({"command": "ls"}),
+        };
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id: message_id.clone(),
+                content: vec![AssistantContent::ToolCall {
+                    tool_call,
+                    thought_signature: None,
+                }],
+                usage: Some(TokenUsage::new(80_000, 15_000, 95_000)),
+                context_window_tokens: Some(100_000),
+                configured_max_output_tokens: Some(10_000),
+                timestamp: 12345,
+            },
+        );
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. }))
+        );
+        assert!(
+            !effects.iter().any(|e| matches!(
+                e,
+                Effect::EmitEvent {
+                    event: SessionEvent::AssistantMessageAdded { message, .. },
+                    ..
+                } if message.id() == message_id.to_string()
+            )),
+            "tool-only assistant response should be dropped before compaction"
+        );
+        assert!(
+            state
+                .message_graph
+                .messages
+                .iter()
+                .all(|m| m.id() != message_id.to_string()),
+            "tool-only assistant response should not persist in message graph"
+        );
+    }
+
+    #[test]
+    fn test_model_response_with_tool_calls_below_threshold_keeps_approval_flow() {
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let message_id = MessageId::new();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let tool_call = steer_tools::ToolCall {
+            id: "tc_below_1".to_string(),
+            name: "bash".to_string(),
+            parameters: serde_json::json!({"command": "ls"}),
+        };
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseComplete {
+                session_id,
+                op_id,
+                message_id,
+                content: vec![
+                    AssistantContent::Text {
+                        text: "Let me list the files.".to_string(),
+                    },
+                    AssistantContent::ToolCall {
+                        tool_call,
+                        thought_signature: None,
+                    },
+                ],
+                usage: Some(TokenUsage::new(40_000, 10_000, 50_000)),
+                context_window_tokens: Some(100_000),
+                configured_max_output_tokens: Some(10_000),
+                timestamp: 12345,
+            },
+        );
+
+        assert!(state.pending_approval.is_some());
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestUserApproval { .. }))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. }))
+        );
+        assert!(state.current_operation.is_some());
+    }
+
+    #[test]
     fn test_model_response_no_tools_completes_operation() {
         let mut state = test_state();
         let session_id = state.session_id;
@@ -4023,6 +4543,241 @@ mod tests {
         assert!(
             effects.is_empty(),
             "expected empty effects when there is queued work"
+        );
+    }
+
+    #[test]
+    fn test_tool_result_projects_context_and_auto_compacts_before_next_model_call() {
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let model = builtin::claude_sonnet_4_5();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: [ToolCallId::from_string("tc_ctx")].into_iter().collect(),
+        });
+        state.operation_models.insert(op_id, model.clone());
+        state.llm_usage_by_op.insert(
+            op_id,
+            crate::app::domain::state::LlmUsageSnapshot {
+                model: model.clone(),
+                usage: TokenUsage::new(0, 0, 80_000),
+                context_window: Some(ContextWindowUsage {
+                    max_context_tokens: Some(100_000),
+                    remaining_tokens: Some(20_000),
+                    utilization_ratio: Some(0.8),
+                    estimated: false,
+                }),
+            },
+        );
+
+        let tool_result = ToolResult::External(steer_tools::result::ExternalResult {
+            tool_name: "read_file".to_string(),
+            payload: "x".repeat(80_000),
+        });
+
+        let effects = reduce(
+            &mut state,
+            Action::ToolResult {
+                session_id,
+                tool_call_id: ToolCallId::from_string("tc_ctx"),
+                tool_name: "read_file".to_string(),
+                result: Ok(tool_result),
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::OperationCompleted { op_id: completed },
+                ..
+            } if *completed == op_id
+        )));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. }))
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::CallModel { .. }))
+        );
+    }
+
+    #[test]
+    fn test_tool_result_projection_sums_trailing_tool_messages_before_final_model_call() {
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let model = builtin::claude_sonnet_4_5();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: [
+                ToolCallId::from_string("tc_big"),
+                ToolCallId::from_string("tc_small"),
+            ]
+            .into_iter()
+            .collect(),
+        });
+        state.operation_models.insert(op_id, model.clone());
+        state.llm_usage_by_op.insert(
+            op_id,
+            crate::app::domain::state::LlmUsageSnapshot {
+                model,
+                usage: TokenUsage::new(0, 0, 80_000),
+                context_window: Some(ContextWindowUsage {
+                    max_context_tokens: Some(100_000),
+                    remaining_tokens: Some(20_000),
+                    utilization_ratio: Some(0.8),
+                    estimated: false,
+                }),
+            },
+        );
+
+        let first_effects = reduce(
+            &mut state,
+            Action::ToolResult {
+                session_id,
+                tool_call_id: ToolCallId::from_string("tc_big"),
+                tool_name: "read_file".to_string(),
+                result: Ok(ToolResult::External(steer_tools::result::ExternalResult {
+                    tool_name: "read_file".to_string(),
+                    payload: "x".repeat(40_000),
+                })),
+            },
+        );
+
+        assert!(!first_effects.iter().any(|e| matches!(
+            e,
+            Effect::CallModel { .. } | Effect::RequestCompaction { .. }
+        )));
+
+        let second_effects = reduce(
+            &mut state,
+            Action::ToolResult {
+                session_id,
+                tool_call_id: ToolCallId::from_string("tc_small"),
+                tool_name: "read_file".to_string(),
+                result: Ok(ToolResult::External(steer_tools::result::ExternalResult {
+                    tool_name: "read_file".to_string(),
+                    payload: "ok".to_string(),
+                })),
+            },
+        );
+
+        assert!(
+            second_effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. }))
+        );
+        assert!(
+            !second_effects
+                .iter()
+                .any(|e| matches!(e, Effect::CallModel { .. }))
+        );
+    }
+
+    #[test]
+    fn test_model_response_error_context_window_triggers_auto_compaction_recovery_with_stale_usage_snapshot()
+     {
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let model = builtin::claude_sonnet_4_5();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state.operation_models.insert(op_id, model.clone());
+        state.llm_usage_by_op.insert(
+            op_id,
+            crate::app::domain::state::LlmUsageSnapshot {
+                model: model.clone(),
+                usage: TokenUsage::new(0, 0, 10_000),
+                context_window: Some(ContextWindowUsage {
+                    max_context_tokens: Some(100_000),
+                    remaining_tokens: Some(90_000),
+                    utilization_ratio: Some(0.1),
+                    estimated: false,
+                }),
+            },
+        );
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseError {
+                session_id,
+                op_id,
+                error: "context_length_exceeded".to_string(),
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::OperationCompleted { op_id: completed },
+                ..
+            } if *completed == op_id
+        )));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. }))
+        );
+        assert!(!effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::Error { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_model_response_error_context_window_with_auto_trigger_preserves_error() {
+        use crate::app::domain::event::CompactTrigger;
+
+        let mut state = setup_auto_compact_state(true, 90, 4);
+        let session_id = state.session_id;
+        let op_id = OpId::new();
+        let model = builtin::claude_sonnet_4_5();
+
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::Compact {
+                trigger: CompactTrigger::Auto,
+            },
+            pending_tool_calls: HashSet::new(),
+        });
+        state.operation_models.insert(op_id, model);
+
+        let effects = reduce(
+            &mut state,
+            Action::ModelResponseError {
+                session_id,
+                op_id,
+                error: "context_length_exceeded".to_string(),
+            },
+        );
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::EmitEvent {
+                event: SessionEvent::Error { message },
+                ..
+            } if message == "context_length_exceeded"
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::RequestCompaction { .. }))
         );
     }
 

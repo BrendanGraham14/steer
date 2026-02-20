@@ -1072,19 +1072,22 @@ mod tests {
         AssistantContent, Message, MessageData, ThoughtContent, UserContent,
     };
     use crate::app::domain::action::Action;
-    use crate::app::domain::event::SessionEvent;
+    use crate::app::domain::event::{CompactResult, CompactTrigger, SessionEvent};
     use crate::app::domain::session::event_store::InMemoryEventStore;
+    use crate::app::domain::types::{MessageId, OpId, SessionId};
     use crate::app::validation::ValidatorRegistry;
     use crate::auth::ProviderRegistry;
-    use crate::config::model::{ModelId, ModelParameters};
+    use crate::config::model::{ModelId, ModelParameters, builtin};
     use crate::config::provider::ProviderId;
     use crate::model_registry::ModelRegistry;
-    use crate::tools::BackendRegistry;
+    use crate::session::state::{AutoCompactionConfig, SessionConfig};
+    use crate::tools::{BackendRegistry, ToolSystemBuilder};
     use async_trait::async_trait;
     use serde_json::json;
     use steer_tools::ToolCall;
     use steer_tools::ToolSchema;
     use steer_tools::result::{EditResult, ExternalResult, FileContentResult};
+    use tempfile::TempDir;
     use tokio::time::{Duration, timeout};
     use tokio_util::sync::CancellationToken;
 
@@ -1098,6 +1101,12 @@ mod tests {
     struct ContextWindowLimitProvider {
         max_tool_messages: usize,
         observed_tool_message_counts: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+
+    #[derive(Clone)]
+    struct RepeatedReadThenOverflowProvider {
+        file_path: String,
+        overflow_char_limit: usize,
     }
 
     #[async_trait]
@@ -1189,6 +1198,80 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl Provider for RepeatedReadThenOverflowProvider {
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+
+        async fn complete(
+            &self,
+            _model_id: &ModelId,
+            messages: Vec<Message>,
+            _system: Option<SystemContext>,
+            _tools: Option<Vec<ToolSchema>>,
+            _call_options: Option<ModelParameters>,
+            _token: CancellationToken,
+        ) -> Result<CompletionResponse, ApiError> {
+            let total_chars: usize = messages
+                .iter()
+                .map(|message| message.extract_text().len())
+                .sum();
+            if total_chars >= self.overflow_char_limit {
+                return Err(ApiError::InvalidRequest {
+                    provider: "stub".to_string(),
+                    details: "context_length_exceeded".to_string(),
+                });
+            }
+
+            let read_call_count = messages
+                .iter()
+                .filter_map(|message| {
+                    let MessageData::Assistant { content } = &message.data else {
+                        return None;
+                    };
+                    Some(
+                        content
+                            .iter()
+                            .filter(|block| {
+                                matches!(
+                                    block,
+                                    AssistantContent::ToolCall { tool_call, .. }
+                                        if tool_call.name == steer_tools::tools::VIEW_TOOL_NAME
+                                )
+                            })
+                            .count(),
+                    )
+                })
+                .sum::<usize>();
+
+            if read_call_count < 5 {
+                Ok(CompletionResponse {
+                    content: vec![AssistantContent::ToolCall {
+                        tool_call: ToolCall {
+                            id: format!("simulated_read_{read_call_count}"),
+                            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                            parameters: json!({
+                                "file_path": self.file_path,
+                                "offset": read_call_count * 2000 + 1,
+                                "limit": 2000,
+                            }),
+                        },
+                        thought_signature: None,
+                    }],
+                    usage: Some(TokenUsage::new(0, 0, 10_000)),
+                })
+            } else {
+                Ok(CompletionResponse {
+                    content: vec![AssistantContent::Text {
+                        text: "done".to_string(),
+                    }],
+                    usage: Some(TokenUsage::new(0, 0, 12_000)),
+                })
+            }
+        }
+    }
+
     async fn create_test_deps() -> (Arc<dyn EventStore>, Arc<ApiClient>, Arc<ToolExecutor>) {
         let event_store = Arc::new(InMemoryEventStore::new()) as Arc<dyn EventStore>;
         let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
@@ -1196,13 +1279,25 @@ mod tests {
         let api_client = Arc::new(ApiClient::new_with_deps(
             crate::test_utils::test_llm_config_provider().unwrap(),
             provider_registry,
-            model_registry,
+            model_registry.clone(),
         ));
 
-        let tool_executor = Arc::new(ToolExecutor::with_components(
-            Arc::new(BackendRegistry::new()),
-            Arc::new(ValidatorRegistry::new()),
-        ));
+        let workspace =
+            crate::workspace::create_workspace(&crate::workspace::WorkspaceConfig::Local {
+                path: std::env::current_dir().expect("current dir"),
+            })
+            .await
+            .expect("create workspace");
+
+        let tool_executor = ToolSystemBuilder::new(
+            workspace,
+            event_store.clone(),
+            api_client.clone(),
+            model_registry,
+        )
+        .with_backend_registry(Arc::new(BackendRegistry::new()))
+        .with_validators(Arc::new(ValidatorRegistry::new()))
+        .build();
 
         (event_store, api_client, tool_executor)
     }
@@ -1288,6 +1383,84 @@ mod tests {
             timestamp: (tool_message_count as u64) + 2,
         };
         state.message_graph.add_message(tail);
+    }
+
+    fn auto_compact_test_state(session_id: SessionId) -> AppState {
+        let mut state = AppState::new(session_id);
+        let mut config = SessionConfig::read_only(builtin::claude_sonnet_4_5());
+        config.auto_compaction = AutoCompactionConfig {
+            enabled: true,
+            threshold_percent: 90,
+        };
+        state.session_config = Some(config.clone());
+        state.base_session_config = Some(config);
+        state
+    }
+
+    async fn wait_for_compaction_result_auto_success(
+        event_store: Arc<dyn EventStore>,
+        session_id: SessionId,
+    ) -> bool {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let events = event_store
+                    .load_events(session_id)
+                    .await
+                    .expect("load events");
+                if events.iter().any(|(_, event)| {
+                    matches!(
+                        event,
+                        SessionEvent::CompactResult {
+                            result: CompactResult::Success(_),
+                            trigger: CompactTrigger::Auto,
+                        }
+                    )
+                }) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    async fn wait_for_no_error_event(
+        event_store: Arc<dyn EventStore>,
+        session_id: SessionId,
+    ) -> bool {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let events = event_store
+                    .load_events(session_id)
+                    .await
+                    .expect("load events");
+                if events
+                    .iter()
+                    .any(|(_, event)| matches!(event, SessionEvent::Error { .. }))
+                {
+                    return false;
+                }
+                if events.iter().any(|(_, event)| {
+                    matches!(
+                        event,
+                        SessionEvent::CompactResult {
+                            result: CompactResult::Success(_),
+                            trigger: CompactTrigger::Auto,
+                        }
+                    )
+                }) {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    async fn dispatch_and_assert_ok(handle: &SessionActorHandle, action: Action) {
+        handle.dispatch(action).await.expect("dispatch action");
     }
 
     async fn wait_for_operation_completed(
@@ -1616,6 +1789,91 @@ mod tests {
         assert!(
             messages.is_empty(),
             "assistant message with only thought + dropped tool call should be removed"
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_large_tool_results_trigger_auto_compaction_recovery_without_error() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let cargo_lock_path = temp_dir.path().join("Cargo.lock");
+        let large_line = "x".repeat(120);
+        let large_body = std::iter::repeat_n(large_line.as_str(), 12_000)
+            .collect::<Vec<_>>()
+            .join("\n");
+        tokio::fs::write(&cargo_lock_path, large_body)
+            .await
+            .expect("write large Cargo.lock test file");
+
+        let session_id = SessionId::new();
+        let state = auto_compact_test_state(session_id);
+
+        let (event_store, api_client, _tool_executor) = create_test_deps().await;
+        let model_id = builtin::claude_sonnet_4_5();
+        let provider_id = model_id.provider.clone();
+        api_client.insert_test_provider(
+            provider_id,
+            Arc::new(RepeatedReadThenOverflowProvider {
+                file_path: cargo_lock_path.to_string_lossy().to_string(),
+                overflow_char_limit: 120_000,
+            }),
+        );
+
+        let workspace =
+            crate::workspace::create_workspace(&crate::workspace::WorkspaceConfig::Local {
+                path: temp_dir.path().to_path_buf(),
+            })
+            .await
+            .expect("create test workspace");
+        let model_registry = Arc::new(ModelRegistry::load(&[]).expect("model registry"));
+        let tool_executor = ToolSystemBuilder::new(
+            workspace,
+            event_store.clone(),
+            api_client.clone(),
+            model_registry,
+        )
+        .with_backend_registry(Arc::new(BackendRegistry::new()))
+        .with_validators(Arc::new(ValidatorRegistry::new()))
+        .build();
+
+        let handle = spawn_session_actor(
+            session_id,
+            state,
+            event_store.clone(),
+            api_client,
+            tool_executor,
+        );
+
+        let user_op_id = OpId::new();
+        let user_message_id = MessageId::new();
+        dispatch_and_assert_ok(
+            &handle,
+            Action::UserInput {
+                session_id,
+                content: vec![UserContent::Text {
+                    text: "repeatedly read large file chunks until we fill the context window"
+                        .to_string(),
+                }],
+                op_id: user_op_id,
+                message_id: user_message_id,
+                model: model_id,
+                timestamp: 1,
+            },
+        )
+        .await;
+
+        let compacted =
+            wait_for_compaction_result_auto_success(event_store.clone(), session_id).await;
+        let no_error = wait_for_no_error_event(event_store.clone(), session_id).await;
+
+        handle.shutdown();
+
+        assert!(
+            compacted,
+            "expected CompactResult::Success with auto trigger"
+        );
+        assert!(
+            no_error,
+            "expected no SessionEvent::Error after context-overflow recovery"
         );
     }
 
