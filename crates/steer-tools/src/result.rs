@@ -78,6 +78,8 @@ pub struct BashResult {
     pub stderr: String,
     pub exit_code: i32,
     pub command: String,
+    #[serde(default)]
+    pub timed_out: bool,
 }
 
 /// Result for todo operations
@@ -322,6 +324,13 @@ impl ToolResult {
                     truncate_output(&r.stderr, MAX_STDERR_CHARS, MAX_STDERR_LINES);
 
                 let mut output = stdout_truncated;
+
+                if r.timed_out {
+                    if !output.is_empty() && !output.ends_with('\n') {
+                        output.push('\n');
+                    }
+                    output.push_str("Command timed out.");
+                }
 
                 if r.exit_code != 0 {
                     if !output.is_empty() && !output.ends_with('\n') {

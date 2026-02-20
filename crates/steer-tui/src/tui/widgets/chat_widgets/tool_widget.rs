@@ -225,6 +225,7 @@ mod tests {
             exit_code: 0,
             stdout: "Hello, world!\n".to_string(),
             stderr: String::new(),
+            timed_out: false,
         }));
 
         let mut widget = ToolWidget::new(tool_call, result);

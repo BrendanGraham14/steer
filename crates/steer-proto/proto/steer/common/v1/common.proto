@@ -56,6 +56,7 @@ message BashResult {
   string stderr = 2;
   int32 exit_code = 3;
   string command = 4;
+  bool timed_out = 5;
 }
 
 // Glob pattern matching result

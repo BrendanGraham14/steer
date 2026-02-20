@@ -1,14 +1,18 @@
 use async_trait::async_trait;
 use regex::Regex;
+use std::process::ExitStatus;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::time::timeout;
 
 use crate::tools::capability::Capabilities;
 use crate::tools::static_tool::{StaticTool, StaticToolContext, StaticToolError};
 use steer_tools::result::BashResult;
 use steer_tools::tools::bash::{BashError, BashParams, BashToolSpec};
+
+const DEFAULT_TIMEOUT_MS: u64 = 180_000;
+const MAX_TIMEOUT_MS: u64 = 3_600_000;
+const TIMEOUT_EXIT_CODE: i32 = 124;
 
 pub struct BashTool;
 
@@ -37,25 +41,32 @@ impl StaticTool for BashTool {
             }));
         }
 
-        let timeout_ms = params.timeout.unwrap_or(3_600_000).min(3_600_000);
+        let timeout_ms = params
+            .timeout
+            .unwrap_or(DEFAULT_TIMEOUT_MS)
+            .min(MAX_TIMEOUT_MS);
         let timeout_duration = Duration::from_millis(timeout_ms);
         let working_directory = ctx.services.workspace.working_directory().to_path_buf();
 
-        tokio::select! {
-            () = ctx.cancellation_token.cancelled() => Err(StaticToolError::Cancelled),
-            res = timeout(timeout_duration, run_command(&params.command, &working_directory, ctx.cancellation_token.clone())) => {
-                match res {
-                    Ok(output) => output,
-                    Err(_) => Err(StaticToolError::Timeout),
-                }
-            }
-        }
+        run_command(
+            &params.command,
+            &working_directory,
+            timeout_duration,
+            ctx.cancellation_token.clone(),
+        )
+        .await
     }
+}
+
+enum CommandCompletion {
+    Completed(ExitStatus),
+    TimedOut,
 }
 
 async fn run_command(
     command: &str,
     working_directory: &std::path::Path,
+    timeout_duration: Duration,
     cancellation_token: tokio_util::sync::CancellationToken,
 ) -> Result<BashResult, StaticToolError<BashError>> {
     let mut cmd = Command::new("/bin/bash");
@@ -93,55 +104,65 @@ async fn run_command(
         stderr.read_to_end(&mut buf).await.map(|_| buf)
     });
 
-    let result = tokio::select! {
+    let completion = tokio::select! {
         () = cancellation_token.cancelled() => {
             let _ = child.kill().await;
             stdout_handle.abort();
             stderr_handle.abort();
-            Err(StaticToolError::Cancelled)
+            return Err(StaticToolError::Cancelled);
         }
         status = child.wait() => {
-            match status {
-                Ok(status) => {
-                    let (stdout_result, stderr_result) = tokio::try_join!(stdout_handle, stderr_handle)
-                        .map_err(|e| {
-                            StaticToolError::execution(BashError::Io {
-                                message: format!("Failed to join read tasks: {e}"),
-                            })
-                        })?;
-
-                    let stdout_bytes = stdout_result
-                        .map_err(|e| {
-                            StaticToolError::execution(BashError::Io {
-                                message: format!("Failed to read stdout: {e}"),
-                            })
-                        })?;
-                    let stderr_bytes = stderr_result
-                        .map_err(|e| {
-                            StaticToolError::execution(BashError::Io {
-                                message: format!("Failed to read stderr: {e}"),
-                            })
-                        })?;
-
-                    let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
-                    let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
-                    let exit_code = status.code().unwrap_or(-1);
-
-                    Ok(BashResult {
-                        stdout,
-                        stderr,
-                        exit_code,
-                        command: command.to_string(),
-                    })
-                }
-                Err(e) => Err(StaticToolError::execution(BashError::Io {
+            let status = status.map_err(|e| {
+                StaticToolError::execution(BashError::Io {
                     message: e.to_string(),
-                })),
-            }
+                })
+            })?;
+            CommandCompletion::Completed(status)
+        }
+        () = tokio::time::sleep(timeout_duration) => {
+            let _ = child.kill().await;
+            child.wait().await.map_err(|e| {
+                StaticToolError::execution(BashError::Io {
+                    message: format!("Failed to wait for timed out command: {e}"),
+                })
+            })?;
+            CommandCompletion::TimedOut
         }
     };
 
-    result
+    let (stdout_result, stderr_result) =
+        tokio::try_join!(stdout_handle, stderr_handle).map_err(|e| {
+            StaticToolError::execution(BashError::Io {
+                message: format!("Failed to join read tasks: {e}"),
+            })
+        })?;
+
+    let stdout_bytes = stdout_result.map_err(|e| {
+        StaticToolError::execution(BashError::Io {
+            message: format!("Failed to read stdout: {e}"),
+        })
+    })?;
+    let stderr_bytes = stderr_result.map_err(|e| {
+        StaticToolError::execution(BashError::Io {
+            message: format!("Failed to read stderr: {e}"),
+        })
+    })?;
+
+    let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
+    let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
+
+    let (exit_code, timed_out) = match completion {
+        CommandCompletion::Completed(status) => (status.code().unwrap_or(-1), false),
+        CommandCompletion::TimedOut => (TIMEOUT_EXIT_CODE, true),
+    };
+
+    Ok(BashResult {
+        stdout,
+        stderr,
+        exit_code,
+        command: command.to_string(),
+        timed_out,
+    })
 }
 
 static BANNED_COMMAND_REGEXES: std::sync::LazyLock<Vec<Regex>> = std::sync::LazyLock::new(|| {
@@ -175,4 +196,47 @@ static BANNED_COMMAND_REGEXES: std::sync::LazyLock<Vec<Regex>> = std::sync::Lazy
 
 fn is_banned_command(command: &str) -> bool {
     BANNED_COMMAND_REGEXES.iter().any(|re| re.is_match(command))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::time::Duration;
+
+    use tokio_util::sync::CancellationToken;
+
+    use super::{TIMEOUT_EXIT_CODE, run_command};
+
+    #[tokio::test]
+    async fn returns_partial_output_when_command_times_out() {
+        let result = run_command(
+            "echo hello; sleep 1; echo world",
+            Path::new("."),
+            Duration::from_millis(100),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("timed out command should still return output");
+
+        assert!(result.timed_out);
+        assert_eq!(result.exit_code, TIMEOUT_EXIT_CODE);
+        assert!(result.stdout.contains("hello"));
+        assert!(!result.stdout.contains("world"));
+    }
+
+    #[tokio::test]
+    async fn marks_successful_command_as_not_timed_out() {
+        let result = run_command(
+            "printf 'done'",
+            Path::new("."),
+            Duration::from_secs(5),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("command should complete");
+
+        assert!(!result.timed_out);
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "done");
+    }
 }

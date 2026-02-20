@@ -130,6 +130,7 @@ fn steer_tools_result_to_proto(
             stderr: r.stderr.clone(),
             exit_code: r.exit_code,
             command: r.command.clone(),
+            timed_out: r.timed_out,
         }),
         CoreResult::Glob(r) => ProtoResult::Glob(common::GlobResult {
             matches: r.matches.clone(),
@@ -285,6 +286,7 @@ fn proto_to_steer_tools_result(
             stderr: r.stderr,
             exit_code: r.exit_code,
             command: r.command,
+            timed_out: r.timed_out,
         }),
         ProtoResult::Glob(r) => ToolResult::Glob(GlobResult {
             matches: r.matches,

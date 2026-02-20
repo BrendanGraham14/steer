@@ -138,6 +138,14 @@ impl ToolFormatter for BashFormatter {
 
             match result {
                 ToolResult::Bash(bash_result) => {
+                    // Show timeout marker first so it is visible even if stderr is empty
+                    if bash_result.timed_out {
+                        lines.push(Line::from(Span::styled(
+                            "[timed out]",
+                            theme.style(Component::ErrorText),
+                        )));
+                    }
+
                     // Show stdout if present
                     if !bash_result.stdout.trim().is_empty() {
                         const MAX_OUTPUT_LINES: usize = 20;

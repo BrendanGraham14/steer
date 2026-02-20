@@ -40,7 +40,7 @@ pub enum BashError {
 pub struct BashParams {
     /// The command to execute
     pub command: String,
-    /// Optional timeout in milliseconds (default 3600000, max 3600000)
+    /// Optional timeout in milliseconds (default 180000, max 3600000)
     #[schemars(range(min = 1, max = 3_600_000))]
     pub timeout: Option<u64>,
 }
