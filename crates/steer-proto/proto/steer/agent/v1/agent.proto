@@ -30,6 +30,7 @@ service AgentService {
   rpc ListFiles(ListFilesRequest) returns (stream ListFilesResponse);
   rpc GetMcpServers(GetMcpServersRequest) returns (GetMcpServersResponse);
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc ListPrimaryAgents(ListPrimaryAgentsRequest) returns (ListPrimaryAgentsResponse);
   rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
   rpc ResolveModel(ResolveModelRequest) returns (ResolveModelResponse);
   rpc GetDefaultModel(GetDefaultModelRequest) returns (GetDefaultModelResponse);
@@ -472,6 +473,14 @@ message ListProvidersRequest {
 
 message ListProvidersResponse {
   repeated ProviderInfo providers = 1;
+}
+
+message ListPrimaryAgentsRequest {
+  // Empty for now
+}
+
+message ListPrimaryAgentsResponse {
+  repeated PrimaryAgentSpec agents = 1;
 }
 
 message ListModelsRequest {
@@ -1166,6 +1175,12 @@ message McpDisconnected {
 }
 
 // Provider and model configuration
+message PrimaryAgentSpec {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+}
+
 message ProviderInfo {
   string id = 1;  // "anthropic", "openai", "gemini", "xai", or custom name
   string name = 2;  // Display name

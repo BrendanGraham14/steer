@@ -226,8 +226,9 @@ mod tests {
     use steer_core::app::domain::types::OpId;
     use steer_core::config::model::ModelId;
     use steer_proto::agent::v1::{
-        CompactSessionRequest, ExecuteBashCommandRequest, ListModelsRequest, SendMessageRequest,
-        SubscribeSessionEventsRequest, agent_service_client::AgentServiceClient,
+        CompactSessionRequest, ExecuteBashCommandRequest, ListModelsRequest,
+        ListPrimaryAgentsRequest, SendMessageRequest, SubscribeSessionEventsRequest,
+        agent_service_client::AgentServiceClient,
     };
     use tempfile::TempDir;
     use tokio::time::{Duration, Instant, timeout};
@@ -917,6 +918,33 @@ persisted_new={new_events:?} (before_len={before_len}, after_len={after_len})"
                 .all(|model| model.context_window_tokens.is_some()),
             "expected context_window_tokens to be populated for all listed models"
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_primary_agents_returns_expected_defaults() {
+        let workspace_root = test_workspace_root();
+        let setup = setup_local_grpc_with_catalog(
+            steer_core::config::model::builtin::claude_sonnet_4_5(),
+            None,
+            CatalogConfig::default(),
+            Some(workspace_root.path().to_path_buf()),
+        )
+        .await
+        .expect("local grpc setup");
+
+        let mut client = AgentServiceClient::new(setup.channel.clone());
+        let response = client
+            .list_primary_agents(tonic::Request::new(ListPrimaryAgentsRequest {}))
+            .await
+            .expect("list_primary_agents should succeed")
+            .into_inner();
+
+        let agent_ids = response
+            .agents
+            .into_iter()
+            .map(|agent| agent.id)
+            .collect::<Vec<_>>();
+        assert_eq!(agent_ids, vec!["normal", "plan", "yolo"]);
     }
 
     #[tokio::test]

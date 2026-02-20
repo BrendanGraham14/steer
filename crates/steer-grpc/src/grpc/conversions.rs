@@ -22,8 +22,8 @@ use uuid::Uuid;
 
 use crate::client_api::{
     ApiKeyOrigin as ClientApiKeyOrigin, AuthMethod as ClientAuthMethod,
-    AuthProgress as ClientAuthProgress, AuthSource as ClientAuthSource, ProviderAuthStatus,
-    ProviderInfo, StartAuthResponse, UsageUpdateKind,
+    AuthProgress as ClientAuthProgress, AuthSource as ClientAuthSource, PrimaryAgentSpec,
+    ProviderAuthStatus, ProviderInfo, StartAuthResponse, UsageUpdateKind,
 };
 
 /// Convert a core ModelId to proto ModelSpec
@@ -3016,6 +3016,16 @@ pub(crate) fn proto_to_provider_info(
     Ok(ProviderInfo {
         id: info.id,
         name: info.name,
+    })
+}
+
+pub(crate) fn proto_to_primary_agent_spec(
+    spec: proto::PrimaryAgentSpec,
+) -> Result<PrimaryAgentSpec, ConversionError> {
+    Ok(PrimaryAgentSpec {
+        id: spec.id,
+        name: spec.name,
+        description: spec.description,
     })
 }
 

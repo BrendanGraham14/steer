@@ -63,6 +63,13 @@ pub use steer_core::config::provider::ProviderId;
 
 pub use steer_workspace::{LlmStatus, WorkspaceStatus};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrimaryAgentSpec {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct CreateSessionParams {
     pub workspace: WorkspaceConfig,

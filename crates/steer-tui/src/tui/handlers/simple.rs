@@ -20,6 +20,14 @@ impl Tui {
         }
 
         match key.code {
+            KeyCode::BackTab => {
+                self.cycle_primary_agent().await;
+            }
+
+            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.cycle_primary_agent().await;
+            }
+
             KeyCode::Esc => {
                 // Check for double-tap first
                 if self.editing_message_id.is_some() {

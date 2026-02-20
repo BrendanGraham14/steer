@@ -5,11 +5,13 @@ use tonic::transport::Channel;
 use tracing::{debug, error, info, warn};
 
 use crate::client_api::{
-    ClientEvent, CreateSessionParams, ProviderAuthStatus, ProviderInfo, StartAuthResponse,
+    ClientEvent, CreateSessionParams, PrimaryAgentSpec, ProviderAuthStatus, ProviderInfo,
+    StartAuthResponse,
 };
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
-    proto_to_provider_auth_status, proto_to_provider_info, proto_to_repo_info,
+    proto_to_primary_agent_spec, proto_to_provider_auth_status, proto_to_provider_info,
+    proto_to_repo_info,
     proto_to_start_auth_response, proto_to_workspace_info, proto_to_workspace_status,
     session_policy_overrides_to_proto, session_tool_config_to_proto, workspace_config_to_proto,
 };
@@ -846,6 +848,26 @@ impl AgentClient {
             .map(proto_to_provider_info)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(providers)
+    }
+
+    pub async fn list_primary_agents(&self) -> GrpcResult<Vec<PrimaryAgentSpec>> {
+        let request = Request::new(proto::ListPrimaryAgentsRequest {});
+        let response = self
+            .client
+            .lock()
+            .await
+            .list_primary_agents(request)
+            .await
+            .map_err(Box::new)?;
+
+        let agents = response
+            .into_inner()
+            .agents
+            .into_iter()
+            .map(proto_to_primary_agent_spec)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(agents)
     }
 
     pub async fn get_provider_auth_status(

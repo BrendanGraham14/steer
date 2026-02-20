@@ -125,10 +125,15 @@ impl<'a> ModeTitleWidget<'a> {
         let mut keybinds = match self.mode {
             InputMode::Simple => {
                 if self.has_content {
-                    vec![("Enter", "send"), ("ESC ESC", "clear")]
+                    vec![
+                        ("Enter", "send"),
+                        ("Shift+Tab", "cycle agent"),
+                        ("ESC ESC", "clear"),
+                    ]
                 } else {
                     vec![
                         ("Enter", "send"),
+                        ("Shift+Tab", "cycle agent"),
                         ("ESC ESC", "edit previous"),
                         ("!", "bash"),
                         ("/", "command"),
@@ -138,10 +143,16 @@ impl<'a> ModeTitleWidget<'a> {
             }
             InputMode::VimNormal => {
                 if self.has_content {
-                    vec![("i", "insert"), ("ESC ESC", "clear"), ("hjkl", "move")]
+                    vec![
+                        ("i", "insert"),
+                        ("Shift+Tab", "cycle agent"),
+                        ("ESC ESC", "clear"),
+                        ("hjkl", "move"),
+                    ]
                 } else {
                     vec![
                         ("i", "insert"),
+                        ("Shift+Tab", "cycle agent"),
                         ("ESC ESC", "edit previous"),
                         ("!", "bash"),
                         ("/", "command"),
@@ -149,7 +160,12 @@ impl<'a> ModeTitleWidget<'a> {
                 }
             }
             InputMode::VimInsert => {
-                vec![("Esc", "normal"), ("ESC ESC", "clear"), ("Enter", "send")]
+                vec![
+                    ("Esc", "normal"),
+                    ("Shift+Tab", "cycle agent"),
+                    ("ESC ESC", "clear"),
+                    ("Enter", "send"),
+                ]
             }
             InputMode::BashCommand => {
                 vec![("Enter", "execute"), ("Esc", "cancel")]

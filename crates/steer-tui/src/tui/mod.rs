@@ -247,6 +247,25 @@ fn encode_clipboard_rgba_image(
     })
 }
 
+fn next_primary_agent_id(current_agent_id: Option<&str>, available_agent_ids: &[String]) -> Option<String> {
+    if available_agent_ids.is_empty() {
+        return None;
+    }
+
+    let default_agent_id = default_primary_agent_id();
+    let start_idx = current_agent_id
+        .and_then(|agent_id| available_agent_ids.iter().position(|candidate| candidate == agent_id))
+        .or_else(|| {
+            available_agent_ids
+                .iter()
+                .position(|agent_id| agent_id == default_agent_id)
+        })
+        .unwrap_or(0);
+
+    let next_idx = (start_idx + 1) % available_agent_ids.len();
+    available_agent_ids.get(next_idx).cloned()
+}
+
 pub(crate) fn format_agent_label(primary_agent_id: &str) -> String {
     let agent_id = if primary_agent_id.is_empty() {
         default_primary_agent_id()
@@ -966,6 +985,55 @@ impl Tui {
         }
 
         output
+    }
+
+    fn format_available_primary_agents(
+        agents: &[steer_grpc::client_api::PrimaryAgentSpec],
+        current_agent: Option<&str>,
+    ) -> String {
+        if agents.is_empty() {
+            return "No primary agents available.".to_string();
+        }
+
+        let mut output = String::from("Available primary agents:\n");
+        for agent in agents {
+            let current_suffix = if current_agent == Some(agent.id.as_str()) {
+                " (current)"
+            } else {
+                ""
+            };
+            output.push_str(&format!(
+                "- {}: {}{}\n",
+                agent.id, agent.description, current_suffix
+            ));
+        }
+
+        output.trim_end().to_string()
+    }
+
+    async fn cycle_primary_agent(&mut self) {
+        let agents = match self.client.list_primary_agents().await {
+            Ok(agents) => agents,
+            Err(e) => {
+                self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
+                return;
+            }
+        };
+
+        let available_agent_ids = agents.into_iter().map(|agent| agent.id).collect::<Vec<_>>();
+        let Some(next_agent_id) =
+            next_primary_agent_id(self.current_agent_label.as_deref(), &available_agent_ids)
+        else {
+            self.push_notice(
+                NoticeLevel::Warn,
+                "No primary agents available to cycle.".to_string(),
+            );
+            return;
+        };
+
+        if let Err(e) = self.client.switch_primary_agent(next_agent_id).await {
+            self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
+        }
     }
 
     async fn refresh_agent_label(&mut self) {
@@ -2144,7 +2212,21 @@ impl Tui {
                             self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
                         }
                     } else {
-                        self.push_notice(NoticeLevel::Error, "Usage: /agent <mode>".to_string());
+                        match self.client.list_primary_agents().await {
+                            Ok(agents) => {
+                                let response = Self::format_available_primary_agents(
+                                    &agents,
+                                    self.current_agent_label.as_deref(),
+                                );
+                                self.push_tui_response(
+                                    crate::tui::commands::CoreCommandType::Agent.command_name(),
+                                    TuiCommandResponse::Text(response),
+                                );
+                            }
+                            Err(e) => {
+                                self.push_notice(NoticeLevel::Error, Self::format_grpc_error(&e));
+                            }
+                        }
                     }
                 }
                 crate::tui::core_commands::CoreCommandType::Model { target } => {
@@ -2531,6 +2613,71 @@ mod tests {
             tracker.is_double_tap(KeyCode::Esc, Duration::from_millis(300)),
             "Esc tracker should remain armed when cancellation does not restore queued input"
         );
+    }
+
+    #[test]
+    fn next_primary_agent_id_cycles_from_current_agent() {
+        let available = vec!["normal".to_string(), "plan".to_string(), "yolo".to_string()];
+
+        assert_eq!(
+            next_primary_agent_id(Some("normal"), &available),
+            Some("plan".to_string())
+        );
+        assert_eq!(
+            next_primary_agent_id(Some("plan"), &available),
+            Some("yolo".to_string())
+        );
+        assert_eq!(
+            next_primary_agent_id(Some("yolo"), &available),
+            Some("normal".to_string())
+        );
+    }
+
+    #[test]
+    fn next_primary_agent_id_uses_default_when_current_unknown() {
+        let available = vec!["normal".to_string(), "plan".to_string(), "yolo".to_string()];
+
+        assert_eq!(
+            next_primary_agent_id(Some("custom"), &available),
+            Some("plan".to_string())
+        );
+        assert_eq!(next_primary_agent_id(None, &available), Some("plan".to_string()));
+    }
+
+    #[test]
+    fn next_primary_agent_id_returns_none_when_empty() {
+        let available = Vec::new();
+
+        assert_eq!(next_primary_agent_id(Some("normal"), &available), None);
+        assert_eq!(next_primary_agent_id(None, &available), None);
+    }
+
+    #[test]
+    fn format_available_primary_agents_marks_current_agent() {
+        let agents = vec![
+            steer_grpc::client_api::PrimaryAgentSpec {
+                id: "normal".to_string(),
+                name: "Normal".to_string(),
+                description: "Default agent".to_string(),
+            },
+            steer_grpc::client_api::PrimaryAgentSpec {
+                id: "plan".to_string(),
+                name: "Plan".to_string(),
+                description: "Planning agent".to_string(),
+            },
+        ];
+
+        let output = Tui::format_available_primary_agents(&agents, Some("plan"));
+
+        assert!(output.contains("Available primary agents:"));
+        assert!(output.contains("normal: Default agent"));
+        assert!(output.contains("plan: Planning agent (current)"));
+    }
+
+    #[test]
+    fn format_available_primary_agents_empty_state() {
+        let output = Tui::format_available_primary_agents(&[], None);
+        assert_eq!(output, "No primary agents available.");
     }
 
     #[tokio::test]

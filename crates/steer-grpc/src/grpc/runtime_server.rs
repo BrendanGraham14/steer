@@ -18,6 +18,7 @@ use steer_core::auth::{
     AuthFlowWrapper, AuthMethod, AuthSource, DynAuthenticationFlow, ModelId as AuthModelId,
     ModelVisibilityPolicy, ProviderId as AuthProviderId,
 };
+use steer_core::primary_agents::primary_agent_specs;
 use steer_core::session::state::SessionConfig;
 use steer_proto::agent::v1::{
     self as proto, ApproveToolRequest, ApproveToolResponse, CancelOperationRequest,
@@ -27,7 +28,8 @@ use steer_proto::agent::v1::{
     ExecuteBashCommandResponse, GetConversationFooter, GetConversationRequest,
     GetConversationResponse, GetMcpServersRequest, GetMcpServersResponse, GetSessionRequest,
     GetSessionResponse, ListFilesRequest, ListFilesResponse, ListModelsRequest, ListModelsResponse,
-    ListProvidersRequest, ListProvidersResponse, ListSessionsRequest, ListSessionsResponse,
+    ListPrimaryAgentsRequest, ListPrimaryAgentsResponse, ListProvidersRequest, ListProvidersResponse,
+    ListSessionsRequest, ListSessionsResponse,
     Operation, OperationStatus, OperationType, SendMessageRequest, SendMessageResponse,
     SessionEvent, SessionInfo, SessionStateFooter, SessionStateHeader,
     SubscribeSessionEventsRequest, SwitchPrimaryAgentRequest, SwitchPrimaryAgentResponse,
@@ -1252,6 +1254,22 @@ impl agent_service_server::AgentService for RuntimeAgentService {
             .collect();
 
         Ok(Response::new(ListProvidersResponse { providers }))
+    }
+
+    async fn list_primary_agents(
+        &self,
+        _request: Request<ListPrimaryAgentsRequest>,
+    ) -> Result<Response<ListPrimaryAgentsResponse>, Status> {
+        let agents = primary_agent_specs()
+            .into_iter()
+            .map(|spec| proto::PrimaryAgentSpec {
+                id: spec.id,
+                name: spec.name,
+                description: spec.description,
+            })
+            .collect();
+
+        Ok(Response::new(ListPrimaryAgentsResponse { agents }))
     }
 
     async fn list_models(

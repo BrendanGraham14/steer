@@ -26,6 +26,14 @@ impl Tui {
         let mut should_clear_state = true;
 
         // Handle modified keys first
+        if key.code == KeyCode::BackTab
+            || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
+        {
+            self.cycle_primary_agent().await;
+            return Ok(false);
+        }
+
+        // Handle modified keys first
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('c') => {
@@ -441,6 +449,14 @@ impl Tui {
         }
 
         match key.code {
+            KeyCode::BackTab => {
+                self.cycle_primary_agent().await;
+            }
+
+            KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.cycle_primary_agent().await;
+            }
+
             KeyCode::Esc => {
                 if self.editing_message_id.is_some() {
                     self.cancel_edit_mode();
