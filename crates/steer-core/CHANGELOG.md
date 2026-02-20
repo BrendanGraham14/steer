@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.14.2...steer-core-v0.15.0) - 2026-02-20
+
+### Added
+
+- *(session)* add title generation and typed model-call errors
+- *(bash)* return partial output on timeout
+
+### Fixed
+
+- *(session)* update metadata from events and rename catalog store
+- *(core)* honor sub-agent tool visibility when resuming sessions
+- *(core)* harden auto-compaction recovery for tool-driven context overflow
+
+### Other
+
+- *(core)* rename static tools to builtin tools
+- *(core)* consolidate built-in tool schema and registration wiring
+- *(deps)* remove unused dependencies flagged by machete
+
 ## [0.14.2](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.14.1...steer-core-v0.14.2) - 2026-02-19
 
 ### Added

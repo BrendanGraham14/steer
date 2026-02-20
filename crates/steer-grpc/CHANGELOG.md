@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/BrendanGraham14/steer/compare/steer-grpc-v0.14.2...steer-grpc-v0.15.0) - 2026-02-20
+
+### Added
+
+- *(session)* add title generation and typed model-call errors
+- *(bash)* return partial output on timeout
+
+### Fixed
+
+- *(session)* update metadata from events and rename catalog store
+
+### Other
+
+- *(deps)* remove unused dependencies flagged by machete
+
 ## [0.14.0](https://github.com/BrendanGraham14/steer/compare/steer-grpc-v0.13.1...steer-grpc-v0.14.0) - 2026-02-18
 
 ### Added
