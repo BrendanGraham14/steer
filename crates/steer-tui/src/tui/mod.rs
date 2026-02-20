@@ -30,7 +30,7 @@ use futures::{FutureExt, StreamExt};
 use image::ImageFormat;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, EventStream, KeyCode, KeyEventKind, MouseEvent};
-use ratatui::{Frame, Terminal};
+use ratatui::{Frame, Terminal, layout::Rect};
 use steer_grpc::AgentClient;
 use steer_grpc::client_api::{
     AssistantContent, ClientEvent, EditingMode, ImageContent, ImageSource, LlmStatus, Message,
@@ -340,6 +340,38 @@ pub enum InputMode {
     Setup,
 }
 
+fn mode_allows_mouse_chat_scroll(mode: InputMode) -> bool {
+    !matches!(
+        mode,
+        InputMode::Setup | InputMode::FuzzyFinder | InputMode::EditMessageSelection
+    )
+}
+
+fn rect_contains_point(area: Rect, column: u16, row: u16) -> bool {
+    let x_end = area.x.saturating_add(area.width);
+    let y_end = area.y.saturating_add(area.height);
+    column >= area.x && column < x_end && row >= area.y && row < y_end
+}
+
+fn mouse_event_in_rect(event: &MouseEvent, area: Rect) -> bool {
+    rect_contains_point(area, event.column, event.row)
+}
+
+fn mouse_event_hits_chat_area(
+    event: &MouseEvent,
+    terminal_size: (u16, u16),
+    input_area_height: u16,
+    theme: &Theme,
+) -> bool {
+    if terminal_size.0 == 0 || terminal_size.1 == 0 {
+        return false;
+    }
+
+    let terminal_rect = Rect::new(0, 0, terminal_size.0, terminal_size.1);
+    let layout = UiLayout::compute(terminal_rect, input_area_height, theme);
+    mouse_event_in_rect(event, layout.chat)
+}
+
 /// Vim operator types
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum VimOperator {
@@ -368,6 +400,79 @@ impl ScrollDirection {
 struct PendingScroll {
     direction: ScrollDirection,
     steps: usize,
+}
+
+#[derive(Debug)]
+enum CoalescedEventPoll {
+    Event(Event),
+    NotReady,
+    StreamEnded,
+    Interrupted,
+    FatalInputError,
+}
+
+fn coalesce_mouse_scroll_events<FNextEvent, FMouseTargetsChatArea>(
+    initial_event: MouseEvent,
+    mut next_event: FNextEvent,
+    mut mouse_targets_chat_area: FMouseTargetsChatArea,
+) -> (Option<PendingScroll>, Option<Event>, bool)
+where
+    FNextEvent: FnMut() -> CoalescedEventPoll,
+    FMouseTargetsChatArea: FnMut(&MouseEvent) -> bool,
+{
+    let Some(mut last_direction) = ScrollDirection::from_mouse_event(&initial_event) else {
+        return (None, None, false);
+    };
+
+    if !mouse_targets_chat_area(&initial_event) {
+        return (None, None, false);
+    }
+
+    let mut steps = 1usize;
+    let mut deferred_event = None;
+    let mut should_exit = false;
+
+    loop {
+        match next_event() {
+            CoalescedEventPoll::Event(Event::Mouse(next_mouse)) => {
+                if let Some(next_direction) = ScrollDirection::from_mouse_event(&next_mouse) {
+                    if !mouse_targets_chat_area(&next_mouse) {
+                        deferred_event = Some(Event::Mouse(next_mouse));
+                        break;
+                    }
+
+                    if next_direction == last_direction {
+                        steps = steps.saturating_add(1);
+                    } else {
+                        last_direction = next_direction;
+                        steps = 1;
+                    }
+                    continue;
+                }
+
+                deferred_event = Some(Event::Mouse(next_mouse));
+                break;
+            }
+            CoalescedEventPoll::Event(other_event) => {
+                deferred_event = Some(other_event);
+                break;
+            }
+            CoalescedEventPoll::NotReady | CoalescedEventPoll::Interrupted => break,
+            CoalescedEventPoll::StreamEnded | CoalescedEventPoll::FatalInputError => {
+                should_exit = true;
+                break;
+            }
+        }
+    }
+
+    (
+        Some(PendingScroll {
+            direction: last_direction,
+            steps,
+        }),
+        deferred_event,
+        should_exit,
+    )
 }
 
 /// State for tracking vim key sequences
@@ -1394,88 +1499,72 @@ impl Tui {
         mouse_event: MouseEvent,
         term_event_stream: &mut EventStream,
     ) -> Result<(Option<PendingScroll>, bool, bool, Option<Event>)> {
-        let Some(mut last_direction) = ScrollDirection::from_mouse_event(&mouse_event) else {
+        if ScrollDirection::from_mouse_event(&mouse_event).is_none() {
             let needs_redraw = self.handle_mouse_event(mouse_event)?;
             return Ok((None, needs_redraw, false, None));
-        };
-
-        let mut steps = 1usize;
-        let mut deferred_event = None;
-        let mut should_exit = false;
-
-        loop {
-            let next_event = term_event_stream.next().now_or_never();
-            let Some(next_event) = next_event else {
-                break;
-            };
-
-            match next_event {
-                Some(Ok(Event::Mouse(next_mouse))) => {
-                    if let Some(next_direction) = ScrollDirection::from_mouse_event(&next_mouse) {
-                        if next_direction == last_direction {
-                            steps = steps.saturating_add(1);
-                        } else {
-                            last_direction = next_direction;
-                            steps = 1;
-                        }
-                        continue;
-                    }
-                    deferred_event = Some(Event::Mouse(next_mouse));
-                    break;
-                }
-                Some(Ok(other_event)) => {
-                    deferred_event = Some(other_event);
-                    break;
-                }
-                Some(Err(e)) => {
-                    if e.kind() == io::ErrorKind::Interrupted {
-                        debug!(target: "tui.input", "Ignoring interrupted syscall");
-                    } else {
-                        error!(target: "tui.run", "Fatal input error: {}. Exiting.", e);
-                        should_exit = true;
-                    }
-                    break;
-                }
-                None => {
-                    should_exit = true;
-                    break;
-                }
-            }
         }
 
-        Ok((
-            Some(PendingScroll {
-                direction: last_direction,
-                steps,
-            }),
-            false,
-            should_exit,
-            deferred_event,
-        ))
+        let (pending_scroll, deferred_event, should_exit) = coalesce_mouse_scroll_events(
+            mouse_event,
+            || {
+                let Some(next_event) = term_event_stream.next().now_or_never() else {
+                    return CoalescedEventPoll::NotReady;
+                };
+
+                match next_event {
+                    Some(Ok(event)) => CoalescedEventPoll::Event(event),
+                    Some(Err(e)) => {
+                        if e.kind() == io::ErrorKind::Interrupted {
+                            debug!(target: "tui.input", "Ignoring interrupted syscall");
+                            CoalescedEventPoll::Interrupted
+                        } else {
+                            error!(target: "tui.run", "Fatal input error: {}. Exiting.", e);
+                            CoalescedEventPoll::FatalInputError
+                        }
+                    }
+                    None => CoalescedEventPoll::StreamEnded,
+                }
+            },
+            |event| self.mouse_event_targets_chat_area(event),
+        );
+
+        Ok((pending_scroll, false, should_exit, deferred_event))
+    }
+
+    fn mouse_event_targets_chat_area(&self, event: &MouseEvent) -> bool {
+        let queue_preview = self.queued_head.as_ref().map(|item| item.content.as_str());
+        let current_tool_call = self.current_tool_approval.as_ref().map(|(_, tc)| tc);
+        let input_area_height = self.input_panel_state.required_height(
+            current_tool_call,
+            self.terminal_size.0,
+            self.terminal_size.1,
+            queue_preview,
+        );
+
+        mouse_event_hits_chat_area(event, self.terminal_size, input_area_height, &self.theme)
     }
 
     /// Handle mouse events
     fn handle_mouse_event(&mut self, event: MouseEvent) -> Result<bool> {
         let needs_redraw = match ScrollDirection::from_mouse_event(&event) {
-            Some(direction) => self.apply_scroll_steps(direction, 1),
-            None => false,
+            Some(direction) if self.mouse_event_targets_chat_area(&event) => {
+                self.apply_scroll_steps(direction, 1)
+            }
+            Some(_) | None => false,
         };
 
         Ok(needs_redraw)
     }
 
     fn apply_scroll_steps(&mut self, direction: ScrollDirection, steps: usize) -> bool {
-        // In vim normal mode or simple mode (when not typing), allow scrolling
-        if !self.is_text_input_mode()
-            || (self.input_mode == InputMode::Simple && self.input_panel_state.content().is_empty())
-        {
-            let amount = steps.saturating_mul(MOUSE_SCROLL_STEP);
-            match direction {
-                ScrollDirection::Up => self.chat_viewport.state_mut().scroll_up(amount),
-                ScrollDirection::Down => self.chat_viewport.state_mut().scroll_down(amount),
-            }
-        } else {
-            false
+        if !mode_allows_mouse_chat_scroll(self.input_mode) {
+            return false;
+        }
+
+        let amount = steps.saturating_mul(MOUSE_SCROLL_STEP);
+        match direction {
+            ScrollDirection::Up => self.chat_viewport.state_mut().scroll_up(amount),
+            ScrollDirection::Down => self.chat_viewport.state_mut().scroll_down(amount),
         }
     }
 
@@ -2550,7 +2639,9 @@ mod tests {
 
     use serde_json::json;
 
-    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use steer_grpc::client_api::{AssistantContent, Message, MessageData, OpId, QueuedWorkItem};
 
     const IMAGE_TOKEN_CHAR: char = '\u{E000}';
@@ -2678,6 +2769,254 @@ mod tests {
     fn format_available_primary_agents_empty_state() {
         let output = Tui::format_available_primary_agents(&[], None);
         assert_eq!(output, "No primary agents available.");
+    }
+
+    #[test]
+    fn mouse_scroll_allowed_while_typing_in_text_modes() {
+        assert!(mode_allows_mouse_chat_scroll(InputMode::Simple));
+        assert!(mode_allows_mouse_chat_scroll(InputMode::VimInsert));
+        assert!(mode_allows_mouse_chat_scroll(InputMode::BashCommand));
+    }
+
+    #[test]
+    fn mouse_scroll_blocked_in_setup_and_overlay_modes() {
+        assert!(!mode_allows_mouse_chat_scroll(InputMode::Setup));
+        assert!(!mode_allows_mouse_chat_scroll(InputMode::FuzzyFinder));
+        assert!(!mode_allows_mouse_chat_scroll(
+            InputMode::EditMessageSelection
+        ));
+    }
+
+    #[test]
+    fn rect_contains_point_respects_edges() {
+        let rect = Rect::new(5, 3, 10, 4);
+
+        assert!(rect_contains_point(rect, 5, 3));
+        assert!(rect_contains_point(rect, 14, 6));
+        assert!(!rect_contains_point(rect, 15, 6));
+        assert!(!rect_contains_point(rect, 14, 7));
+        assert!(!rect_contains_point(rect, 4, 3));
+        assert!(!rect_contains_point(rect, 5, 2));
+    }
+
+    #[test]
+    fn mouse_event_hits_chat_area_distinguishes_input_area() {
+        let terminal_size = (80, 24);
+        let input_height = 5;
+        let theme = Theme::default();
+
+        let chat_scroll = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(mouse_event_hits_chat_area(
+            &chat_scroll,
+            terminal_size,
+            input_height,
+            &theme,
+        ));
+
+        let input_scroll = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(!mouse_event_hits_chat_area(
+            &input_scroll,
+            terminal_size,
+            input_height,
+            &theme,
+        ));
+    }
+
+    #[test]
+    fn mouse_event_hits_chat_area_rejects_zero_sized_terminal() {
+        let theme = Theme::default();
+        let scroll = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        assert!(!mouse_event_hits_chat_area(&scroll, (0, 24), 3, &theme));
+        assert!(!mouse_event_hits_chat_area(&scroll, (80, 0), 3, &theme));
+    }
+
+    #[test]
+    fn mouse_event_in_rect_uses_mouse_coordinates() {
+        let event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 7,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        assert!(mouse_event_in_rect(&event, Rect::new(5, 2, 3, 2)));
+        assert!(!mouse_event_in_rect(&event, Rect::new(8, 2, 3, 2)));
+    }
+
+    #[test]
+    fn coalesced_mouse_scroll_stops_at_non_chat_scroll_and_defers_it() {
+        let initial = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        let in_chat = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 12,
+            row: 6,
+            modifiers: KeyModifiers::NONE,
+        };
+        let outside_chat = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 12,
+            row: 22,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let mut events = std::collections::VecDeque::from([
+            CoalescedEventPoll::Event(Event::Mouse(in_chat)),
+            CoalescedEventPoll::Event(Event::Mouse(outside_chat)),
+            CoalescedEventPoll::NotReady,
+        ]);
+
+        let (pending, deferred, should_exit) = coalesce_mouse_scroll_events(
+            initial,
+            || events.pop_front().expect("event poll"),
+            |event| event.row < 20,
+        );
+
+        assert!(!should_exit);
+        assert_eq!(
+            pending.map(|p| (p.direction, p.steps)),
+            Some((ScrollDirection::Down, 2))
+        );
+        assert!(matches!(
+            deferred,
+            Some(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                row: 22,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn coalesced_mouse_scroll_defers_first_non_mouse_event() {
+        let initial = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let key_event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let mut events = std::collections::VecDeque::from([
+            CoalescedEventPoll::Event(key_event.clone()),
+            CoalescedEventPoll::NotReady,
+        ]);
+
+        let (pending, deferred, should_exit) = coalesce_mouse_scroll_events(
+            initial,
+            || events.pop_front().expect("event poll"),
+            |_| true,
+        );
+
+        assert!(!should_exit);
+        assert_eq!(
+            pending.map(|p| (p.direction, p.steps)),
+            Some((ScrollDirection::Up, 1))
+        );
+        assert!(matches!(deferred, Some(Event::Key(_))));
+    }
+
+    #[test]
+    fn coalesced_mouse_scroll_keeps_last_direction_run_before_deferred_event() {
+        let initial = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        let same_direction = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 6,
+            modifiers: KeyModifiers::NONE,
+        };
+        let opposite_direction = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 7,
+            modifiers: KeyModifiers::NONE,
+        };
+        let outside_chat = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 22,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let mut events = std::collections::VecDeque::from([
+            CoalescedEventPoll::Event(Event::Mouse(same_direction)),
+            CoalescedEventPoll::Event(Event::Mouse(opposite_direction)),
+            CoalescedEventPoll::Event(Event::Mouse(outside_chat)),
+            CoalescedEventPoll::NotReady,
+        ]);
+
+        let (pending, deferred, should_exit) = coalesce_mouse_scroll_events(
+            initial,
+            || events.pop_front().expect("event poll"),
+            |event| event.row < 20,
+        );
+
+        assert!(!should_exit);
+        assert_eq!(
+            pending.map(|p| (p.direction, p.steps)),
+            Some((ScrollDirection::Up, 1))
+        );
+        assert!(matches!(
+            deferred,
+            Some(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                row: 22,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn coalesced_mouse_scroll_ignores_initial_non_chat_scroll() {
+        let initial = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 22,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let mut polled = 0usize;
+        let (pending, deferred, should_exit) = coalesce_mouse_scroll_events(
+            initial,
+            || {
+                polled = polled.saturating_add(1);
+                CoalescedEventPoll::NotReady
+            },
+            |event| event.row < 20,
+        );
+
+        assert_eq!(
+            polled, 0,
+            "should not drain coalescing queue for non-chat start"
+        );
+        assert!(!should_exit);
+        assert!(pending.is_none());
+        assert!(deferred.is_none());
     }
 
     #[tokio::test]
