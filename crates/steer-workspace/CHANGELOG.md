@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/BrendanGraham14/steer/compare/steer-workspace-v0.14.2...steer-workspace-v0.15.0) - 2026-02-20
+
+### Other
+
+- *(deps)* remove unused dependencies flagged by machete
+
 ## [0.14.1](https://github.com/BrendanGraham14/steer/compare/steer-workspace-v0.14.0...steer-workspace-v0.14.1) - 2026-02-19
 
 ### Fixed

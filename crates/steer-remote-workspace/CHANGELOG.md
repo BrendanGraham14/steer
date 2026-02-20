@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/BrendanGraham14/steer/compare/steer-remote-workspace-v0.14.2...steer-remote-workspace-v0.15.0) - 2026-02-20
+
+### Other
+
+- *(deps)* remove unused dependencies flagged by machete
+
 ## [0.14.0](https://github.com/BrendanGraham14/steer/compare/steer-remote-workspace-v0.13.1...steer-remote-workspace-v0.14.0) - 2026-02-18
 
 ### Other
