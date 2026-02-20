@@ -54,6 +54,14 @@ Follow the conventional commits format.
 - When adding new packages, prefer to use `cargo add`, rather than editing Cargo.toml.
 - The workspace Cargo.toml uses glob pattern `crates/*` to include all crates in the workspace.
 
+# Cancellation Propagation
+- For user-scoped operations, thread an operation-scoped `CancellationToken` through the entire async call chain, including helper functions and spawned tasks.
+- Do not create fresh root tokens (`CancellationToken::new()`) inside operation logic unless the work is intentionally detached from user cancellation.
+- If a callee needs local cancellation control, derive a child token from the operation token so parent cancellation still propagates.
+- Any async API that can block or cause side effects should accept a cancellation token (or a context object carrying one) rather than implicitly creating its own.
+- Check cancellation before committing side effects (for example session config writes, state mutations, event emission) and after long await boundaries.
+- Add cancellation tests for new operation flows that assert canceling an in-flight operation prevents post-cancel side effects.
+
 # Type-Safe Identifiers
 
 When using primitive types (integers, UUIDs, strings) as identifiers, **always wrap them in dedicated newtype structs** to ensure type safety.
