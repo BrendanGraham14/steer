@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.15.0...steer-v0.16.0) - 2026-02-21
+
+### Other
+
+- Remove redundant homepage from Cargo.toml
+- Enable README.md for steer crate on crates.io
+
 ## [0.15.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.14.2...steer-v0.15.0) - 2026-02-20
 
 ### Added

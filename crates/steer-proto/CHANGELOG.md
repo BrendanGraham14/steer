@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.15.0...steer-proto-v0.16.0) - 2026-02-21
+
+### Added
+
+- *(tui)* add primary-agent cycling and dynamic /agent listing
+
 ## [0.15.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.14.2...steer-proto-v0.15.0) - 2026-02-20
 
 ### Added
