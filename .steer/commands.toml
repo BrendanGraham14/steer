@@ -1,5 +1,14 @@
 [[commands]]
 type = "prompt"
 name = "review"
-description = "Code review"
-prompt = "Review the changes for potential issues, omissions, or smells."
+description = "Careful and thorough change review"
+prompt = """
+Review the diff from `jj diff -r main..@` carefully.
+
+1. **Understand the change.** What is this change doing and why?
+2. **Architecture & design.** Are there structural problems? Is the high-level approach sound?
+3. **Simplification.** Can the design or implementation be simpler?
+4. **Correctness & completeness.** Are there bugs, edge cases, or missing pieces?
+
+Be specific — reference files and line numbers.
+"""
