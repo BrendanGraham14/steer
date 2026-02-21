@@ -3,6 +3,7 @@ name = "steer"
 version.workspace = true
 edition.workspace = true
 description = "Command-line interface for Steer coding agent."
+readme = "../../README.md"
 authors.workspace = true
 license.workspace = true
 homepage.workspace = true
