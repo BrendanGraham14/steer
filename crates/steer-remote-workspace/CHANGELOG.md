@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/BrendanGraham14/steer/compare/steer-remote-workspace-v0.15.0...steer-remote-workspace-v0.16.0) - 2026-02-21
+
+### Other
+
+- Remove redundant homepage from Cargo.toml
+
 ## [0.15.0](https://github.com/BrendanGraham14/steer/compare/steer-remote-workspace-v0.14.2...steer-remote-workspace-v0.15.0) - 2026-02-20
 
 ### Other
