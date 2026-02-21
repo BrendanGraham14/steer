@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/BrendanGraham14/steer/compare/steer-auth-openai-v0.15.0...steer-auth-openai-v0.16.0) - 2026-02-21
+
+### Other
+
+- release v0.16.0
+
 ## [0.13.1](https://github.com/BrendanGraham14/steer/compare/steer-auth-openai-v0.12.0...steer-auth-openai-v0.13.1) - 2026-02-17
 
 ### Other
