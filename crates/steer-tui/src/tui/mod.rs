@@ -247,14 +247,21 @@ fn encode_clipboard_rgba_image(
     })
 }
 
-fn next_primary_agent_id(current_agent_id: Option<&str>, available_agent_ids: &[String]) -> Option<String> {
+fn next_primary_agent_id(
+    current_agent_id: Option<&str>,
+    available_agent_ids: &[String],
+) -> Option<String> {
     if available_agent_ids.is_empty() {
         return None;
     }
 
     let default_agent_id = default_primary_agent_id();
     let start_idx = current_agent_id
-        .and_then(|agent_id| available_agent_ids.iter().position(|candidate| candidate == agent_id))
+        .and_then(|agent_id| {
+            available_agent_ids
+                .iter()
+                .position(|candidate| candidate == agent_id)
+        })
         .or_else(|| {
             available_agent_ids
                 .iter()
@@ -2732,7 +2739,10 @@ mod tests {
             next_primary_agent_id(Some("custom"), &available),
             Some("plan".to_string())
         );
-        assert_eq!(next_primary_agent_id(None, &available), Some("plan".to_string()));
+        assert_eq!(
+            next_primary_agent_id(None, &available),
+            Some("plan".to_string())
+        );
     }
 
     #[test]

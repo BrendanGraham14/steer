@@ -28,12 +28,12 @@ use steer_proto::agent::v1::{
     ExecuteBashCommandResponse, GetConversationFooter, GetConversationRequest,
     GetConversationResponse, GetMcpServersRequest, GetMcpServersResponse, GetSessionRequest,
     GetSessionResponse, ListFilesRequest, ListFilesResponse, ListModelsRequest, ListModelsResponse,
-    ListPrimaryAgentsRequest, ListPrimaryAgentsResponse, ListProvidersRequest, ListProvidersResponse,
-    ListSessionsRequest, ListSessionsResponse,
-    Operation, OperationStatus, OperationType, SendMessageRequest, SendMessageResponse,
-    SessionEvent, SessionInfo, SessionStateFooter, SessionStateHeader,
-    SubscribeSessionEventsRequest, SwitchPrimaryAgentRequest, SwitchPrimaryAgentResponse,
-    agent_service_server, get_conversation_response, get_session_response,
+    ListPrimaryAgentsRequest, ListPrimaryAgentsResponse, ListProvidersRequest,
+    ListProvidersResponse, ListSessionsRequest, ListSessionsResponse, Operation, OperationStatus,
+    OperationType, SendMessageRequest, SendMessageResponse, SessionEvent, SessionInfo,
+    SessionStateFooter, SessionStateHeader, SubscribeSessionEventsRequest,
+    SwitchPrimaryAgentRequest, SwitchPrimaryAgentResponse, agent_service_server,
+    get_conversation_response, get_session_response,
 };
 use steer_workspace::{EnvironmentManager, RepoManager, WorkspaceManager};
 use tokio::sync::{Mutex, broadcast, mpsc};

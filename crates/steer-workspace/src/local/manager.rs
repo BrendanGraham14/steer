@@ -173,7 +173,8 @@ impl WorkspaceManager for LocalWorkspaceManager {
                     }
 
                     let parent_jj_root = jj::ensure_jj_workspace_root(&parent_info.path)?;
-                    let (mut parent_workspace, parent_repo) = jj::load_jj_workspace(&parent_jj_root)?;
+                    let (mut parent_workspace, parent_repo) =
+                        jj::load_jj_workspace(&parent_jj_root)?;
                     let parent_repo =
                         jj::snapshot_working_copy(&mut parent_workspace, parent_repo).await?;
                     let parent_workspace_name = parent_workspace.workspace_name().to_owned();
@@ -218,13 +219,11 @@ impl WorkspaceManager for LocalWorkspaceManager {
                     let (mut workspace, repo) = jj::load_jj_workspace(&workspace_path)?;
                     let workspace_name = workspace.workspace_name().to_owned();
                     let parent_wc_commit =
-                        repo.store()
-                            .get_commit(&parent_wc_commit_id)
-                            .map_err(|e| {
-                                WorkspaceManagerError::Other(format!(
-                                    "Failed to load parent working copy commit: {e}"
-                                ))
-                            })?;
+                        repo.store().get_commit(&parent_wc_commit_id).map_err(|e| {
+                            WorkspaceManagerError::Other(format!(
+                                "Failed to load parent working copy commit: {e}"
+                            ))
+                        })?;
 
                     let mut tx = repo.start_transaction();
                     let mut child_wc_commit_builder = tx.repo_mut().new_commit(
@@ -233,13 +232,17 @@ impl WorkspaceManager for LocalWorkspaceManager {
                     );
 
                     let mut author = child_wc_commit_builder.author().clone();
-                    author.name = parent_wc_commit.author().name.clone();
-                    author.email = parent_wc_commit.author().email.clone();
+                    author.name.clone_from(&parent_wc_commit.author().name);
+                    author.email.clone_from(&parent_wc_commit.author().email);
                     child_wc_commit_builder = child_wc_commit_builder.set_author(author);
 
                     let mut committer = child_wc_commit_builder.committer().clone();
-                    committer.name = parent_wc_commit.committer().name.clone();
-                    committer.email = parent_wc_commit.committer().email.clone();
+                    committer
+                        .name
+                        .clone_from(&parent_wc_commit.committer().name);
+                    committer
+                        .email
+                        .clone_from(&parent_wc_commit.committer().email);
                     child_wc_commit_builder = child_wc_commit_builder.set_committer(committer);
 
                     let child_wc_commit = child_wc_commit_builder.write().map_err(|e| {
@@ -256,7 +259,8 @@ impl WorkspaceManager for LocalWorkspaceManager {
                                 "Failed to update new workspace working copy commit: {e}"
                             ))
                         })?;
-                    let workspace_name_ref: &jj_lib::ref_name::WorkspaceName = workspace_name.as_ref();
+                    let workspace_name_ref: &jj_lib::ref_name::WorkspaceName =
+                        workspace_name.as_ref();
                     let updated_repo = tx
                         .commit(format!(
                             "create initial working-copy commit in workspace '{}'",
@@ -267,15 +271,14 @@ impl WorkspaceManager for LocalWorkspaceManager {
                                 "Failed to commit new workspace working copy base: {e}"
                             ))
                         })?;
-                    let child_wc_commit =
-                        updated_repo
-                            .store()
-                            .get_commit(&child_wc_commit_id)
-                            .map_err(|e| {
-                                WorkspaceManagerError::Other(format!(
-                                    "Failed to load created working copy commit: {e}"
-                                ))
-                            })?;
+                    let child_wc_commit = updated_repo
+                        .store()
+                        .get_commit(&child_wc_commit_id)
+                        .map_err(|e| {
+                            WorkspaceManagerError::Other(format!(
+                                "Failed to load created working copy commit: {e}"
+                            ))
+                        })?;
 
                     workspace
                         .check_out(updated_repo.op_id().clone(), None, &child_wc_commit)

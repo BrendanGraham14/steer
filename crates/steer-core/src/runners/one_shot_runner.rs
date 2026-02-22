@@ -161,7 +161,7 @@ impl OneShotRunner {
         mut subscription: crate::app::domain::runtime::SessionEventSubscription,
         session_id: SessionId,
         op_id: crate::app::domain::types::OpId,
-        approval_policy: ToolApprovalPolicy,
+        mut approval_policy: ToolApprovalPolicy,
     ) -> Result<RunOnceResult> {
         let mut messages = Vec::new();
         info!(session_id = %session_id, "Starting event processing loop");
@@ -254,6 +254,10 @@ impl OneShotRunner {
                                 "Failed to submit tool approval decision: {e}"
                             ))
                         })?;
+                }
+
+                SessionEvent::SessionConfigUpdated { config, .. } => {
+                    approval_policy = config.tool_config.approval_policy.clone();
                 }
 
                 _ => {}
@@ -355,6 +359,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
+    use std::time::Duration;
     use steer_tools::ToolCall;
     use steer_tools::tools::BASH_TOOL_NAME;
     use tokio_util::sync::CancellationToken;
@@ -364,14 +369,24 @@ mod tests {
         tool_call: ToolCall,
         final_text: String,
         call_count: Arc<StdMutex<usize>>,
+        first_call_delay: Duration,
     }
 
     impl ToolCallThenTextProvider {
         fn new(tool_call: ToolCall, final_text: impl Into<String>) -> Self {
+            Self::new_with_delay(tool_call, final_text, Duration::ZERO)
+        }
+
+        fn new_with_delay(
+            tool_call: ToolCall,
+            final_text: impl Into<String>,
+            first_call_delay: Duration,
+        ) -> Self {
             Self {
                 tool_call,
                 final_text: final_text.into(),
                 call_count: Arc::new(StdMutex::new(0)),
+                first_call_delay,
             }
         }
     }
@@ -391,28 +406,36 @@ mod tests {
             _call_options: Option<crate::config::model::ModelParameters>,
             _token: CancellationToken,
         ) -> std::result::Result<CompletionResponse, ApiError> {
-            let mut count = self
-                .call_count
-                .lock()
-                .expect("tool call counter lock poisoned");
-            let response = if *count == 0 {
-                CompletionResponse {
+            let call_index = {
+                let mut count = self
+                    .call_count
+                    .lock()
+                    .expect("tool call counter lock poisoned");
+                let idx = *count;
+                *count += 1;
+                idx
+            };
+
+            if call_index == 0 && !self.first_call_delay.is_zero() {
+                tokio::time::sleep(self.first_call_delay).await;
+            }
+
+            if call_index == 0 {
+                Ok(CompletionResponse {
                     content: vec![AssistantContent::ToolCall {
                         tool_call: self.tool_call.clone(),
                         thought_signature: None,
                     }],
                     usage: None,
-                }
+                })
             } else {
-                CompletionResponse {
+                Ok(CompletionResponse {
                     content: vec![AssistantContent::Text {
                         text: self.final_text.clone(),
                     }],
                     usage: None,
-                }
-            };
-            *count += 1;
-            Ok(response)
+                })
+            }
         }
     }
 
@@ -630,6 +653,121 @@ mod tests {
         assert!(saw_request, "expected ApprovalRequested event");
         assert!(saw_decision, "expected ApprovalDecided event");
         assert!(saw_denied, "expected denied decision");
+
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn run_new_session_updates_approval_policy_after_agent_switch_event() {
+        let event_store = Arc::new(InMemoryEventStore::new());
+        let model_registry = Arc::new(crate::model_registry::ModelRegistry::load(&[]).unwrap());
+        let provider_registry = Arc::new(crate::auth::ProviderRegistry::load(&[]).unwrap());
+        let api_client = Arc::new(ApiClient::new_with_deps(
+            crate::test_utils::test_llm_config_provider().unwrap(),
+            provider_registry,
+            model_registry,
+        ));
+
+        let tool_call = ToolCall {
+            id: "tc_switch".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({ "command": "echo switched" }),
+        };
+        api_client.insert_test_provider(
+            builtin::claude_sonnet_4_5().provider.clone(),
+            Arc::new(ToolCallThenTextProvider::new_with_delay(
+                tool_call,
+                "done",
+                Duration::from_millis(75),
+            )),
+        );
+
+        let tool_executor = Arc::new(ToolExecutor::with_components(
+            Arc::new(BackendRegistry::new()),
+            Arc::new(ValidatorRegistry::new()),
+        ));
+        let runtime = RuntimeService::spawn(event_store, api_client, tool_executor);
+
+        let mut config = create_test_session_config();
+        config.tool_config.approval_policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules {
+                tools: HashSet::new(),
+                per_tool: HashMap::new(),
+            },
+        };
+
+        let session_id = runtime
+            .handle
+            .create_session(config)
+            .await
+            .expect("create session");
+
+        let runtime_handle_for_run = runtime.handle.clone();
+        let run_task = tokio::spawn(async move {
+            OneShotRunner::run_in_session(
+                &runtime_handle_for_run,
+                session_id,
+                "Trigger tool call".to_string(),
+                builtin::claude_sonnet_4_5(),
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        runtime
+            .handle
+            .switch_primary_agent(session_id, "yolo".to_string())
+            .await
+            .expect("switch to yolo");
+
+        let result = run_task
+            .await
+            .expect("run task join")
+            .expect("run_in_session should complete");
+
+        let events = runtime
+            .handle
+            .load_events_after(result.session_id, 0)
+            .await
+            .expect("load events");
+
+        let mut saw_approval_requested = false;
+        let mut saw_session_config_updated = false;
+        let mut saw_tool_started = false;
+        let mut saw_approval_decision = false;
+
+        for (_, event) in events {
+            match event {
+                SessionEvent::ApprovalRequested { .. } => saw_approval_requested = true,
+                SessionEvent::SessionConfigUpdated {
+                    primary_agent_id, ..
+                } if primary_agent_id == "yolo" => saw_session_config_updated = true,
+                SessionEvent::ToolCallStarted { id, .. } if id.as_str() == "tc_switch" => {
+                    saw_tool_started = true
+                }
+                SessionEvent::ApprovalDecided { .. } => saw_approval_decision = true,
+                _ => {}
+            }
+        }
+
+        assert!(
+            saw_session_config_updated,
+            "expected in-flight session config update event"
+        );
+        assert!(
+            saw_tool_started,
+            "expected bash tool call to auto-run after policy switched to yolo"
+        );
+        assert!(
+            !saw_approval_requested,
+            "expected no approval request after switching to yolo before the first tool call"
+        );
+        assert!(
+            !saw_approval_decision,
+            "expected no approval decision when no approval was requested"
+        );
 
         runtime.shutdown().await;
     }

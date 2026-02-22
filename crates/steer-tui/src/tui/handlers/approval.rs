@@ -1,14 +1,24 @@
 use crate::error::Error;
 use crate::error::Result;
 use crate::tui::Tui;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use steer_grpc::client_api::ApprovalDecision;
 use steer_tools::tools::BASH_TOOL_NAME;
 use steer_tools::tools::bash::BashParams;
 use tracing::debug;
 
+fn is_cycle_agent_key(key: KeyEvent) -> bool {
+    key.code == KeyCode::BackTab
+        || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
+}
+
 impl Tui {
     pub async fn handle_approval_mode(&mut self, key: KeyEvent) -> Result<bool> {
+        if is_cycle_agent_key(key) {
+            self.cycle_primary_agent().await;
+            return Ok(false);
+        }
+
         if let Some((request_id, tool_call)) = self.current_tool_approval.take() {
             match key.code {
                 KeyCode::Char('y' | 'Y') => {
@@ -64,5 +74,39 @@ impl Tui {
             self.input_mode = self.default_input_mode();
         }
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_cycle_agent_key;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn detects_shift_tab_cycle_key_variants() {
+        assert!(is_cycle_agent_key(KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::NONE,
+        )));
+        assert!(is_cycle_agent_key(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::SHIFT,
+        )));
+        assert!(is_cycle_agent_key(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+        )));
+    }
+
+    #[test]
+    fn ignores_non_cycle_keys() {
+        assert!(!is_cycle_agent_key(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::NONE,
+        )));
+        assert!(!is_cycle_agent_key(KeyEvent::new(
+            KeyCode::Char('y'),
+            KeyModifiers::NONE,
+        )));
     }
 }

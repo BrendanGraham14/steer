@@ -11,9 +11,9 @@ use crate::client_api::{
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
     proto_to_primary_agent_spec, proto_to_provider_auth_status, proto_to_provider_info,
-    proto_to_repo_info,
-    proto_to_start_auth_response, proto_to_workspace_info, proto_to_workspace_status,
-    session_policy_overrides_to_proto, session_tool_config_to_proto, workspace_config_to_proto,
+    proto_to_repo_info, proto_to_start_auth_response, proto_to_workspace_info,
+    proto_to_workspace_status, session_policy_overrides_to_proto, session_tool_config_to_proto,
+    workspace_config_to_proto,
 };
 use crate::grpc::error::GrpcError;
 

@@ -2209,13 +2209,6 @@ fn handle_switch_primary_agent(
     session_id: crate::app::domain::types::SessionId,
     agent_id: String,
 ) -> Result<Vec<Effect>, ReduceError> {
-    if state.current_operation.is_some() {
-        return Err(invalid_action(
-            InvalidActionKind::OperationInFlight,
-            "Cannot switch primary agent while an operation is active.",
-        ));
-    }
-
     let Some(base_config) = state
         .base_session_config
         .as_ref()
@@ -2234,12 +2227,38 @@ fn handle_switch_primary_agent(
         ));
     };
 
+    let active_agent_loop_op = state.current_operation.as_ref().and_then(|op| {
+        if matches!(op.kind, OperationKind::AgentLoop) {
+            Some(op.op_id)
+        } else {
+            None
+        }
+    });
+
+    let (pending_approval_before_switch, queued_approvals_before_switch) =
+        if active_agent_loop_op.is_some() {
+            (
+                state.pending_approval.take(),
+                std::mem::take(&mut state.approval_queue),
+            )
+        } else {
+            (None, std::collections::VecDeque::new())
+        };
+
     let mut updated_config = base_config.clone();
     updated_config.primary_agent_id = Some(agent_id.clone());
     let new_config = resolve_effective_config(&updated_config);
     let backend_effects = mcp_backend_diff_effects(session_id, base_config, &new_config);
 
     apply_session_config_state(state, &new_config, Some(agent_id.clone()), false);
+
+    state.tools = new_config.filter_tools_by_visibility(state.tools.clone());
+
+    if let Some(op_id) = active_agent_loop_op {
+        state
+            .operation_models
+            .insert(op_id, new_config.default_model.clone());
+    }
 
     let mut effects = Vec::new();
     effects.push(Effect::EmitEvent {
@@ -2252,7 +2271,188 @@ fn handle_switch_primary_agent(
     effects.extend(backend_effects);
     effects.push(Effect::ReloadToolSchemas { session_id });
 
+    if let Some(op_id) = active_agent_loop_op {
+        effects.extend(re_evaluate_pending_approvals_after_agent_switch(
+            state,
+            session_id,
+            op_id,
+            pending_approval_before_switch,
+            queued_approvals_before_switch,
+        ));
+    }
+
     Ok(effects)
+}
+
+fn emit_terminal_approval_decision_after_agent_switch(
+    effects: &mut Vec<Effect>,
+    session_id: crate::app::domain::types::SessionId,
+    request_id: crate::app::domain::types::RequestId,
+    decision: ApprovalDecision,
+) {
+    effects.push(Effect::EmitEvent {
+        session_id,
+        event: SessionEvent::ApprovalDecided {
+            request_id,
+            decision,
+            remember: None,
+        },
+    });
+}
+
+fn re_evaluate_pending_approvals_after_agent_switch(
+    state: &mut AppState,
+    session_id: crate::app::domain::types::SessionId,
+    op_id: crate::app::domain::types::OpId,
+    pending_before: Option<PendingApproval>,
+    queued_before: std::collections::VecDeque<QueuedApproval>,
+) -> Vec<Effect> {
+    if pending_before.is_none() && queued_before.is_empty() {
+        return vec![];
+    }
+
+    let mut effects = Vec::new();
+
+    let mut tool_calls = Vec::new();
+    if let Some(pending) = pending_before {
+        tool_calls.push((pending.tool_call, Some(pending.request_id)));
+    }
+    tool_calls.extend(
+        queued_before
+            .into_iter()
+            .map(|queued| (queued.tool_call, None)),
+    );
+
+    for (tool_call, stale_request_id) in tool_calls {
+        if let Err(error) = validate_tool_call(state, &tool_call) {
+            if let Some(request_id) = stale_request_id {
+                emit_terminal_approval_decision_after_agent_switch(
+                    &mut effects,
+                    session_id,
+                    request_id,
+                    ApprovalDecision::Denied,
+                );
+            }
+
+            let error_message = error.to_string();
+            effects.extend(fail_tool_call_without_execution(
+                state,
+                session_id,
+                tool_call,
+                error,
+                error_message,
+                "invalid",
+                false,
+            ));
+            continue;
+        }
+
+        match get_tool_decision(state, &tool_call) {
+            ToolDecision::Allow => {
+                if let Some(request_id) = stale_request_id {
+                    emit_terminal_approval_decision_after_agent_switch(
+                        &mut effects,
+                        session_id,
+                        request_id,
+                        ApprovalDecision::Approved,
+                    );
+                }
+
+                state.add_pending_tool_call(crate::app::domain::types::ToolCallId::from_string(
+                    &tool_call.id,
+                ));
+
+                effects.push(Effect::ExecuteTool {
+                    session_id,
+                    op_id,
+                    tool_call,
+                });
+            }
+            ToolDecision::Deny => {
+                if let Some(request_id) = stale_request_id {
+                    emit_terminal_approval_decision_after_agent_switch(
+                        &mut effects,
+                        session_id,
+                        request_id,
+                        ApprovalDecision::Denied,
+                    );
+                }
+
+                let tool_name = tool_call.name.clone();
+                effects.extend(fail_tool_call_without_execution(
+                    state,
+                    session_id,
+                    tool_call,
+                    ToolError::DeniedByPolicy(tool_name.clone()),
+                    format!("Tool '{tool_name}' denied by policy"),
+                    "denied",
+                    false,
+                ));
+            }
+            ToolDecision::Ask => {
+                if let Some(request_id) = stale_request_id {
+                    emit_terminal_approval_decision_after_agent_switch(
+                        &mut effects,
+                        session_id,
+                        request_id,
+                        ApprovalDecision::Denied,
+                    );
+                }
+
+                if state.pending_approval.is_some() {
+                    state.approval_queue.push_back(QueuedApproval { tool_call });
+                    continue;
+                }
+
+                let request_id = crate::app::domain::types::RequestId::new();
+                state.pending_approval = Some(PendingApproval {
+                    request_id,
+                    tool_call: tool_call.clone(),
+                });
+
+                effects.push(Effect::EmitEvent {
+                    session_id,
+                    event: SessionEvent::ApprovalRequested {
+                        request_id,
+                        tool_call: tool_call.clone(),
+                    },
+                });
+
+                effects.push(Effect::RequestUserApproval {
+                    session_id,
+                    request_id,
+                    tool_call,
+                });
+            }
+        }
+    }
+
+    let all_tools_complete = state
+        .current_operation
+        .as_ref()
+        .is_none_or(|op| op.pending_tool_calls.is_empty());
+    let no_pending_approvals = state.pending_approval.is_none() && state.approval_queue.is_empty();
+
+    if all_tools_complete
+        && no_pending_approvals
+        && let Some(model) = state.operation_models.get(&op_id).cloned()
+    {
+        effects.push(Effect::CallModel {
+            session_id,
+            op_id,
+            model,
+            messages: state
+                .message_graph
+                .get_thread_messages()
+                .into_iter()
+                .cloned()
+                .collect(),
+            system_context: state.cached_system_context.clone(),
+            tools: state.tools.clone(),
+        });
+    }
+
+    effects
 }
 
 fn apply_session_config_state(
@@ -3034,34 +3234,324 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_primary_agent_blocked_during_operation() {
+    fn test_switch_primary_agent_allowed_during_agent_operation() {
         let mut state = test_state();
         let session_id = state.session_id;
         let config = base_session_config();
         apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
 
+        let op_id = OpId::new();
         state.current_operation = Some(OperationState {
-            op_id: OpId::new(),
+            op_id,
             kind: OperationKind::AgentLoop,
             pending_tool_calls: HashSet::new(),
         });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
 
-        let result = super::reduce(
+        let effects = super::reduce(
             &mut state,
             Action::SwitchPrimaryAgent {
                 session_id,
                 agent_id: "plan".to_string(),
             },
+        )
+        .expect("switch should succeed during active agent op");
+
+        assert_eq!(state.primary_agent_id.as_deref(), Some("plan"));
+        assert_eq!(
+            state.operation_models.get(&op_id),
+            Some(&config.default_model)
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::EmitEvent {
+                event: SessionEvent::SessionConfigUpdated { .. },
+                ..
+            }
+        )));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::ReloadToolSchemas { .. }))
+        );
+    }
+
+    #[test]
+    fn test_switch_primary_agent_re_evaluates_pending_approvals() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let config = base_session_config();
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
+
+        let op_id = OpId::new();
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        let pending = ToolCall {
+            id: "tc_pending".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({"command":"echo pending"}),
+        };
+        let queued = ToolCall {
+            id: "tc_queued".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({"command":"echo queued"}),
+        };
+
+        let stale_request_id = RequestId::new();
+        state.pending_approval = Some(PendingApproval {
+            request_id: stale_request_id,
+            tool_call: pending,
+        });
+        state
+            .approval_queue
+            .push_back(QueuedApproval { tool_call: queued });
+
+        let effects = super::reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "yolo".to_string(),
+            },
+        )
+        .expect("switch should succeed");
+
+        assert!(state.pending_approval.is_none());
+        assert!(state.approval_queue.is_empty());
+        assert_eq!(
+            state
+                .current_operation
+                .as_ref()
+                .expect("active op")
+                .pending_tool_calls
+                .len(),
+            2
         );
 
-        assert!(matches!(
-            result,
-            Err(ReduceError::InvalidAction {
-                kind: InvalidActionKind::OperationInFlight,
-                ..
+        let approval_decisions: Vec<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::EmitEvent {
+                    event:
+                        SessionEvent::ApprovalDecided {
+                            request_id,
+                            decision,
+                            remember,
+                        },
+                    ..
+                } => Some((*request_id, *decision, remember.clone())),
+                _ => None,
             })
-        ));
-        assert!(state.primary_agent_id.as_deref() == Some("normal"));
+            .collect();
+        assert_eq!(approval_decisions.len(), 1);
+        assert_eq!(approval_decisions[0].0, stale_request_id);
+        assert_eq!(approval_decisions[0].1, ApprovalDecision::Approved);
+        assert!(approval_decisions[0].2.is_none());
+
+        let execute_count = effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::ExecuteTool { .. }))
+            .count();
+        assert_eq!(execute_count, 2);
+
+        let pending_ids: HashSet<_> = state
+            .current_operation
+            .as_ref()
+            .expect("active op")
+            .pending_tool_calls
+            .iter()
+            .map(|id| id.as_str().to_string())
+            .collect();
+        assert!(pending_ids.contains("tc_pending"));
+        assert!(pending_ids.contains("tc_queued"));
+    }
+
+    #[test]
+    fn test_switch_primary_agent_re_evaluates_pending_approvals_to_deny() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let config = base_session_config();
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
+
+        let op_id = OpId::new();
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        state.tools.push(test_schema("bash"));
+        state.tools.push(test_schema(READ_ONLY_TOOL_NAMES[0]));
+
+        let stale_request_id = RequestId::new();
+        state.pending_approval = Some(PendingApproval {
+            request_id: stale_request_id,
+            tool_call: ToolCall {
+                id: "tc_pending".to_string(),
+                name: "bash".to_string(),
+                parameters: json!({"command":"echo deny"}),
+            },
+        });
+
+        let effects = super::reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "plan".to_string(),
+            },
+        )
+        .expect("switch should succeed");
+
+        assert!(state.pending_approval.is_none());
+        assert!(state.approval_queue.is_empty());
+        assert!(
+            state
+                .current_operation
+                .as_ref()
+                .expect("active op")
+                .pending_tool_calls
+                .is_empty()
+        );
+
+        let approval_decisions: Vec<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::EmitEvent {
+                    event:
+                        SessionEvent::ApprovalDecided {
+                            request_id,
+                            decision,
+                            remember,
+                        },
+                    ..
+                } => Some((*request_id, *decision, remember.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(approval_decisions.len(), 1);
+        assert_eq!(approval_decisions[0].0, stale_request_id);
+        assert_eq!(approval_decisions[0].1, ApprovalDecision::Denied);
+        assert!(approval_decisions[0].2.is_none());
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::EmitEvent {
+                event: SessionEvent::ToolCallFailed { .. },
+                ..
+            }
+        )));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CallModel { .. }))
+        );
+    }
+
+    #[test]
+    fn test_switch_primary_agent_re_evaluates_pending_approvals_to_ask() {
+        let mut state = test_state();
+        let session_id = state.session_id;
+        let mut config = base_session_config();
+        config.tool_config.approval_policy = ToolApprovalPolicy {
+            default_behavior: UnapprovedBehavior::Prompt,
+            preapproved: ApprovalRules::default(),
+        };
+        apply_session_config_state(&mut state, &config, Some("normal".to_string()), true);
+
+        let op_id = OpId::new();
+        state.current_operation = Some(OperationState {
+            op_id,
+            kind: OperationKind::AgentLoop,
+            pending_tool_calls: HashSet::new(),
+        });
+        state
+            .operation_models
+            .insert(op_id, builtin::claude_sonnet_4_5());
+
+        state.tools.push(test_schema("bash"));
+        state.tools.push(test_schema(READ_ONLY_TOOL_NAMES[0]));
+
+        let stale_request_id = RequestId::new();
+        let pending_tool_call = ToolCall {
+            id: "tc_pending_ask".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({"command":"echo ask"}),
+        };
+        state.pending_approval = Some(PendingApproval {
+            request_id: stale_request_id,
+            tool_call: pending_tool_call.clone(),
+        });
+
+        let effects = super::reduce(
+            &mut state,
+            Action::SwitchPrimaryAgent {
+                session_id,
+                agent_id: "normal".to_string(),
+            },
+        )
+        .expect("switch should succeed");
+
+        let new_pending = state
+            .pending_approval
+            .as_ref()
+            .expect("new pending approval");
+        assert_ne!(new_pending.request_id, stale_request_id);
+        assert_eq!(new_pending.tool_call.id, pending_tool_call.id);
+        assert!(state.approval_queue.is_empty());
+
+        let approval_decisions: Vec<_> = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::EmitEvent {
+                    event:
+                        SessionEvent::ApprovalDecided {
+                            request_id,
+                            decision,
+                            remember,
+                        },
+                    ..
+                } => Some((*request_id, *decision, remember.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(approval_decisions.len(), 1);
+        assert_eq!(approval_decisions[0].0, stale_request_id);
+        assert_eq!(approval_decisions[0].1, ApprovalDecision::Denied);
+        assert!(approval_decisions[0].2.is_none());
+
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::EmitEvent {
+                event: SessionEvent::ApprovalRequested {
+                    request_id,
+                    tool_call,
+                },
+                ..
+            } if *request_id == new_pending.request_id && tool_call.id == pending_tool_call.id
+        )));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RequestUserApproval {
+                request_id,
+                tool_call,
+                ..
+            } if *request_id == new_pending.request_id && tool_call.id == pending_tool_call.id
+        )));
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::ExecuteTool { .. }))
+        );
     }
 
     #[test]

@@ -98,7 +98,14 @@ impl EventProcessor for SystemEventProcessor {
                 config: _,
             } => {
                 let label = crate::tui::format_agent_label(&primary_agent_id);
+                let changed = ctx
+                    .current_agent_label
+                    .as_ref()
+                    .is_none_or(|current| current != &label);
                 *ctx.current_agent_label = Some(label);
+                if changed {
+                    *ctx.current_tool_approval = None;
+                }
                 ProcessingResult::Handled
             }
             _ => ProcessingResult::NotHandled,
@@ -126,8 +133,8 @@ mod tests {
     use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
     use steer_grpc::AgentClient;
     use steer_grpc::client_api::{
-        ContextWindowUsage, ModelId, OpId, Preferences, QueuedWorkItem, TokenUsage,
-        UsageUpdateKind, builtin,
+        ContextWindowUsage, ModelId, OpId, Preferences, QueuedWorkItem, RequestId, TokenUsage,
+        ToolCall, UsageUpdateKind, builtin,
     };
 
     struct TestContext {
@@ -330,11 +337,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auto_compact_failed_is_silent() {
+    async fn test_session_config_updated_clears_stale_approval_on_agent_change() {
         let mut processor = SystemEventProcessor::new(std::sync::Arc::new(
             NotificationManager::new(&Preferences::default()),
         ));
         let mut ctx = create_test_context().await;
+
+        let pending = ToolCall {
+            id: "req_1".to_string(),
+            name: "bash".to_string(),
+            parameters: serde_json::json!({"command":"echo hi"}),
+        };
+        ctx.current_tool_approval = Some((RequestId::new(), pending));
+        ctx.current_agent_label = Some(crate::tui::format_agent_label("normal"));
 
         let notification_manager =
             std::sync::Arc::new(NotificationManager::new(&Preferences::default()));
@@ -358,18 +373,38 @@ mod tests {
             llm_usage: &mut ctx.llm_usage,
         };
 
+        let config = steer_grpc::client_api::SessionConfig {
+            workspace: steer_grpc::client_api::WorkspaceConfig::default(),
+            workspace_ref: None,
+            workspace_id: None,
+            repo_ref: None,
+            parent_session_id: None,
+            workspace_name: None,
+            tool_config: steer_grpc::client_api::SessionToolConfig::default(),
+            system_prompt: None,
+            primary_agent_id: Some("normal".to_string()),
+            policy_overrides: steer_grpc::client_api::SessionPolicyOverrides::empty(),
+            title: None,
+            metadata: std::collections::HashMap::new(),
+            default_model: steer_grpc::client_api::builtin::claude_sonnet_4_5(),
+            auto_compaction: Default::default(),
+        };
+
         let result = processor
             .process(
-                ClientEvent::CompactResult {
-                    result: CompactResult::Failed("error".into()),
-                    trigger: CompactTrigger::Auto,
+                ClientEvent::SessionConfigUpdated {
+                    config: Box::new(config),
+                    primary_agent_id: "yolo".to_string(),
                 },
                 &mut processing_ctx,
             )
             .await;
 
         assert!(matches!(result, ProcessingResult::Handled));
-        assert!(processing_ctx.chat_store.is_empty());
-        assert!(!*processing_ctx.messages_updated);
+        assert!(processing_ctx.current_tool_approval.is_none());
+        assert_eq!(
+            processing_ctx.current_agent_label.as_deref(),
+            Some(crate::tui::format_agent_label("yolo").as_str())
+        );
     }
 }
