@@ -50,10 +50,6 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    if cli.system_prompt.is_some() {
-        eyre::bail!("--system-prompt is no longer supported; use primary agent policies instead");
-    }
-
     // Load .env file if it exists
     steer::cli::config::load_env()?;
 
@@ -187,15 +183,9 @@ async fn main() -> Result<()> {
             messages_json,
             session,
             session_config,
-            system_prompt,
             remote,
             catalogs,
         } => {
-            if system_prompt.is_some() {
-                eyre::bail!(
-                    "--system-prompt is no longer supported; use primary agent policies instead"
-                );
-            }
             let remote_addr = remote.or(cli.remote.clone());
             let catalog_paths: Vec<String> = catalogs
                 .iter()
@@ -215,7 +205,6 @@ async fn main() -> Result<()> {
                 global_model,
                 session,
                 session_config,
-                system_prompt,
                 remote: remote_addr,
                 directory: cli.directory,
                 catalogs,

@@ -39,14 +39,12 @@ impl Command for SessionCommand {
             SessionCommands::Create {
                 session_config,
                 metadata,
-                system_prompt,
                 model,
             } => {
                 let cmd = CreateSessionCommand {
                     session_config: session_config.clone(),
                     metadata: metadata.clone(),
                     remote: self.remote.clone(),
-                    system_prompt: system_prompt.clone(),
                     session_db: self.session_db.clone(),
                     model: model.clone(),
                     catalogs: self.catalogs.clone(),

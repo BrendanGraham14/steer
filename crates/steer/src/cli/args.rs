@@ -12,17 +12,13 @@ pub struct Cli {
     #[arg(short, long)]
     pub directory: Option<std::path::PathBuf>,
 
-    /// Model to use (e.g., 'opus', 'o3', 'gemini', 'grok', 'openai/custom-model')
+    /// Model to use (e.g., 'codex', 'opus', 'sonnet', 'gemini', 'grok', 'openai/custom-model')
     #[arg(short, long)]
     pub model: Option<String>,
 
     /// Connect to a remote gRPC server instead of running locally
     #[arg(long)]
     pub remote: Option<String>,
-
-    /// Custom system prompt to use instead of the default
-    #[arg(long)]
-    pub system_prompt: Option<String>,
 
     /// Path to the session database file (defaults to ~/.steer/sessions.db)
     #[arg(long, env = "STEER_SESSION_DB", hide = true)]
@@ -92,10 +88,6 @@ pub enum Commands {
         #[arg(long)]
         session_config: Option<PathBuf>,
 
-        /// Custom system prompt to use instead of the default
-        #[arg(long)]
-        system_prompt: Option<String>,
-
         /// Connect to a remote gRPC server (overrides global --remote)
         #[arg(long)]
         remote: Option<String>,
@@ -159,10 +151,7 @@ pub enum SessionCommands {
         /// Session metadata (key=value pairs, comma-separated)
         #[arg(long)]
         metadata: Option<String>,
-        /// Custom system prompt to use instead of the default
-        #[arg(long)]
-        system_prompt: Option<String>,
-        /// Model to use as default for the session (e.g., 'opus', 'o3')
+        /// Model to use as default for the session (e.g., 'codex', 'opus', 'sonnet')
         #[arg(short, long)]
         model: Option<String>,
     },

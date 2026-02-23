@@ -23,7 +23,6 @@ pub struct HeadlessCommand {
     pub global_model: String,
     pub session: Option<String>,
     pub session_config: Option<PathBuf>,
-    pub system_prompt: Option<String>,
     pub remote: Option<String>,
     pub directory: Option<PathBuf>,
     pub catalogs: Vec<PathBuf>,
@@ -32,11 +31,6 @@ pub struct HeadlessCommand {
 #[async_trait]
 impl Command for HeadlessCommand {
     async fn execute(&self) -> Result<()> {
-        if self.system_prompt.is_some() {
-            return Err(eyre!(
-                "system_prompt is no longer supported; use primary agent policies instead"
-            ));
-        }
 
         let message = self.extract_message()?;
         let model_to_use = self.model.as_ref().unwrap_or(&self.global_model);

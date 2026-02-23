@@ -39,6 +39,7 @@ Commands:
   headless     Run in headless mode
   server       Start the gRPC server
   session      Session management commands
+  workspace    Workspace management commands
   help         Print this message or the help of the given subcommand(s)
 
 Options:
@@ -47,17 +48,15 @@ Options:
   -d, --directory <DIRECTORY>
           Optional directory to work in
   -m, --model <MODEL>
-          Model to use [possible values: claude-3-5-sonnet-20240620, claude-3-5-sonnet-20241022, claude-3-7-sonnet-20250219, claude-3-5-haiku-20241022, claude-sonnet-4-20250514, claude-opus-4-20250514, claude-opus-4-1-20250805, gpt-4.1-2025-04-14, gpt-4.1-mini-2025-04-14, gpt-4.1-nano-2025-04-14, gpt-5-2025-08-07, o3-2025-04-16, o3-pro-2025-06-10, o4-mini-2025-04-16, gemini-2.5-flash-preview-04-17, gemini-2.5-pro-preview-05-06, gemini-2.5-pro-preview-06-05, grok-3, grok-3-mini, grok-4-0709]
+          Model to use (e.g., 'codex', 'opus', 'sonnet', 'gemini', 'grok', 'openai/custom-model')
       --remote <REMOTE>
           Connect to a remote gRPC server instead of running locally
-      --system-prompt <SYSTEM_PROMPT>
-          Custom system prompt to use instead of the default
       --session-config <SESSION_CONFIG>
           Path to session configuration file (TOML format) for new sessions
-      --catalog <PATH>
-          Additional catalog file containing models and providers (repeatable)
       --theme <THEME>
-          Theme to use for the TUI (defaults to "default")
+          Theme to use for the TUI (falls back to "catppuccin-mocha" when unset)
+      --catalog <PATH>
+          Additional catalog files to load (repeatable)
   -h, --help
           Print help
   -V, --version
@@ -134,11 +133,23 @@ steer session delete <SESSION_ID> --force
 # Create a new session with a config file
 steer session create --session-config config.toml
 
-# Create with overrides
-steer session create --session-config config.toml --system-prompt "Custom prompt"
-
 # Resume a session
 steer --session <SESSION_ID>
+```
+
+### Workspaces
+
+Workspaces track the working directory and VCS state for sessions.
+
+```bash
+# List all workspaces
+steer workspace list
+
+# Show workspace status (VCS info, path, etc.)
+steer workspace status --workspace-id <WORKSPACE_ID>
+steer workspace status --session-id <SESSION_ID>
+# equivalent using the global --session flag
+steer --session <SESSION_ID> workspace status
 ```
 
 ### Session Configuration Files
@@ -148,6 +159,8 @@ Sessions can be configured using TOML configuration files. This is useful for:
 - Setting up MCP (Model Context Protocol) backends
 - Pre-approving tools or bash commands
 - Sharing configurations with your team
+
+> **Note:** `system_prompt` is not supported in session config files. System prompts are configured via agent modes (see [Agent Modes](#agent-modes)).
 
 #### Example: Minimal Configuration
 ```toml
@@ -161,17 +174,19 @@ backends = [
 #### Example: Pre-approved Tools
 ```toml
 # session-preapproved.toml
-system_prompt = "You are a helpful coding assistant."
-
 [tool_config]
 visibility = "all"
-approval_policy = { type = "pre_approved", tools = ["grep", "ls", "view", "glob", "todo_read"] }
+
+[tool_config.approvals]
+tools = ["grep", "ls", "read_file", "glob", "read_todos", "write_todos"]
+
+[tool_config.approvals.bash]
+patterns = ["git status", "git log*", "npm run*", "cargo build*"]
 ```
 
 #### Example: Full Configuration
 ```toml
 # session-full.toml
-system_prompt = "You are a helpful assistant with access to calculator and web tools."
 
 [workspace]
 type = "local"
@@ -182,14 +197,34 @@ backends = [
   { type = "mcp", server_name = "web-tools", transport = { type = "tcp", host = "127.0.0.1", port = 3000 }, tool_filter = "all" }
 ]
 visibility = "all"
-approval_policy = "always_ask"
+
+[tool_config.approvals]
+tools = ["grep", "ls", "read_file", "glob", "read_todos", "write_todos"]
+
+[tool_config.approvals.bash]
+patterns = ["git status", "git diff", "git log*", "npm test", "cargo check"]
+
+[tool_config.approvals.dispatch_agent]
+agent_patterns = ["explore"]
+
+[auto_compaction]
+enabled = true            # default: true
+threshold_percent = 90    # default: 90
 
 [metadata]
 project = "my-project"
 environment = "development"
 ```
 
-See the `examples/` directory for more configuration examples.
+#### Auto-Compaction
+
+Steer automatically compacts conversations when the context window fills up. This is configurable in session config:
+
+```toml
+[auto_compaction]
+enabled = true            # default: true
+threshold_percent = 90    # trigger compaction at 90% context usage (default: 90)
+```
 
 ### MCP Transport Options
 
@@ -210,11 +245,6 @@ transport = { type = "tcp", host = "127.0.0.1", port = 3000 }
 transport = { type = "unix", path = "/tmp/mcp.sock" }
 ```
 
-#### SSE
-```toml
-transport = { type = "sse", url = "http://localhost:3000/events", headers = { "Authorization" = "Bearer token" } }
-```
-
 #### HTTP
 ```toml
 transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-Key" = "secret" } }
@@ -225,14 +255,66 @@ transport = { type = "http", url = "http://localhost:3000", headers = { "X-API-K
 ## Slash commands (inside the chat UI)
 
 ```
-/help        Show help
-/auth        Set up authentication for AI providers
-/model       Show or change the current model
-/clear       Clear conversation history and tool approvals
-/compact     Summarize the current conversation
-/theme       Change or list available themes
-/mcp         Show MCP server connection status
+/help           Show help
+/auth           Set up authentication for AI providers
+/model          Show or change the current model
+/agent          Show or switch primary agent mode (normal/plan/yolo) [alias: /mode]
+/compact        Summarize the current conversation
+/new            Start a new conversation session
+/theme          Change or list available themes
+/mcp            Show MCP server connection status
+/workspace      Show workspace status
+/editing-mode   Switch between simple and vim editing modes
+/reload-files   Reload file cache
 ```
+
+---
+
+## Agent Modes
+
+Steer has three primary agent modes that control tool visibility and approval behavior. Switch modes at any time with `/agent` (or `/mode`).
+
+| Mode | Description |
+|------|-------------|
+| **normal** (default) | Full tool visibility. Mutating tools (bash, edit, etc.) require explicit approval. |
+| **plan** | Read-only tools only (plus `dispatch_agent` for exploration). Use this mode to research and plan before making changes. |
+| **yolo** | Full tool visibility with auto-approval for all tools. No manual approval prompts. |
+
+```
+# Show current mode
+/agent
+
+# Switch to plan mode
+/agent plan
+
+# Switch to yolo mode
+/agent yolo
+```
+
+---
+
+## Custom Commands
+
+Define project-specific slash commands in `.steer/commands.toml`:
+
+```toml
+[[commands]]
+type = "prompt"
+name = "review"
+description = "Careful and thorough change review"
+prompt = """
+Review the diff from `jj diff -r main..@` carefully.
+
+1. **Understand the change.** What is this change doing and why?
+2. **Architecture & design.** Are there structural problems? Is the high-level approach sound?
+3. **Simplification.** Can the design or implementation be simpler?
+4. **Correctness & completeness.** Are there bugs, edge cases, or missing pieces?
+
+Be specific — reference files and line numbers.
+"""
+```
+
+Custom commands appear as slash commands in the TUI (e.g., `/review`).
 
 ---
 
@@ -270,9 +352,13 @@ Steer supports multiple methods for providing credentials.
 
 The first time you start Steer it should launch a setup wizard. The auth flow can also be triggered via the `/auth` command.
 
-All providers (Anthropic, OpenAI, Gemini, xAI) support API key authentication.
- 
-For Claude Pro/Max users, Steer also supports authenticating via OAuth. **Note**: If OAuth tokens and an API key are saved for Anthropic, the OAuth token takes precedence.
+All providers (Anthropic, OpenAI, Google, xAI) support API key authentication.
+
+Steer also supports authenticating via OAuth for:
+- **Anthropic** — Claude Pro/Max users
+- **OpenAI** — ChatGPT Plus/Pro/Team users (Codex)
+
+**Note**: If OAuth tokens and an API key are both saved for a provider, the OAuth token takes precedence.
 
 Credentials are stored securely using the OS-native keyring.
 
@@ -283,7 +369,7 @@ Steer can also load credentials via environment variables. It will detect the fo
 * `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`
 * `OPENAI_API_KEY`
 * `GOOGLE_API_KEY` or `GEMINI_API_KEY`
-* `XAI_API_KEY` or `GROK_API_KEY` 
+* `XAI_API_KEY` or `GROK_API_KEY`
 
 Environment variables take precedence over stored credentials.
 
@@ -291,19 +377,103 @@ Environment variables take precedence over stored credentials.
 
 ## Tool approval system
 
-Read-only tools run automatically ( `view`, `grep`, `ls`, `glob`, `fetch`, `todo.read` ).  Mutating tools ( `edit`, `replace`, `bash`, etc.) require approval on first use, with the option to remember the decision for the rest of the session.
+Steer provides a set of built-in tools that the AI agent uses to interact with your codebase.
 
+### Built-in Tools
 
-### Bash Command Approval
+**Auto-approved by default** (no approval prompt in normal mode):
 
-You can pre-approve specific bash commands using glob patterns in your session configuration:
+| Tool | Description |
+|------|-------------|
+| `grep` | Fast content search (ripgrep-based, regex support) |
+| `astgrep` | Structural code search using AST patterns |
+| `glob` | File pattern matching (e.g., `**/*.js`) |
+| `ls` | List files and directories |
+| `read_file` | Read file contents |
+| `read_todos` | Read session to-do list |
+| `write_todos` | Update the session to-do list |
+
+`write_todos` mutates only the in-session to-do list and is intentionally auto-approved.
+
+**Mutating** (require approval on first use):
+
+| Tool | Description |
+|------|-------------|
+| `bash` | Run shell commands |
+| `edit_file` | Edit a file (find-and-replace) |
+| `multi_edit` | Apply multiple edits to one file in a single call |
+| `write_file` | Write/overwrite entire file contents |
+| `web_fetch` | Fetch and process web content |
+| `dispatch_agent` | Launch sub-agents for focused tasks |
+
+### Pre-approving Tools
+
+You can pre-approve specific tools and bash command patterns in your session configuration:
 
 ```toml
-[tool_config.tools.bash]
-approved_patterns = [
+# Pre-approve entire tools by name
+[tool_config.approvals]
+tools = ["grep", "ls", "read_file", "glob", "read_todos", "write_todos"]
+
+# Pre-approve specific bash commands using glob patterns
+[tool_config.approvals.bash]
+patterns = [
     "git status",
     "git log*",
     "npm run*",
     "cargo build*"
 ]
+
+# Pre-approve specific dispatch_agent sub-agents
+[tool_config.approvals.dispatch_agent]
+agent_patterns = ["explore"]
+```
+
+---
+
+## Preferences
+
+User preferences are stored in `~/.config/steer/preferences.toml` (macOS/Linux). Manage them with:
+
+```bash
+steer preferences show
+steer preferences edit
+steer preferences reset
+```
+
+### Available Preferences
+
+```toml
+# Default model to use
+default_model = "codex"
+
+[ui]
+theme = "catppuccin-mocha"
+editing_mode = "simple"     # simple | vim
+history_limit = 100         # conversation history limit
+provider_priority = ["anthropic", "openai", "google", "xai"]
+
+[ui.notifications]
+transport = "auto"          # auto | osc9 | off
+
+[tools]
+pre_approved = []           # tools to pre-approve globally
+
+[telemetry]
+enabled = true
+```
+
+### Vim Editing Mode
+
+Steer supports vim keybindings in the input editor. Enable via:
+
+```
+/editing-mode vim
+```
+
+Or set permanently in preferences:
+
+```toml
+[ui]
+editing_mode = "vim"
 ```

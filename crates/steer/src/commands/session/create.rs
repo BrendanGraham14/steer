@@ -14,7 +14,6 @@ pub struct CreateSessionCommand {
     pub session_config: Option<std::path::PathBuf>,
     pub metadata: Option<String>,
     pub remote: Option<String>,
-    pub system_prompt: Option<String>,
     pub session_db: Option<std::path::PathBuf>,
     pub model: Option<String>,
     pub catalogs: Vec<std::path::PathBuf>,
@@ -24,11 +23,6 @@ pub struct CreateSessionCommand {
 #[async_trait]
 impl Command for CreateSessionCommand {
     async fn execute(&self) -> Result<()> {
-        if self.system_prompt.is_some() {
-            return Err(eyre!(
-                "system_prompt is no longer supported; use primary agent policies instead"
-            ));
-        }
 
         let mut local_grpc_setup = None;
         let client = if let Some(remote_addr) = &self.remote {
