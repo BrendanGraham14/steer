@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1](https://github.com/BrendanGraham14/steer/compare/steer-grpc-v0.16.0...steer-grpc-v0.16.1) - 2026-02-23
+
+### Added
+
+- allow switching agents while op in progress
+
 ## [0.16.0](https://github.com/BrendanGraham14/steer/compare/steer-grpc-v0.15.0...steer-grpc-v0.16.0) - 2026-02-21
 
 ### Added
