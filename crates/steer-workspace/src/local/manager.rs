@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use jj_lib::repo::Repo as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -151,6 +152,46 @@ impl WorkspaceManager for LocalWorkspaceManager {
 
                 let jj_root = jj::ensure_jj_workspace_root(&repo_info.root_path)?;
                 let workspace_id = WorkspaceId::new();
+                let parent_workspace_id = request.parent_workspace_id;
+                let parent_wc_commit_id = if let Some(parent_workspace_id) = parent_workspace_id {
+                    let parent_info = self
+                        .registry
+                        .fetch_workspace(parent_workspace_id)
+                        .await?
+                        .ok_or_else(|| {
+                            WorkspaceManagerError::NotFound(format!(
+                                "Parent workspace not found: {}",
+                                parent_workspace_id.as_uuid()
+                            ))
+                        })?;
+                    if parent_info.repo_id != repo_info.repo_id {
+                        return Err(WorkspaceManagerError::InvalidRequest(format!(
+                            "Parent workspace {} does not belong to repo {}",
+                            parent_workspace_id.as_uuid(),
+                            repo_info.repo_id.as_uuid()
+                        )));
+                    }
+
+                    let parent_jj_root = jj::ensure_jj_workspace_root(&parent_info.path)?;
+                    let (mut parent_workspace, parent_repo) = jj::load_jj_workspace(&parent_jj_root)?;
+                    let parent_repo =
+                        jj::snapshot_working_copy(&mut parent_workspace, parent_repo).await?;
+                    let parent_workspace_name = parent_workspace.workspace_name().to_owned();
+                    let parent_wc_commit_id = parent_repo
+                        .view()
+                        .get_wc_commit_id(parent_workspace_name.as_ref())
+                        .ok_or_else(|| {
+                            WorkspaceManagerError::Other(format!(
+                                "No working copy commit for workspace '{}'",
+                                parent_workspace_name.as_str()
+                            ))
+                        })?
+                        .clone();
+                    Some(parent_wc_commit_id)
+                } else {
+                    None
+                };
+
                 let requested_name = request
                     .name
                     .unwrap_or_else(|| WorkspaceLayout::default_workspace_name(workspace_id));
@@ -173,11 +214,83 @@ impl WorkspaceManager for LocalWorkspaceManager {
                     )?;
                 }
 
+                if let Some(parent_wc_commit_id) = parent_wc_commit_id {
+                    let (mut workspace, repo) = jj::load_jj_workspace(&workspace_path)?;
+                    let workspace_name = workspace.workspace_name().to_owned();
+                    let parent_wc_commit =
+                        repo.store()
+                            .get_commit(&parent_wc_commit_id)
+                            .map_err(|e| {
+                                WorkspaceManagerError::Other(format!(
+                                    "Failed to load parent working copy commit: {e}"
+                                ))
+                            })?;
+
+                    let mut tx = repo.start_transaction();
+                    let mut child_wc_commit_builder = tx.repo_mut().new_commit(
+                        vec![parent_wc_commit.id().clone()],
+                        parent_wc_commit.tree_id().clone(),
+                    );
+
+                    let mut author = child_wc_commit_builder.author().clone();
+                    author.name = parent_wc_commit.author().name.clone();
+                    author.email = parent_wc_commit.author().email.clone();
+                    child_wc_commit_builder = child_wc_commit_builder.set_author(author);
+
+                    let mut committer = child_wc_commit_builder.committer().clone();
+                    committer.name = parent_wc_commit.committer().name.clone();
+                    committer.email = parent_wc_commit.committer().email.clone();
+                    child_wc_commit_builder = child_wc_commit_builder.set_committer(committer);
+
+                    let child_wc_commit = child_wc_commit_builder.write().map_err(|e| {
+                        WorkspaceManagerError::Other(format!(
+                            "Failed to create initial working copy commit for new workspace: {e}"
+                        ))
+                    })?;
+                    let child_wc_commit_id = child_wc_commit.id().clone();
+
+                    tx.repo_mut()
+                        .set_wc_commit(workspace_name.clone(), child_wc_commit_id.clone())
+                        .map_err(|e| {
+                            WorkspaceManagerError::Other(format!(
+                                "Failed to update new workspace working copy commit: {e}"
+                            ))
+                        })?;
+                    let workspace_name_ref: &jj_lib::ref_name::WorkspaceName = workspace_name.as_ref();
+                    let updated_repo = tx
+                        .commit(format!(
+                            "create initial working-copy commit in workspace '{}'",
+                            workspace_name_ref.as_str()
+                        ))
+                        .map_err(|e| {
+                            WorkspaceManagerError::Other(format!(
+                                "Failed to commit new workspace working copy base: {e}"
+                            ))
+                        })?;
+                    let child_wc_commit =
+                        updated_repo
+                            .store()
+                            .get_commit(&child_wc_commit_id)
+                            .map_err(|e| {
+                                WorkspaceManagerError::Other(format!(
+                                    "Failed to load created working copy commit: {e}"
+                                ))
+                            })?;
+
+                    workspace
+                        .check_out(updated_repo.op_id().clone(), None, &child_wc_commit)
+                        .map_err(|e| {
+                            WorkspaceManagerError::Other(format!(
+                                "Failed to check out new workspace working copy commit: {e}"
+                            ))
+                        })?;
+                }
+
                 let info = WorkspaceInfo {
                     workspace_id,
                     environment_id: self.environment_id,
                     repo_id: repo_info.repo_id,
-                    parent_workspace_id: request.parent_workspace_id,
+                    parent_workspace_id,
                     name: Some(requested_name),
                     path: workspace_path,
                 };
@@ -479,6 +592,88 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(WorkspaceManagerError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_jj_workspace_create_bases_on_parent_workspace_current_change() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let settings = {
+            let mut config = jj_lib::config::StackedConfig::with_defaults();
+            let overrides = jj_lib::config::ConfigLayer::parse(
+                jj_lib::config::ConfigSource::CommandArg,
+                r#"
+user.name = "Test User"
+user.email = "test@example.com"
+operation.hostname = "test-host"
+operation.username = "test-user"
+signing.behavior = "drop"
+debug.randomness-seed = 0
+debug.commit-timestamp = "2001-01-01T00:00:00Z"
+debug.operation-timestamp = "2001-01-01T00:00:00Z"
+"#,
+            )
+            .unwrap();
+            config.add_layer(overrides);
+            jj_lib::settings::UserSettings::from_config(config).unwrap()
+        };
+        let (workspace, _repo) =
+            jj_lib::workspace::Workspace::init_simple(&settings, temp_dir.path()).unwrap();
+        drop(workspace);
+
+        let manager_root = TempDir::new().unwrap();
+        let manager = LocalWorkspaceManager::new(manager_root.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let parent_info = manager.resolve_workspace(temp_dir.path()).await.unwrap();
+        let child_info = manager
+            .create_workspace(CreateWorkspaceRequest {
+                repo_id: parent_info.repo_id,
+                name: Some("jj-subagent".to_string()),
+                parent_workspace_id: Some(parent_info.workspace_id),
+                strategy: WorkspaceCreateStrategy::JjWorkspace,
+            })
+            .await
+            .unwrap();
+
+        let (mut parent_workspace, parent_repo) = jj::load_jj_workspace(temp_dir.path()).unwrap();
+        let parent_repo = jj::snapshot_working_copy(&mut parent_workspace, parent_repo)
+            .await
+            .unwrap();
+        let parent_workspace_name = parent_workspace.workspace_name().to_owned();
+        let parent_wc_commit_id = parent_repo
+            .view()
+            .get_wc_commit_id(parent_workspace_name.as_ref())
+            .unwrap()
+            .clone();
+
+        let (mut child_workspace, child_repo) = jj::load_jj_workspace(&child_info.path).unwrap();
+        let child_repo = jj::snapshot_working_copy(&mut child_workspace, child_repo)
+            .await
+            .unwrap();
+        let child_workspace_name = child_workspace.workspace_name().to_owned();
+        let child_wc_commit_id = child_repo
+            .view()
+            .get_wc_commit_id(child_workspace_name.as_ref())
+            .unwrap()
+            .clone();
+        let child_wc_commit = child_repo.store().get_commit(&child_wc_commit_id).unwrap();
+
+        assert_eq!(child_wc_commit.parent_ids(), &[parent_wc_commit_id.clone()]);
+        assert_ne!(child_wc_commit.id(), &parent_wc_commit_id);
+
+        let parent_wc_commit = child_repo.store().get_commit(&parent_wc_commit_id).unwrap();
+        assert_eq!(child_wc_commit.tree_id(), parent_wc_commit.tree_id());
+        assert_eq!(
+            child_wc_commit.author().email,
+            parent_wc_commit.author().email,
+            "child workspace commit should inherit parent author email"
+        );
+        assert_eq!(
+            child_wc_commit.committer().email,
+            parent_wc_commit.committer().email,
+            "child workspace commit should inherit parent committer email"
+        );
     }
 
     #[test]
