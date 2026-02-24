@@ -2,7 +2,7 @@
 //!
 //! This module implements the terminal user interface using ratatui.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -538,6 +538,8 @@ pub struct Tui {
     setup_state: Option<SetupState>,
     /// Track in-flight operations (operation_id -> chat_store_index)
     in_flight_operations: HashSet<OpId>,
+    /// Per-operation notification policy for processing completion.
+    notify_on_processing_complete: HashMap<OpId, bool>,
     /// Queued head item (if any)
     queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
     /// Count of queued items
@@ -916,6 +918,7 @@ impl Tui {
             theme: theme.unwrap_or_default(),
             setup_state: None,
             in_flight_operations: HashSet::new(),
+            notify_on_processing_complete: HashMap::new(),
             queued_head: None,
             queued_count: 0,
             llm_usage: LlmUsageState::default(),
@@ -1202,6 +1205,7 @@ impl Tui {
         self.tool_registry = ToolCallRegistry::new();
         self.chat_viewport = ChatViewport::new();
         self.in_flight_operations.clear();
+        self.notify_on_processing_complete.clear();
         self.clear_ctx_utilization();
         self.input_panel_state =
             crate::tui::widgets::input_panel::InputPanelState::new(new_session_id.clone());
@@ -1942,6 +1946,7 @@ impl Tui {
             current_agent_label: &mut self.current_agent_label,
             messages_updated: &mut messages_updated,
             in_flight_operations: &mut self.in_flight_operations,
+            notify_on_processing_complete: &mut self.notify_on_processing_complete,
             queued_head: &mut self.queued_head,
             queued_count: &mut self.queued_count,
             llm_usage: &mut self.llm_usage,

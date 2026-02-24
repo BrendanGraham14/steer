@@ -59,6 +59,7 @@ mod tests {
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
     use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
+    use std::collections::HashMap;
     use steer_grpc::AgentClient;
     use steer_grpc::client_api::{
         ContextWindowUsage, ModelId, OpId, Preferences, QueuedWorkItem, TokenUsage,
@@ -81,6 +82,7 @@ mod tests {
         in_flight_operations: std::collections::HashSet<OpId>,
         queued_head: Option<QueuedWorkItem>,
         queued_count: usize,
+        notify_on_processing_complete: HashMap<OpId, bool>,
         llm_usage: LlmUsageState,
         _workspace_root: tempfile::TempDir,
     }
@@ -112,6 +114,7 @@ mod tests {
             in_flight_operations: std::collections::HashSet::new(),
             queued_head: None,
             queued_count: 0,
+            notify_on_processing_complete: HashMap::new(),
             llm_usage: LlmUsageState::default(),
             _workspace_root: workspace_root,
         }
@@ -145,6 +148,7 @@ mod tests {
             current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut ctx.in_flight_operations,
+            notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
             llm_usage: &mut ctx.llm_usage,
@@ -210,6 +214,7 @@ mod tests {
             current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut ctx.in_flight_operations,
+            notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
             llm_usage: &mut ctx.llm_usage,

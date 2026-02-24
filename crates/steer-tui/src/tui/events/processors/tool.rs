@@ -197,7 +197,7 @@ mod tests {
     use steer_grpc::client_api::{AssistantContent, ModelId, OpId, Preferences, builtin};
 
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
     use crate::tui::events::processor::PendingToolApproval;
@@ -219,6 +219,7 @@ mod tests {
         current_agent_label: Option<String>,
         messages_updated: bool,
         in_flight_operations: HashSet<OpId>,
+        notify_on_processing_complete: HashMap<OpId, bool>,
         queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
         queued_count: usize,
         llm_usage: LlmUsageState,
@@ -242,6 +243,7 @@ mod tests {
         let current_agent_label = None;
         let messages_updated = false;
         let in_flight_operations = HashSet::new();
+        let notify_on_processing_complete = HashMap::new();
         let queued_head = None;
         let queued_count = 0;
         TestContext {
@@ -259,6 +261,7 @@ mod tests {
             current_agent_label,
             messages_updated,
             in_flight_operations,
+            notify_on_processing_complete,
             queued_head,
             queued_count,
             llm_usage: LlmUsageState::default(),
@@ -308,6 +311,7 @@ mod tests {
                 current_agent_label: &mut ctx.current_agent_label,
                 messages_updated: &mut ctx.messages_updated,
                 in_flight_operations: &mut ctx.in_flight_operations,
+                notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
                 queued_head: &mut ctx.queued_head,
                 queued_count: &mut ctx.queued_count,
                 llm_usage: &mut ctx.llm_usage,
@@ -339,6 +343,7 @@ mod tests {
                 current_agent_label: &mut ctx.current_agent_label,
                 messages_updated: &mut ctx.messages_updated,
                 in_flight_operations: &mut ctx.in_flight_operations,
+                notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
                 queued_head: &mut ctx.queued_head,
                 queued_count: &mut ctx.queued_count,
                 llm_usage: &mut ctx.llm_usage,

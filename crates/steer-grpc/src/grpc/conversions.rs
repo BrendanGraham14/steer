@@ -1882,6 +1882,56 @@ fn compact_trigger_from_proto(value: i32) -> steer_core::app::domain::event::Com
     }
 }
 
+fn operation_kind_to_proto(
+    kind: &steer_core::app::domain::state::OperationKind,
+) -> proto::ProcessingOperationKind {
+    let kind = match kind {
+        steer_core::app::domain::state::OperationKind::AgentLoop => {
+            proto::processing_operation_kind::Kind::AgentLoop(proto::ProcessingAgentLoop {})
+        }
+        steer_core::app::domain::state::OperationKind::Compact { trigger } => {
+            proto::processing_operation_kind::Kind::Compact(proto::ProcessingCompact {
+                trigger: compact_trigger_to_proto(*trigger) as i32,
+            })
+        }
+        steer_core::app::domain::state::OperationKind::DirectBash { command } => {
+            proto::processing_operation_kind::Kind::DirectBash(proto::ProcessingDirectBash {
+                command: command.clone(),
+            })
+        }
+    };
+
+    proto::ProcessingOperationKind { kind: Some(kind) }
+}
+
+fn operation_kind_from_proto(
+    kind: Option<proto::ProcessingOperationKind>,
+) -> Result<Option<steer_core::app::domain::state::OperationKind>, ConversionError> {
+    let Some(kind) = kind else {
+        return Ok(None);
+    };
+
+    let Some(kind) = kind.kind else {
+        return Ok(None);
+    };
+
+    Ok(Some(match kind {
+        proto::processing_operation_kind::Kind::AgentLoop(_) => {
+            steer_core::app::domain::state::OperationKind::AgentLoop
+        }
+        proto::processing_operation_kind::Kind::Compact(compact) => {
+            steer_core::app::domain::state::OperationKind::Compact {
+                trigger: compact_trigger_from_proto(compact.trigger),
+            }
+        }
+        proto::processing_operation_kind::Kind::DirectBash(direct_bash) => {
+            steer_core::app::domain::state::OperationKind::DirectBash {
+                command: direct_bash.command,
+            }
+        }
+    }))
+}
+
 fn compact_result_to_proto(
     result: &steer_core::app::domain::event::CompactResult,
 ) -> proto::CompactResult {
@@ -2193,9 +2243,10 @@ pub(crate) fn session_event_to_proto(
             // The client already knows about their own approval decision
             None
         }
-        SessionEvent::OperationStarted { op_id, kind: _ } => Some(
+        SessionEvent::OperationStarted { op_id, kind } => Some(
             proto::session_event::Event::ProcessingStarted(proto::ProcessingStartedEvent {
                 op_id: op_id.to_string(),
+                operation_kind: Some(operation_kind_to_proto(&kind)),
             }),
         ),
         SessionEvent::OperationCompleted { op_id } => Some(
@@ -2762,7 +2813,11 @@ pub(crate) fn proto_to_client_event(
         },
         proto::session_event::Event::ProcessingStarted(e) => {
             let op_id = parse_op_id(&e.op_id)?;
-            ClientEvent::ProcessingStarted { op_id }
+            let operation_kind = operation_kind_from_proto(e.operation_kind)?;
+            ClientEvent::ProcessingStarted {
+                op_id,
+                operation_kind,
+            }
         }
         proto::session_event::Event::ProcessingCompleted(e) => {
             let op_id = parse_op_id(&e.op_id)?;

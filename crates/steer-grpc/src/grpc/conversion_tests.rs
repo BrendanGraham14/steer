@@ -166,7 +166,7 @@ proptest! {
 mod id_preservation_tests {
     use crate::client_api::{ClientEvent, OpId, QueuedWorkKind, RequestId};
     use crate::grpc::conversions::{proto_to_client_event, session_event_to_proto};
-    use steer_core::app::domain::event::{CancellationInfo, SessionEvent};
+    use steer_core::app::domain::event::{CancellationInfo, CompactTrigger, SessionEvent};
     use steer_core::app::domain::state::OperationKind;
     use steer_tools::ToolCall;
     use uuid::Uuid;
@@ -183,8 +183,70 @@ mod id_preservation_tests {
         let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
 
         match client_event {
-            ClientEvent::ProcessingStarted { op_id: received } => {
+            ClientEvent::ProcessingStarted {
+                op_id: received,
+                operation_kind,
+            } => {
                 assert_eq!(op_id, received);
+                assert!(matches!(operation_kind, Some(OperationKind::AgentLoop)));
+            }
+            other => panic!("Expected ProcessingStarted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_operation_kind_preserved_for_auto_compact() {
+        let op_id = OpId::from(Uuid::new_v4());
+        let event = SessionEvent::OperationStarted {
+            op_id,
+            kind: OperationKind::Compact {
+                trigger: CompactTrigger::Auto,
+            },
+        };
+
+        let proto_response = session_event_to_proto(event, 1).unwrap();
+        let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
+
+        match client_event {
+            ClientEvent::ProcessingStarted {
+                op_id: received,
+                operation_kind,
+            } => {
+                assert_eq!(op_id, received);
+                assert!(matches!(
+                    operation_kind,
+                    Some(OperationKind::Compact {
+                        trigger: CompactTrigger::Auto
+                    })
+                ));
+            }
+            other => panic!("Expected ProcessingStarted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_operation_kind_preserved_for_direct_bash() {
+        let op_id = OpId::from(Uuid::new_v4());
+        let event = SessionEvent::OperationStarted {
+            op_id,
+            kind: OperationKind::DirectBash {
+                command: "ls -la".to_string(),
+            },
+        };
+
+        let proto_response = session_event_to_proto(event, 1).unwrap();
+        let client_event = proto_to_client_event(proto_response).unwrap().unwrap();
+
+        match client_event {
+            ClientEvent::ProcessingStarted {
+                op_id: received,
+                operation_kind,
+            } => {
+                assert_eq!(op_id, received);
+                assert!(matches!(
+                    operation_kind,
+                    Some(OperationKind::DirectBash { command }) if command == "ls -la"
+                ));
             }
             other => panic!("Expected ProcessingStarted, got {other:?}"),
         }

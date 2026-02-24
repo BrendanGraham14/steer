@@ -7,7 +7,7 @@ use crate::notifications::{NotificationEvent, NotificationManager, NotificationM
 use crate::tui::events::processor::{EventProcessor, ProcessingContext, ProcessingResult};
 use crate::tui::model::ChatItemData;
 use async_trait::async_trait;
-use steer_grpc::client_api::ClientEvent;
+use steer_grpc::client_api::{ClientEvent, OperationKind};
 
 /// Processor for events that affect the overall processing state
 pub struct ProcessingStateProcessor {
@@ -19,6 +19,17 @@ impl ProcessingStateProcessor {
         Self {
             notification_manager,
         }
+    }
+
+    fn should_emit_processing_complete_notification(
+        operation_kind: Option<&OperationKind>,
+    ) -> bool {
+        !matches!(
+            operation_kind,
+            Some(OperationKind::Compact {
+                trigger: steer_grpc::client_api::CompactTrigger::Auto,
+            })
+        )
     }
 }
 
@@ -44,10 +55,18 @@ impl EventProcessor for ProcessingStateProcessor {
         ctx: &mut ProcessingContext,
     ) -> ProcessingResult {
         match event {
-            ClientEvent::ProcessingStarted { op_id } => {
+            ClientEvent::ProcessingStarted {
+                op_id,
+                operation_kind,
+            } => {
                 *ctx.is_processing = true;
                 *ctx.spinner_state = 0;
                 ctx.in_flight_operations.insert(op_id);
+
+                let should_emit =
+                    Self::should_emit_processing_complete_notification(operation_kind.as_ref());
+                ctx.notify_on_processing_complete.insert(op_id, should_emit);
+
                 ProcessingResult::Handled
             }
             ClientEvent::ProcessingCompleted { op_id } => {
@@ -55,8 +74,12 @@ impl EventProcessor for ProcessingStateProcessor {
                 *ctx.is_processing = false;
                 *ctx.progress_message = None;
                 ctx.in_flight_operations.remove(&op_id);
+                let should_emit_notification = ctx
+                    .notify_on_processing_complete
+                    .remove(&op_id)
+                    .unwrap_or(true);
 
-                if was_processing {
+                if was_processing && should_emit_notification {
                     self.notification_manager
                         .emit(NotificationEvent::ProcessingComplete);
                 }
@@ -85,6 +108,7 @@ impl EventProcessor for ProcessingStateProcessor {
                 *ctx.progress_message = None;
                 *ctx.current_tool_approval = None;
                 ctx.in_flight_operations.remove(&op_id);
+                ctx.notify_on_processing_complete.remove(&op_id);
 
                 // Tool completion events can be lost under subscription lag; scrub orphaned
                 // pending tool UI state when the operation itself is cancelled.
@@ -153,9 +177,11 @@ mod tests {
     use crate::tui::model::{ChatItem, ChatItemData, generate_row_id};
     use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
     use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
+    use std::collections::HashMap;
     use steer_grpc::AgentClient;
     use steer_grpc::client_api::{
-        MessageId, ModelId, OpId, QueuedWorkItem, QueuedWorkKind, builtin,
+        CompactTrigger, MessageId, ModelId, OpId, OperationKind, QueuedWorkItem, QueuedWorkKind,
+        builtin,
     };
 
     struct TestContext {
@@ -174,6 +200,7 @@ mod tests {
         in_flight_operations: std::collections::HashSet<OpId>,
         queued_head: Option<QueuedWorkItem>,
         queued_count: usize,
+        notify_on_processing_complete: HashMap<OpId, bool>,
         llm_usage: LlmUsageState,
         _workspace_root: tempfile::TempDir,
     }
@@ -205,6 +232,7 @@ mod tests {
             in_flight_operations: std::collections::HashSet::new(),
             queued_head: None,
             queued_count: 0,
+            notify_on_processing_complete: HashMap::new(),
             llm_usage: LlmUsageState::default(),
             _workspace_root: workspace_root,
         }
@@ -247,6 +275,7 @@ mod tests {
             current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut ctx.in_flight_operations,
+            notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
             llm_usage: &mut ctx.llm_usage,
@@ -305,6 +334,7 @@ mod tests {
             current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut ctx.in_flight_operations,
+            notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
             llm_usage: &mut ctx.llm_usage,
@@ -368,6 +398,7 @@ mod tests {
             current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut ctx.in_flight_operations,
+            notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
             llm_usage: &mut ctx.llm_usage,
@@ -391,6 +422,41 @@ mod tests {
                 .tool_registry
                 .completed_calls()
                 .contains_key("tool_stale_1")
+        );
+    }
+
+    #[test]
+    fn processing_complete_notification_policy_suppresses_auto_compact() {
+        assert!(
+            !ProcessingStateProcessor::should_emit_processing_complete_notification(Some(
+                &OperationKind::Compact {
+                    trigger: CompactTrigger::Auto,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn processing_complete_notification_policy_allows_non_auto_operations() {
+        assert!(ProcessingStateProcessor::should_emit_processing_complete_notification(None));
+        assert!(
+            ProcessingStateProcessor::should_emit_processing_complete_notification(Some(
+                &OperationKind::AgentLoop
+            ))
+        );
+        assert!(
+            ProcessingStateProcessor::should_emit_processing_complete_notification(Some(
+                &OperationKind::Compact {
+                    trigger: CompactTrigger::Manual,
+                }
+            ))
+        );
+        assert!(
+            ProcessingStateProcessor::should_emit_processing_complete_notification(Some(
+                &OperationKind::DirectBash {
+                    command: "pwd".to_string(),
+                }
+            ))
         );
     }
 }

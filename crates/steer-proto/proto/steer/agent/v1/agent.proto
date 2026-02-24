@@ -151,10 +151,29 @@ message RequestToolApprovalEvent {
 
 message ProcessingStartedEvent {
   string op_id = 1;  // Operation ID (UUID)
+  optional ProcessingOperationKind operation_kind = 2;
 }
 
 message ProcessingCompletedEvent {
   string op_id = 1;  // Operation ID (UUID)
+}
+
+message ProcessingOperationKind {
+  oneof kind {
+    ProcessingAgentLoop agent_loop = 1;
+    ProcessingCompact compact = 2;
+    ProcessingDirectBash direct_bash = 3;
+  }
+}
+
+message ProcessingAgentLoop {}
+
+message ProcessingCompact {
+  CompactTrigger trigger = 1;
+}
+
+message ProcessingDirectBash {
+  string command = 1;
 }
 
 enum UsageUpdateKind {

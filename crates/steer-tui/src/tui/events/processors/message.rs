@@ -343,6 +343,7 @@ mod tests {
     use crate::tui::events::processor::ProcessingContext;
     use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
     use crate::tui::widgets::{ChatListState, input_panel::InputPanelState};
+    use std::collections::HashMap;
 
     use serde_json::json;
 
@@ -365,6 +366,7 @@ mod tests {
         current_model: ModelId,
         current_agent_label: Option<String>,
         messages_updated: bool,
+        notify_on_processing_complete: HashMap<steer_grpc::client_api::OpId, bool>,
         queued_head: Option<steer_grpc::client_api::QueuedWorkItem>,
         queued_count: usize,
         llm_usage: LlmUsageState,
@@ -388,6 +390,7 @@ mod tests {
         let current_model = builtin::claude_sonnet_4_5();
         let current_agent_label = None;
         let messages_updated = false;
+        let notify_on_processing_complete = HashMap::new();
         let queued_head = None;
         let queued_count = 0;
 
@@ -404,6 +407,7 @@ mod tests {
             current_model,
             current_agent_label,
             messages_updated,
+            notify_on_processing_complete,
             queued_head,
             queued_count,
             llm_usage: LlmUsageState::default(),
@@ -436,6 +440,7 @@ mod tests {
             current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut in_flight_operations,
+            notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
             llm_usage: &mut ctx.llm_usage,
@@ -557,6 +562,7 @@ mod tests {
             current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut in_flight_operations,
+            notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
             llm_usage: &mut ctx.llm_usage,
@@ -635,6 +641,7 @@ mod tests {
             current_agent_label: &mut ctx.current_agent_label,
             messages_updated: &mut ctx.messages_updated,
             in_flight_operations: &mut in_flight_operations,
+            notify_on_processing_complete: &mut ctx.notify_on_processing_complete,
             queued_head: &mut ctx.queued_head,
             queued_count: &mut ctx.queued_count,
             llm_usage: &mut ctx.llm_usage,

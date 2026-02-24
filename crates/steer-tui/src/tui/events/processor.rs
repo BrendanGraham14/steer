@@ -34,6 +34,7 @@ pub struct ProcessingContext<'a> {
     pub current_agent_label: &'a mut Option<String>,
     pub messages_updated: &'a mut bool,
     pub in_flight_operations: &'a mut std::collections::HashSet<OpId>,
+    pub notify_on_processing_complete: &'a mut std::collections::HashMap<OpId, bool>,
     pub queued_head: &'a mut Option<steer_grpc::client_api::QueuedWorkItem>,
     pub queued_count: &'a mut usize,
     pub llm_usage: &'a mut LlmUsageState,

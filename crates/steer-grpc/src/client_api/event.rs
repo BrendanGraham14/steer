@@ -1,7 +1,7 @@
 use super::types::{
     CompactResult, CompactTrigger, CompactionRecord, ContextWindowUsage, McpServerState, Message,
-    MessageId, ModelId, OpId, QueuedWorkItem, RequestId, SessionConfig, TokenUsage, ToolCall,
-    ToolCallDelta, ToolCallId, ToolResult,
+    MessageId, ModelId, OpId, OperationKind, QueuedWorkItem, RequestId, SessionConfig, TokenUsage,
+    ToolCall, ToolCallDelta, ToolCallId, ToolResult,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +85,7 @@ pub enum ClientEvent {
 
     ProcessingStarted {
         op_id: OpId,
+        operation_kind: Option<OperationKind>,
     },
     ProcessingCompleted {
         op_id: OpId,
