@@ -8,6 +8,7 @@ use crate::client_api::{
     ClientEvent, CreateSessionParams, PrimaryAgentSpec, ProviderAuthStatus, ProviderInfo,
     StartAuthResponse,
 };
+use crate::grpc::GRPC_MAX_MESSAGE_SIZE_BYTES;
 use crate::grpc::conversions::{
     model_to_proto, proto_to_client_event, proto_to_mcp_server_info, proto_to_message,
     proto_to_primary_agent_spec, proto_to_provider_auth_status, proto_to_provider_info,
@@ -36,11 +37,20 @@ pub struct AgentClient {
     stream_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
+fn configure_agent_service_client(
+    client: AgentServiceClient<Channel>,
+) -> AgentServiceClient<Channel> {
+    client
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES)
+}
+
 impl AgentClient {
     pub async fn connect(addr: &str) -> GrpcResult<Self> {
         info!("Connecting to gRPC server at {}", addr);
 
-        let client = AgentServiceClient::connect(addr.to_string()).await?;
+        let client =
+            configure_agent_service_client(AgentServiceClient::connect(addr.to_string()).await?);
 
         info!("Successfully connected to gRPC server");
 
@@ -58,7 +68,7 @@ impl AgentClient {
     pub async fn from_channel(channel: Channel) -> GrpcResult<Self> {
         info!("Creating gRPC client from provided channel");
 
-        let client = AgentServiceClient::new(channel);
+        let client = configure_agent_service_client(AgentServiceClient::new(channel));
         let (client_event_tx, client_event_rx) = mpsc::channel::<ClientEvent>(100);
 
         Ok(Self {

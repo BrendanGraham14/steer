@@ -7,6 +7,8 @@ use tracing::{error, info, warn};
 use steer_remote_workspace::proto::remote_workspace_service_server::RemoteWorkspaceServiceServer;
 use steer_remote_workspace::remote_workspace_service::RemoteWorkspaceService;
 
+const GRPC_MAX_MESSAGE_SIZE_BYTES: usize = 32 * 1024 * 1024;
+
 #[derive(Parser)]
 #[command(name = "remote-workspace")]
 #[command(about = "Remote workspace for Steer.")]
@@ -77,7 +79,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start the server
     let server = Server::builder()
-        .add_service(RemoteWorkspaceServiceServer::new(remote_workspace_service))
+        .add_service(
+            RemoteWorkspaceServiceServer::new(remote_workspace_service)
+                .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES)
+                .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES),
+        )
         .serve_with_shutdown(addr, async {
             rx.await.ok();
         });

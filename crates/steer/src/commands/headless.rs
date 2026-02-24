@@ -31,7 +31,6 @@ pub struct HeadlessCommand {
 #[async_trait]
 impl Command for HeadlessCommand {
     async fn execute(&self) -> Result<()> {
-
         let message = self.extract_message()?;
         let model_to_use = self.model.as_ref().unwrap_or(&self.global_model);
         let normalized_catalogs = self.normalize_catalog_paths();

@@ -6,6 +6,8 @@ pub mod runtime_server;
 #[cfg(test)]
 mod conversion_tests;
 
+pub const GRPC_MAX_MESSAGE_SIZE_BYTES: usize = 32 * 1024 * 1024;
+
 pub use steer_proto::{agent::v1 as agent, remote_workspace::v1 as remote_workspace};
 
 pub use agent as proto;

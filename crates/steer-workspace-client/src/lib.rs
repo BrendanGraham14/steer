@@ -23,6 +23,8 @@ use steer_workspace::{
     WorkspaceType, WriteFileRequest,
 };
 
+const GRPC_MAX_MESSAGE_SIZE_BYTES: usize = 32 * 1024 * 1024;
+
 fn convert_search_result(proto_result: steer_proto::common::v1::SearchResult) -> SearchResult {
     let matches = proto_result
         .matches
@@ -128,7 +130,9 @@ impl RemoteWorkspace {
         // Create gRPC client
         let client = RemoteWorkspaceServiceClient::connect(format!("http://{address}"))
             .await
-            .map_err(|e| WorkspaceError::Transport(format!("Failed to connect: {e}")))?;
+            .map_err(|e| WorkspaceError::Transport(format!("Failed to connect: {e}")))?
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES);
 
         let metadata = WorkspaceMetadata {
             id: format!("remote:{address}"),

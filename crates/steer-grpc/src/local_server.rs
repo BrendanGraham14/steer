@@ -1,3 +1,4 @@
+use crate::grpc::GRPC_MAX_MESSAGE_SIZE_BYTES;
 use crate::grpc::RuntimeAgentService;
 use crate::grpc::error::GrpcError;
 type Result<T> = std::result::Result<T, GrpcError>;
@@ -43,7 +44,9 @@ pub async fn create_local_channel(
         workspace_manager,
         repo_manager,
     });
-    let svc = AgentServiceServer::new(service);
+    let svc = AgentServiceServer::new(service)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES);
 
     let server_handle: tokio::task::JoinHandle<()> = tokio::spawn(async move {
         let addr: std::net::SocketAddr = match "127.0.0.1:0".parse() {

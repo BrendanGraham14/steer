@@ -1,3 +1,4 @@
+use crate::grpc::GRPC_MAX_MESSAGE_SIZE_BYTES;
 use crate::grpc::error::GrpcError;
 type Result<T> = std::result::Result<T, GrpcError>;
 use std::net::SocketAddr;
@@ -212,7 +213,11 @@ impl ServiceHost {
 
         let server_handle = tokio::spawn(async move {
             Server::builder()
-                .add_service(AgentServiceServer::new(service))
+                .add_service(
+                    AgentServiceServer::new(service)
+                        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES)
+                        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE_BYTES),
+                )
                 .serve_with_shutdown(addr, async {
                     shutdown_rx.await.ok();
                     info!("gRPC server shutdown signal received");

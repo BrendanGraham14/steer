@@ -23,7 +23,6 @@ pub struct CreateSessionCommand {
 #[async_trait]
 impl Command for CreateSessionCommand {
     async fn execute(&self) -> Result<()> {
-
         let mut local_grpc_setup = None;
         let client = if let Some(remote_addr) = &self.remote {
             let mut stdout = std::io::stdout();
