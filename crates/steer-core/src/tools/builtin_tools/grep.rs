@@ -34,11 +34,7 @@ impl BuiltinTool for GrepTool {
     ) -> Result<Self::Output, BuiltinToolError<GrepError>> {
         const GREP_TIMEOUT: Duration = Duration::from_secs(30);
 
-        let request = GrepRequest {
-            pattern: params.pattern,
-            include: params.include,
-            path: params.path,
-        };
+        let request = validate_and_build_request(params)?;
         let op_ctx =
             WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());
 
@@ -52,5 +48,56 @@ impl BuiltinTool for GrepTool {
                 }
             }
         }
+    }
+}
+
+fn validate_and_build_request(
+    params: GrepParams,
+) -> Result<GrepRequest, BuiltinToolError<GrepError>> {
+    if params.pattern.is_empty() {
+        return Err(BuiltinToolError::invalid_params(
+            "pattern must be a non-empty string",
+        ));
+    }
+
+    Ok(GrepRequest {
+        pattern: params.pattern,
+        include: params.include,
+        path: params.path,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_and_build_request;
+    use steer_tools::tools::grep::GrepParams;
+
+    #[test]
+    fn empty_pattern_is_rejected() {
+        let result = validate_and_build_request(GrepParams {
+            pattern: String::new(),
+            include: None,
+            path: None,
+        });
+
+        let error = result.expect_err("empty pattern should fail validation");
+        assert_eq!(
+            error.to_string(),
+            "Invalid parameters: pattern must be a non-empty string"
+        );
+    }
+
+    #[test]
+    fn non_empty_pattern_builds_request() {
+        let request = validate_and_build_request(GrepParams {
+            pattern: "needle".to_string(),
+            include: Some("*.rs".to_string()),
+            path: Some("src".to_string()),
+        })
+        .expect("non-empty pattern should pass validation");
+
+        assert_eq!(request.pattern, "needle");
+        assert_eq!(request.include.as_deref(), Some("*.rs"));
+        assert_eq!(request.path.as_deref(), Some("src"));
     }
 }
