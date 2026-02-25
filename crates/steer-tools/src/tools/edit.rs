@@ -23,16 +23,46 @@ impl ToolSpec for EditToolSpec {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Error)]
+#[serde(tag = "code", content = "details", rename_all = "snake_case")]
+pub enum EditFailure {
+    #[error("file not found: {file_path}")]
+    FileNotFound { file_path: String },
+
+    #[error(
+        "edit #{edit_index} has an empty old_string; use write_file to create or overwrite files"
+    )]
+    EmptyOldString { edit_index: usize },
+
+    #[error("string not found for edit #{edit_index} in file {file_path}")]
+    StringNotFound {
+        file_path: String,
+        edit_index: usize,
+    },
+
+    #[error(
+        "found {occurrences} matches for edit #{edit_index} in file {file_path}; old_string must match exactly once"
+    )]
+    NonUniqueMatch {
+        file_path: String,
+        edit_index: usize,
+        occurrences: usize,
+    },
+}
+
 #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone, Error)]
 #[serde(tag = "code", content = "details", rename_all = "snake_case")]
 pub enum EditError {
     #[error("{0}")]
     Workspace(WorkspaceOpError),
+
+    #[error("{0}")]
+    EditFailure(EditFailure),
 }
 
 #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone)]
 pub struct SingleEditOperation {
-    /// The exact string to find and replace.
+    /// The exact string to find and replace. Must be non-empty and match exactly one location.
     pub old_string: String,
     /// The string to replace `old_string` with.
     pub new_string: String,
@@ -42,7 +72,7 @@ pub struct SingleEditOperation {
 pub struct EditParams {
     /// The absolute path to the file to edit
     pub file_path: String,
-    /// The exact string to find and replace. If empty, the file will be created.
+    /// The exact string to find and replace. Must be non-empty.
     pub old_string: String,
     /// The string to replace `old_string` with.
     pub new_string: String,
@@ -50,8 +80,8 @@ pub struct EditParams {
 
 pub mod multi_edit {
     use super::{
-        Deserialize, Error, JsonSchema, MultiEditResult, Serialize, SingleEditOperation,
-        ToolExecutionError, ToolSpec, WorkspaceOpError,
+        Deserialize, EditFailure, Error, JsonSchema, MultiEditResult, Serialize,
+        SingleEditOperation, ToolExecutionError, ToolSpec, WorkspaceOpError,
     };
 
     pub const MULTI_EDIT_TOOL_NAME: &str = "multi_edit";
@@ -76,6 +106,9 @@ pub mod multi_edit {
     pub enum MultiEditError {
         #[error("{0}")]
         Workspace(WorkspaceOpError),
+
+        #[error("{0}")]
+        EditFailure(EditFailure),
     }
 
     #[derive(Deserialize, Serialize, Debug, JsonSchema)]

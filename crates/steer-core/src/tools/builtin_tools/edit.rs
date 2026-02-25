@@ -4,7 +4,7 @@ use crate::tools::capability::Capabilities;
 use async_trait::async_trait;
 use steer_tools::result::{EditResult, MultiEditResult};
 use steer_tools::tools::edit::multi_edit::{MultiEditError, MultiEditParams, MultiEditToolSpec};
-use steer_tools::tools::edit::{EditError, EditParams, EditToolSpec};
+use steer_tools::tools::edit::{EditError, EditFailure, EditParams, EditToolSpec};
 use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
 
 pub struct EditTool;
@@ -15,7 +15,7 @@ Before using this tool:
 
 1. Use the View tool to understand the file's contents and context
 
-2. Verify the directory path is correct (only applicable when creating new files):
+2. Verify the directory path is correct:
  - Use the LS tool to verify the parent directory exists and is the correct location
 
 To make a file edit, provide the following:
@@ -50,11 +50,9 @@ When making edits:
  - Ensure the edit results in idiomatic, correct code
  - Do not leave the code in a broken state
  - Always use absolute file paths (starting with /)
+ - old_string must be non-empty; empty old_string is rejected
 
-If you want to create a new file, use:
- - A new file path, including dir name if needed
- - An empty old_string
- - The new file's contents as new_string
+If you want to create a new file or overwrite an entire file, use the dedicated file-write tool instead.
 
 Remember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each.";
 
@@ -86,7 +84,7 @@ impl BuiltinTool for EditTool {
             .workspace
             .apply_edits(request, &op_ctx)
             .await
-            .map_err(|e| BuiltinToolError::execution(EditError::Workspace(workspace_op_error(e))))
+            .map_err(|e| BuiltinToolError::execution(map_workspace_edit_error(e)))
     }
 }
 
@@ -98,7 +96,7 @@ impl BuiltinTool for MultiEditTool {
     type Output = MultiEditResult;
     type Spec = MultiEditToolSpec;
 
-    const DESCRIPTION: &'static str = "This is a tool for making multiple edits to a single file in one operation. Prefer this tool over the edit_file tool when you need to make multiple edits to the same file.";
+    const DESCRIPTION: &'static str = "This is a tool for making multiple edits to a single file in one operation. Prefer this tool over the edit_file tool when you need to make multiple edits to the same file. Edits are applied sequentially in the provided order, and each old_string must match exactly one location against the latest file content after prior edits.";
     const REQUIRES_APPROVAL: bool = true;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;
 
@@ -125,9 +123,52 @@ impl BuiltinTool for MultiEditTool {
             .workspace
             .apply_edits(request, &op_ctx)
             .await
-            .map_err(|e| {
-                BuiltinToolError::execution(MultiEditError::Workspace(workspace_op_error(e)))
-            })?;
+            .map_err(|e| BuiltinToolError::execution(map_workspace_multi_edit_error(e)))?;
         Ok(MultiEditResult(result))
+    }
+}
+
+fn map_workspace_edit_error(err: steer_workspace::WorkspaceError) -> EditError {
+    match err {
+        steer_workspace::WorkspaceError::Edit(edit_failure) => {
+            EditError::EditFailure(map_edit_failure(edit_failure))
+        }
+        other => EditError::Workspace(workspace_op_error(other)),
+    }
+}
+
+fn map_workspace_multi_edit_error(err: steer_workspace::WorkspaceError) -> MultiEditError {
+    match err {
+        steer_workspace::WorkspaceError::Edit(edit_failure) => {
+            MultiEditError::EditFailure(map_edit_failure(edit_failure))
+        }
+        other => MultiEditError::Workspace(workspace_op_error(other)),
+    }
+}
+
+fn map_edit_failure(failure: steer_workspace::error::EditFailure) -> EditFailure {
+    match failure {
+        steer_workspace::error::EditFailure::FileNotFound { file_path } => {
+            EditFailure::FileNotFound { file_path }
+        }
+        steer_workspace::error::EditFailure::EmptyOldString { edit_index } => {
+            EditFailure::EmptyOldString { edit_index }
+        }
+        steer_workspace::error::EditFailure::StringNotFound {
+            file_path,
+            edit_index,
+        } => EditFailure::StringNotFound {
+            file_path,
+            edit_index,
+        },
+        steer_workspace::error::EditFailure::NonUniqueMatch {
+            file_path,
+            edit_index,
+            occurrences,
+        } => EditFailure::NonUniqueMatch {
+            file_path,
+            edit_index,
+            occurrences,
+        },
     }
 }

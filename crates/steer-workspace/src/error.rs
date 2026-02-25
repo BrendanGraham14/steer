@@ -2,12 +2,42 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "code", content = "details", rename_all = "snake_case")]
+pub enum EditFailure {
+    #[error("file not found: {file_path}")]
+    FileNotFound { file_path: String },
+
+    #[error(
+        "edit #{edit_index} has an empty old_string; use write_file to create or overwrite files"
+    )]
+    EmptyOldString { edit_index: usize },
+
+    #[error("string not found for edit #{edit_index} in file {file_path}")]
+    StringNotFound {
+        file_path: String,
+        edit_index: usize,
+    },
+
+    #[error(
+        "found {occurrences} matches for edit #{edit_index} in file {file_path}; old_string must match exactly once"
+    )]
+    NonUniqueMatch {
+        file_path: String,
+        edit_index: usize,
+        occurrences: usize,
+    },
+}
+
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum WorkspaceError {
     #[error("I/O error: {0}")]
     Io(String),
 
     #[error("Tool execution failed: {0}")]
     ToolExecution(String),
+
+    #[error("Edit failed: {0}")]
+    Edit(EditFailure),
 
     #[error("Transport error: {0}")]
     Transport(String),
@@ -112,5 +142,11 @@ impl From<tonic::Status> for WorkspaceError {
 impl From<std::io::Error> for WorkspaceError {
     fn from(err: std::io::Error) -> Self {
         WorkspaceError::Io(err.to_string())
+    }
+}
+
+impl From<EditFailure> for WorkspaceError {
+    fn from(err: EditFailure) -> Self {
+        WorkspaceError::Edit(err)
     }
 }

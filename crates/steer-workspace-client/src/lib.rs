@@ -397,6 +397,7 @@ impl Workspace for RemoteWorkspace {
             file_path: request.file_path,
             offset: request.offset,
             limit: request.limit,
+            raw: request.raw,
         });
         let response = client
             .read_file(request)

@@ -86,6 +86,7 @@ async fn test_write_and_read_file() {
         file_path: file_path.to_string_lossy().to_string(),
         offset: None,
         limit: None,
+        raw: None,
     });
     let read_response = service.read_file(read_req).await;
     assert!(read_response.is_ok());

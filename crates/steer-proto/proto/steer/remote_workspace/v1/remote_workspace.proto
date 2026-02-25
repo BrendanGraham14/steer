@@ -270,6 +270,7 @@ message ReadFileRequest {
   string file_path = 1;
   optional uint64 offset = 2;
   optional uint64 limit = 3;
+  optional bool raw = 4;
 }
 
 message ListDirectoryRequest {

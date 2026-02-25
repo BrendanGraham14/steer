@@ -417,6 +417,7 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
             file_path: req.file_path,
             offset: req.offset,
             limit: req.limit,
+            raw: req.raw,
         };
 
         let result = self

@@ -19,7 +19,8 @@ impl BuiltinTool for ViewTool {
         "Reads a file from the local filesystem. The file_path parameter must be an absolute path, not a relative path.\n",
         "By default, it reads up to 2000 lines starting from the beginning of the file. You can optionally specify a line offset and limit\n",
         "(especially handy for long files), but it's recommended to read the whole file by not providing these parameters.\n",
-        "Any lines longer than 2000 characters will be truncated."
+        "Any lines longer than 2000 characters will be truncated.\n",
+        "Set raw=true to return unnumbered, untrimmed content without truncation for exact copy/paste."
     );
     const REQUIRES_APPROVAL: bool = false;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;
@@ -33,6 +34,7 @@ impl BuiltinTool for ViewTool {
             file_path: params.file_path,
             offset: params.offset,
             limit: params.limit,
+            raw: params.raw,
         };
         let op_ctx =
             WorkspaceOpContext::new(ctx.tool_call_id.0.clone(), ctx.cancellation_token.clone());

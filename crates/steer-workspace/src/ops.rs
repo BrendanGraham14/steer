@@ -21,6 +21,7 @@ pub struct ReadFileRequest {
     pub file_path: String,
     pub offset: Option<u64>,
     pub limit: Option<u64>,
+    pub raw: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

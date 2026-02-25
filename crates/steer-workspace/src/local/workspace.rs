@@ -11,7 +11,7 @@ use tokio::task;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::error::{Result as WorkspaceResult, WorkspaceError};
+use crate::error::{EditFailure, Result as WorkspaceResult, WorkspaceError};
 use crate::ops::{
     ApplyEditsRequest, AstGrepRequest, GlobRequest, GrepRequest, ListDirectoryRequest,
     ReadFileRequest, WorkspaceOpContext, WriteFileRequest,
@@ -104,6 +104,7 @@ async fn view_file_internal(
     file_path: &Path,
     offset: Option<u64>,
     limit: Option<u64>,
+    raw: Option<bool>,
     cancellation_token: &CancellationToken,
 ) -> std::result::Result<FileContentResult, ViewError> {
     let mut file = tokio::fs::File::open(file_path)
@@ -124,6 +125,7 @@ async fn view_file_internal(
 
     let start_line = offset.unwrap_or(1).max(1) as usize;
     let line_limit = limit.map(|v| v.max(1) as usize);
+    let is_raw = raw.unwrap_or(false);
 
     let (content, total_lines, truncated) = if start_line > 1 || line_limit.is_some() {
         let mut reader = BufReader::new(file);
@@ -141,11 +143,15 @@ async fn view_file_internal(
                 Ok(0) => break,
                 Ok(_) => {
                     if current_line_num >= start_line {
-                        if line.len() > MAX_LINE_LENGTH {
-                            line.truncate(MAX_LINE_LENGTH);
-                            line.push_str("... [line truncated]");
+                        if is_raw {
+                            lines.push(line);
+                        } else {
+                            if line.len() > MAX_LINE_LENGTH {
+                                line.truncate(MAX_LINE_LENGTH);
+                                line.push_str("... [line truncated]");
+                            }
+                            lines.push(line.trim_end().to_string());
                         }
-                        lines.push(line.trim_end().to_string());
                         lines_read += 1;
                         if line_limit.is_some_and(|l| lines_read >= l) {
                             break;
@@ -159,13 +165,41 @@ async fn view_file_internal(
 
         let total_lines = lines.len();
         let truncated = line_limit.is_some_and(|l| lines_read >= l);
-        let numbered_lines: Vec<String> = lines
-            .into_iter()
-            .enumerate()
-            .map(|(i, line)| format!("{:5}\t{}", start_line + i, line))
-            .collect();
+        let content = if is_raw {
+            lines.concat()
+        } else {
+            let numbered_lines: Vec<String> = lines
+                .into_iter()
+                .enumerate()
+                .map(|(i, line)| format!("{:5}\t{}", start_line + i, line))
+                .collect();
+            numbered_lines.join("\n")
+        };
 
-        (numbered_lines.join("\n"), total_lines, truncated)
+        (content, total_lines, truncated)
+    } else if is_raw {
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 8192];
+
+        loop {
+            if cancellation_token.is_cancelled() {
+                return Err(ViewError::Cancelled);
+            }
+
+            let n = file
+                .read(&mut chunk)
+                .await
+                .map_err(|e| ViewError::Read { source: e })?;
+            if n == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..n]);
+        }
+
+        let content = String::from_utf8_lossy(&buffer).into_owned();
+        let total_lines = content.lines().count();
+
+        (content, total_lines, false)
     } else {
         let read_size = std::cmp::min(file_size as usize, MAX_READ_BYTES);
         let mut buffer = vec![0u8; read_size];
@@ -648,67 +682,38 @@ async fn perform_edit_operations(
     file_path: &Path,
     operations: &[crate::ops::EditOperation],
     token: Option<&CancellationToken>,
-) -> WorkspaceResult<(String, usize, bool)> {
+) -> WorkspaceResult<(String, usize)> {
     if token.is_some_and(|t| t.is_cancelled()) {
         return Err(WorkspaceError::ToolExecution(
             "Operation cancelled".to_string(),
         ));
     }
 
-    let mut current_content: String;
-    let mut file_created_this_op = false;
-
-    match tokio::fs::read_to_string(file_path).await {
-        Ok(content_from_file) => {
-            current_content = content_from_file;
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if operations.is_empty() {
-                return Err(WorkspaceError::ToolExecution(format!(
-                    "File {} does not exist and no operations provided to create it.",
-                    file_path.display()
-                )));
-            }
-            let first_op = &operations[0];
-            if first_op.old_string.is_empty() {
-                if let Some(parent) = file_path.parent()
-                    && !tokio::fs::metadata(parent)
-                        .await
-                        .map(|m| m.is_dir())
-                        .unwrap_or(false)
-                {
-                    if token.is_some_and(|t| t.is_cancelled()) {
-                        return Err(WorkspaceError::ToolExecution(
-                            "Operation cancelled".to_string(),
-                        ));
-                    }
-                    tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                        WorkspaceError::Io(format!(
-                            "Failed to create directory {}: {}",
-                            parent.display(),
-                            e
-                        ))
-                    })?;
-                }
-                current_content = first_op.new_string.clone();
-                file_created_this_op = true;
-            } else {
-                return Err(WorkspaceError::Io(format!(
-                    "File {} not found, and the first/only operation's old_string is not empty (required for creation).",
-                    file_path.display()
-                )));
-            }
-        }
-        Err(e) => {
-            return Err(WorkspaceError::Io(format!(
-                "Failed to read file {}: {e}",
-                file_path.display()
-            )));
+    for (index, edit_op) in operations.iter().enumerate() {
+        if edit_op.old_string.is_empty() {
+            return Err(WorkspaceError::Edit(EditFailure::EmptyOldString {
+                edit_index: index + 1,
+            }));
         }
     }
 
+    let mut current_content = tokio::fs::read_to_string(file_path)
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                WorkspaceError::Edit(EditFailure::FileNotFound {
+                    file_path: file_path.display().to_string(),
+                })
+            } else {
+                WorkspaceError::Io(format!(
+                    "Failed to read file {}: {error}",
+                    file_path.display()
+                ))
+            }
+        })?;
+
     if operations.is_empty() {
-        return Ok((current_content, 0, false));
+        return Ok((current_content, 0));
     }
 
     let mut edits_applied_count = 0usize;
@@ -719,48 +724,28 @@ async fn perform_edit_operations(
             ));
         }
 
-        if edit_op.old_string.is_empty() {
-            if index == 0 && file_created_this_op {
-                // creation step
-            } else if index == 0 && operations.len() == 1 {
-                current_content = edit_op.new_string.clone();
-                if !file_created_this_op {
-                    file_created_this_op = true;
-                }
-            } else {
-                return Err(WorkspaceError::ToolExecution(format!(
-                    "Edit #{} for file {} has an empty old_string. This is only allowed for the first operation if the file is being created or for a single operation to overwrite the file.",
-                    index + 1,
-                    file_path.display()
-                )));
-            }
-        } else {
-            let occurrences = current_content.matches(&edit_op.old_string).count();
-            if occurrences == 0 {
-                return Err(WorkspaceError::ToolExecution(format!(
-                    "For edit #{}, string not found in file {} (after {} previous successful edits). String to find (first 50 chars): '{}'",
-                    index + 1,
-                    file_path.display(),
-                    edits_applied_count,
-                    edit_op.old_string.chars().take(50).collect::<String>()
-                )));
-            }
-            if occurrences > 1 {
-                return Err(WorkspaceError::ToolExecution(format!(
-                    "For edit #{}, found {} occurrences of string in file {} (after {} previous successful edits). String to find (first 50 chars): '{}'. Please provide more context.",
-                    index + 1,
-                    occurrences,
-                    file_path.display(),
-                    edits_applied_count,
-                    edit_op.old_string.chars().take(50).collect::<String>()
-                )));
-            }
-            current_content = current_content.replace(&edit_op.old_string, &edit_op.new_string);
+        let edit_index = index + 1;
+        let occurrences = current_content.matches(&edit_op.old_string).count();
+        if occurrences == 0 {
+            return Err(WorkspaceError::Edit(EditFailure::StringNotFound {
+                file_path: file_path.display().to_string(),
+                edit_index,
+            }));
         }
+
+        if occurrences > 1 {
+            return Err(WorkspaceError::Edit(EditFailure::NonUniqueMatch {
+                file_path: file_path.display().to_string(),
+                edit_index,
+                occurrences,
+            }));
+        }
+
+        current_content = current_content.replacen(&edit_op.old_string, &edit_op.new_string, 1);
         edits_applied_count += 1;
     }
 
-    Ok((current_content, edits_applied_count, file_created_this_op))
+    Ok((current_content, edits_applied_count))
 }
 
 impl LocalWorkspace {
@@ -852,6 +837,7 @@ impl Workspace for LocalWorkspace {
             &abs_path,
             request.offset,
             request.limit,
+            request.raw,
             &ctx.cancellation_token,
         )
         .await
@@ -1003,11 +989,11 @@ impl Workspace for LocalWorkspace {
         let file_lock = get_file_lock(&abs_path_str).await;
         let _lock_guard = file_lock.lock().await;
 
-        let (final_content, num_ops, created_or_overwritten) =
+        let (final_content, num_ops) =
             perform_edit_operations(&abs_path, &request.edits, Some(&ctx.cancellation_token))
                 .await?;
 
-        if created_or_overwritten || num_ops > 0 {
+        if num_ops > 0 {
             if ctx.cancellation_token.is_cancelled() {
                 return Err(WorkspaceError::ToolExecution(
                     "Operation cancelled".to_string(),
@@ -1026,7 +1012,7 @@ impl Workspace for LocalWorkspace {
             Ok(EditResult {
                 file_path: abs_path_str,
                 changes_made: num_ops,
-                file_created: created_or_overwritten,
+                file_created: false,
                 old_content: None,
                 new_content: Some(final_content),
             })
@@ -1237,6 +1223,235 @@ mod tests {
             .unwrap();
 
         assert_eq!(workspace.working_directory(), temp_dir.path());
+    }
+
+    #[tokio::test]
+    async fn test_read_file_raw_offset_limit_preserves_exact_content() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "alpha  \nbeta\t \ngamma\n").unwrap();
+
+        let context = WorkspaceOpContext::new("test-read-file-raw", CancellationToken::new());
+        let raw_result = workspace
+            .read_file(
+                ReadFileRequest {
+                    file_path: file_path.to_string_lossy().to_string(),
+                    offset: Some(1),
+                    limit: Some(2),
+                    raw: Some(true),
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(raw_result.content, "alpha  \nbeta\t \n");
+        assert_eq!(raw_result.line_count, 2);
+        assert!(raw_result.truncated);
+        assert!(!raw_result.content.starts_with("    1\t"));
+
+        let formatted_result = workspace
+            .read_file(
+                ReadFileRequest {
+                    file_path: file_path.to_string_lossy().to_string(),
+                    offset: Some(1),
+                    limit: Some(2),
+                    raw: None,
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(formatted_result.content, "    1\talpha\n    2\tbeta");
+    }
+
+    #[tokio::test]
+    async fn test_read_file_raw_offset_limit_disables_line_truncation_marker() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let file_path = temp_dir.path().join("long-line.txt");
+        let long_line = "x".repeat(MAX_LINE_LENGTH + 20);
+        std::fs::write(&file_path, format!("{long_line}\nsecond\n")).unwrap();
+
+        let context = WorkspaceOpContext::new("test-read-file-marker", CancellationToken::new());
+
+        let formatted_result = workspace
+            .read_file(
+                ReadFileRequest {
+                    file_path: file_path.to_string_lossy().to_string(),
+                    offset: Some(1),
+                    limit: Some(1),
+                    raw: None,
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(formatted_result.content.contains("... [line truncated]"));
+
+        let raw_result = workspace
+            .read_file(
+                ReadFileRequest {
+                    file_path: file_path.to_string_lossy().to_string(),
+                    offset: Some(1),
+                    limit: Some(1),
+                    raw: Some(true),
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(raw_result.content, format!("{long_line}\n"));
+        assert!(!raw_result.content.contains("... [line truncated]"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_raw_full_file_disables_byte_limit_truncation() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+
+        let file_path = temp_dir.path().join("large.txt");
+        let file_content = "x".repeat(MAX_READ_BYTES + 128);
+        std::fs::write(&file_path, &file_content).unwrap();
+
+        let context = WorkspaceOpContext::new("test-read-file-raw-full", CancellationToken::new());
+
+        let default_result = workspace
+            .read_file(
+                ReadFileRequest {
+                    file_path: file_path.to_string_lossy().to_string(),
+                    offset: None,
+                    limit: None,
+                    raw: None,
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+        assert!(default_result.truncated);
+
+        let raw_result = workspace
+            .read_file(
+                ReadFileRequest {
+                    file_path: file_path.to_string_lossy().to_string(),
+                    offset: None,
+                    limit: None,
+                    raw: Some(true),
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+
+        assert!(!raw_result.truncated);
+        assert_eq!(raw_result.content, file_content);
+        assert_eq!(raw_result.line_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_rejects_empty_old_string_with_typed_error() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "hello world\n").unwrap();
+
+        let context = WorkspaceOpContext::new("test-edit-empty-old", CancellationToken::new());
+        let err = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: String::new(),
+                        new_string: "replacement".to_string(),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect_err("empty old_string should fail");
+
+        assert!(matches!(
+            err,
+            WorkspaceError::Edit(EditFailure::EmptyOldString { edit_index: 1 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_returns_typed_string_not_found_error() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "hello world\n").unwrap();
+
+        let context =
+            WorkspaceOpContext::new("test-edit-string-not-found", CancellationToken::new());
+        let err = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: "missing".to_string(),
+                        new_string: "replacement".to_string(),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect_err("missing string should fail");
+
+        assert!(matches!(
+            err,
+            WorkspaceError::Edit(EditFailure::StringNotFound { edit_index: 1, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_returns_typed_non_unique_match_error() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+        let context = WorkspaceOpContext::new("test-edit-non-unique", CancellationToken::new());
+        let err = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: "repeat".to_string(),
+                        new_string: "done".to_string(),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect_err("non-unique string should fail");
+
+        assert!(matches!(
+            err,
+            WorkspaceError::Edit(EditFailure::NonUniqueMatch {
+                edit_index: 1,
+                occurrences: 2,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]

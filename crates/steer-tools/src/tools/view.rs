@@ -38,4 +38,6 @@ pub struct ViewParams {
     pub offset: Option<u64>,
     /// The maximum number of lines to read
     pub limit: Option<u64>,
+    /// Return raw file bytes rendered as text without numbering/trimming/truncation
+    pub raw: Option<bool>,
 }
