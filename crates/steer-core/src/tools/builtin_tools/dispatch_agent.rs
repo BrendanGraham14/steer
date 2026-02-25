@@ -48,7 +48,7 @@ fn dispatch_agent_description() -> String {
 When to use this tool:
 - If you need to edit files for a focused task (a feature, bug fix, or refactor), dispatch a sub-agent with the task and all relevant context so your own context stays clean
 - If you are searching for a keyword like "config" or "logger", or for questions like "which file does X?", dispatch a sub-agent to search
-- If a task can be split into independent subtasks, dispatch multiple sub-agents concurrently
+- If a task can be split into independent subtasks, dispatch multiple sub-agents concurrently and give each sub-agent expected to edit files its own `workspace: {{ "location": "new" }}`
 
 When NOT to use this tool:
 - If you want to read a specific file path, use the {} or {} tool instead, to find the match more quickly
@@ -60,9 +60,10 @@ How to write an effective sub-agent prompt:
 1. Start with the goal and expected output format
 2. Include concrete context you've already gathered (file paths, symbol names, error messages, constraints, and acceptance criteria) so the sub-agent does not need to re-gather it
 3. Name exactly which files or directories to inspect first when known
-4. For paths inside the current repository/workspace, use workspace-relative paths (for example, `src/lib.rs`) instead of absolute paths
-5. State whether the sub-agent should only explore or is expected to edit/build/test
-6. Do NOT include synthetic path headers like `Repo: <path>` or `CWD: <path>`; working-directory context is injected automatically
+4. For paths inside the current repository/workspace, use workspace-relative paths (for example, `src/lib.rs`) and avoid absolute paths
+5. If the sub-agent will edit files, include explicit file scope + constraints and prefer `location: "new"` unless shared state in one workspace is explicitly required
+6. State whether the sub-agent should only explore or is expected to edit/build/test, and include validation commands when known
+7. Do NOT include synthetic path headers like `Repo: <path>` or `CWD: <path>`; working-directory context is injected automatically
 
 Example of a strong sub-agent prompt:
   "The login endpoint at `src/api/auth.rs:142` returns 401 for valid tokens because `validate_token` checks expiry with `>` instead of `>=`. Change the comparison to `>=` and verify the existing test in `tests/auth_test.rs` still passes."
@@ -71,10 +72,11 @@ Compare with a weak prompt that forces the sub-agent to rediscover context:
   "Fix the bug in auth"
 
 Usage:
-1. Launch multiple agents concurrently whenever possible; use a single message with multiple tool uses
-2. The result returned by the agent is not visible to the user. Summarize it for the user in a text message.
-3. Use `location: "new"` when dispatching multiple sub-agents that may edit overlapping files, to avoid conflicts.
-4. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
+1. Launch multiple agents concurrently whenever possible; use a single message with multiple tool uses.
+2. If a sub-agent is expected to edit files, prefer `workspace: {{ "location": "new" }}` for that sub-agent (especially in parallel), even when changes are expected to be non-overlapping.
+3. Use `workspace: {{ "location": "current" }}` for read-only subtasks or when you intentionally want agents to share one working tree.
+4. The result returned by the agent is not visible to the user. Summarize it for the user in a text message.
+5. IMPORTANT: Only some agent specs include write tools. Use a build agent if the task requires editing files.
 
 Reference:
 - Each invocation returns a session_id. Pass it back via `target: {{ "session": "resume", "session_id": "<uuid>" }}` to continue the conversation with the same agent.
