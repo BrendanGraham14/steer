@@ -7,6 +7,7 @@ use crate::tui::{
     theme::{Component, Theme},
     widgets::{
         ChatBlock, ChatListState, ChatRenderable, DynamicChatWidget, ScrollTarget, ViewMode,
+        VisibleRange,
     },
 };
 use ratatui::{
@@ -96,7 +97,7 @@ impl FlattenedItem {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum RowKind {
     Item { idx: usize },
     Gap,
@@ -110,9 +111,10 @@ struct RowMetrics {
     first_visible_line: usize, // line offset for partial rendering
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct Segment {
     kind: RowKind,
+    start_y: usize,
     height: usize,
 }
 
@@ -172,17 +174,40 @@ impl HeightCache {
 /// ChatViewport manages persistent widget state and efficient rendering
 pub struct ChatViewport {
     items: Vec<WidgetItem>, // persistent; each has HeightCache + Box<dyn ChatWidget>
+    segments: Vec<Segment>, // persistent segment index for viewport math
+    item_start_y: Vec<usize>, // top Y per item index
+    total_content_height: usize, // cached content height from segment index
     state: ChatListState,   // scroll offset, view_mode, etc.
     last_width: u16,        // for invalidation on resize
+    last_spacing: u16,      // for invalidation when theme spacing changes
+    last_rebuild_mode: ViewMode, // mode used for the last segment rebuild
     dirty: bool,            // set by caller when messages change
+}
+
+impl Default for ChatViewport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct RebuildContext<'a> {
+    theme: &'a Theme,
+    chat_store: &'a ChatStore,
+    editing_message_id: Option<&'a str>,
+    spacing: u16,
 }
 
 impl ChatViewport {
     pub fn new() -> Self {
         Self {
             items: Vec::new(),
+            segments: Vec::new(),
+            item_start_y: Vec::new(),
+            total_content_height: 0,
             state: ChatListState::new(),
             last_width: 0,
+            last_spacing: 0,
+            last_rebuild_mode: ViewMode::Compact,
             dirty: true,
         }
     }
@@ -212,16 +237,70 @@ impl ChatViewport {
         chat_store: &ChatStore,
         editing_message_id: Option<&str>,
     ) {
+        self.rebuild_with_context(
+            raw,
+            width,
+            mode,
+            RebuildContext {
+                theme,
+                chat_store,
+                editing_message_id,
+                spacing: theme.message_spacing(),
+            },
+        );
+    }
+
+    #[cfg(test)]
+    fn rebuild_for_test(
+        &mut self,
+        raw: &Vec<&ChatItem>,
+        width: u16,
+        mode: ViewMode,
+        theme: &Theme,
+        chat_store: &ChatStore,
+        editing_message_id: Option<&str>,
+        spacing: u16,
+    ) {
+        self.rebuild_with_context(
+            raw,
+            width,
+            mode,
+            RebuildContext {
+                theme,
+                chat_store,
+                editing_message_id,
+                spacing,
+            },
+        );
+    }
+
+    fn rebuild_with_context(
+        &mut self,
+        raw: &Vec<&ChatItem>,
+        width: u16,
+        mode: ViewMode,
+        context: RebuildContext<'_>,
+    ) {
+        let RebuildContext {
+            theme,
+            chat_store,
+            editing_message_id,
+            spacing,
+        } = context;
+
         // Check if we need to rebuild
         let width_changed = width != self.last_width;
-        let mode_changed = mode != self.state.view_mode;
+        let mode_changed = mode != self.last_rebuild_mode;
+        let spacing_changed = spacing != self.last_spacing;
 
-        if !self.dirty && !width_changed && !mode_changed {
+        if !self.dirty && !width_changed && !mode_changed && !spacing_changed {
             return;
         }
 
         // Update state
         self.last_width = width;
+        self.last_spacing = spacing;
+        self.last_rebuild_mode = mode;
         self.state.view_mode = mode;
 
         // Apply filtering based on active_message_id
@@ -292,7 +371,54 @@ impl ChatViewport {
         }
 
         self.items = new_items;
+        self.rebuild_segment_index(width, mode, spacing as usize, theme);
+        self.state.total_content_height = self.total_content_height;
+        self.state.visible_range = None;
         self.dirty = false;
+    }
+
+    fn rebuild_segment_index(&mut self, width: u16, mode: ViewMode, spacing: usize, theme: &Theme) {
+        self.segments.clear();
+        self.item_start_y.clear();
+        self.total_content_height = 0;
+
+        self.item_start_y.reserve(self.items.len());
+        self.segments.reserve(self.items.len().saturating_mul(2));
+
+        let mut cursor = 0usize;
+        let items_len = self.items.len();
+
+        for (idx, item) in self.items.iter_mut().enumerate() {
+            let height = item.cached_heights.get_height(mode).unwrap_or_else(|| {
+                let measured = item.widget.line_count(width, mode, theme);
+                item.cached_heights.set_height(mode, measured, width);
+                measured
+            });
+
+            self.item_start_y.push(cursor);
+            self.segments.push(Segment {
+                kind: RowKind::Item { idx },
+                start_y: cursor,
+                height,
+            });
+            cursor = cursor.saturating_add(height);
+
+            if idx + 1 < items_len && item.item.is_message() && spacing > 0 {
+                self.segments.push(Segment {
+                    kind: RowKind::Gap,
+                    start_y: cursor,
+                    height: spacing,
+                });
+                cursor = cursor.saturating_add(spacing);
+            }
+        }
+
+        self.total_content_height = cursor;
+    }
+
+    fn first_visible_segment_index(&self, offset: usize) -> usize {
+        self.segments
+            .partition_point(|segment| segment.start_y.saturating_add(segment.height) <= offset)
     }
 
     /// Flatten raw ChatItems into 1:1 widget items
@@ -412,53 +538,19 @@ impl ChatViewport {
     }
 
     /// Measure visible rows and update scroll state
-    fn measure_visible_rows(&mut self, area: Rect, theme: &Theme) -> Vec<RowMetrics> {
-        if self.items.is_empty() {
+    fn measure_visible_rows(&mut self, area: Rect) -> Vec<RowMetrics> {
+        if self.items.is_empty() || self.segments.is_empty() {
+            self.state.visible_range = None;
+            self.state.total_content_height = self.total_content_height;
+            self.state.last_viewport_height = area.height;
             return Vec::new();
         }
 
-        let spacing = theme.message_spacing() as usize;
-        let mut total_height: usize = 0;
-        let mut item_top_positions = Vec::with_capacity(self.items.len());
-        let items_len = self.items.len();
-        let mut segments: Vec<Segment> = Vec::with_capacity(items_len.saturating_mul(2));
-
-        // Calculate total height and build segments
-        for (idx, item) in self.items.iter_mut().enumerate() {
-            let h = item
-                .cached_heights
-                .get_height(self.state.view_mode)
-                .unwrap_or_else(|| {
-                    let height = item
-                        .widget
-                        .lines(area.width, self.state.view_mode, theme)
-                        .len();
-                    item.cached_heights
-                        .set_height(self.state.view_mode, height, area.width);
-                    height
-                });
-
-            item_top_positions.push(total_height);
-            segments.push(Segment {
-                kind: RowKind::Item { idx },
-                height: h,
-            });
-            total_height = total_height.saturating_add(h);
-
-            if idx + 1 < items_len && item.item.is_message() && spacing > 0 {
-                segments.push(Segment {
-                    kind: RowKind::Gap,
-                    height: spacing,
-                });
-                total_height = total_height.saturating_add(spacing);
-            }
-        }
-
-        // Update scroll state
-        self.state.total_content_height = total_height;
+        self.state.total_content_height = self.total_content_height;
         self.state.last_viewport_height = area.height;
+
         let viewport_height = area.height as usize;
-        let max_offset = total_height.saturating_sub(viewport_height);
+        let max_offset = self.total_content_height.saturating_sub(viewport_height);
 
         if let Some(target) = self.state.take_scroll_target() {
             match target {
@@ -467,7 +559,7 @@ impl ChatViewport {
                     self.state.user_scrolled = false;
                 }
                 ScrollTarget::Item(target_idx) => {
-                    if let Some(&item_y) = item_top_positions.get(target_idx) {
+                    if let Some(&item_y) = self.item_start_y.get(target_idx) {
                         let half_viewport = viewport_height / 2;
                         self.state.offset = item_y.saturating_sub(half_viewport);
                     }
@@ -477,39 +569,78 @@ impl ChatViewport {
 
         self.state.offset = self.state.offset.min(max_offset);
 
-        // Build RowMetrics for visible segments
-        let mut rows = Vec::new();
-        let mut cumulative_y: usize = 0;
         let viewport_bottom = self.state.offset.saturating_add(viewport_height);
+        if viewport_height == 0 || self.state.offset >= viewport_bottom {
+            self.state.visible_range = None;
+            return Vec::new();
+        }
 
-        for segment in segments {
-            let segment_bottom = cumulative_y.saturating_add(segment.height);
+        let first_segment_idx = self.first_visible_segment_index(self.state.offset);
+        if first_segment_idx >= self.segments.len() {
+            self.state.visible_range = None;
+            return Vec::new();
+        }
 
-            if segment_bottom > self.state.offset && cumulative_y < viewport_bottom {
-                let (render_h, first_visible_line) = if cumulative_y < self.state.offset {
-                    let first_line = self.state.offset - cumulative_y;
-                    let visible_height = segment.height.saturating_sub(first_line);
-                    (visible_height.min(viewport_height), first_line)
-                } else if segment_bottom > viewport_bottom {
-                    let visible_height = viewport_bottom.saturating_sub(cumulative_y);
-                    (visible_height, 0)
-                } else {
-                    (segment.height, 0)
-                };
+        let mut rows = Vec::new();
+        let mut first_item_index: Option<usize> = None;
+        let mut last_item_index: Option<usize> = None;
+        let mut first_item_y: Option<u16> = None;
+        let mut last_item_y: Option<u16> = None;
 
-                rows.push(RowMetrics {
-                    kind: segment.kind,
-                    render_h,
-                    first_visible_line,
-                });
-            }
+        let clamp_to_u16 = |value: usize| value.min(u16::MAX as usize) as u16;
 
-            cumulative_y = segment_bottom;
-
-            if cumulative_y > viewport_bottom {
+        for segment in self.segments[first_segment_idx..].iter().copied() {
+            if segment.start_y >= viewport_bottom {
                 break;
             }
+
+            let segment_bottom = segment.start_y.saturating_add(segment.height);
+            if segment_bottom <= self.state.offset {
+                continue;
+            }
+
+            let first_visible_line = self.state.offset.saturating_sub(segment.start_y);
+            let render_end = segment_bottom.min(viewport_bottom);
+            let render_h = render_end.saturating_sub(segment.start_y + first_visible_line);
+            if render_h == 0 {
+                continue;
+            }
+
+            if let RowKind::Item { idx } = segment.kind {
+                if first_item_index.is_none() {
+                    first_item_index = Some(idx);
+                    first_item_y = Some(clamp_to_u16(
+                        segment.start_y.saturating_sub(self.state.offset),
+                    ));
+                }
+                last_item_index = Some(idx);
+                let last_y = segment
+                    .start_y
+                    .saturating_add(render_h)
+                    .saturating_sub(1)
+                    .saturating_sub(self.state.offset);
+                last_item_y = Some(clamp_to_u16(last_y));
+            }
+
+            rows.push(RowMetrics {
+                kind: segment.kind,
+                render_h,
+                first_visible_line,
+            });
         }
+
+        self.state.visible_range =
+            match (first_item_index, last_item_index, first_item_y, last_item_y) {
+                (Some(first_index), Some(last_index), Some(first_y), Some(last_y)) => {
+                    Some(VisibleRange {
+                        first_index,
+                        last_index,
+                        first_y,
+                        last_y,
+                    })
+                }
+                _ => None,
+            };
 
         rows
     }
@@ -568,7 +699,7 @@ impl ChatViewport {
         }
 
         // Measure visible rows and update scroll state
-        let rows = self.measure_visible_rows(area, theme);
+        let rows = self.measure_visible_rows(area);
         if rows.is_empty() {
             return;
         }
@@ -593,15 +724,17 @@ impl ChatViewport {
                     RowKind::Item { idx } => {
                         let widget_item = &mut self.items[idx];
 
-                        let lines =
-                            widget_item
-                                .widget
-                                .lines(rect.width, self.state.view_mode, theme);
-
                         let start = row.first_visible_line;
-                        let end = (start + row.render_h).min(lines.len());
+                        let end = start.saturating_add(row.render_h);
+                        let lines = widget_item.widget.line_slice(
+                            rect.width,
+                            self.state.view_mode,
+                            theme,
+                            start,
+                            end,
+                        );
                         let buf = f.buffer_mut();
-                        for (row_idx, line) in lines[start..end].iter().enumerate() {
+                        for (row_idx, line) in lines.iter().enumerate() {
                             let y = rect.y + row_idx as u16;
                             buf.set_line(rect.x, y, line, rect.width);
                         }
@@ -927,6 +1060,7 @@ fn is_visible(item: &ChatItem, visible_messages: &HashSet<String>, chat_store: &
 mod tests {
     use super::*;
     use crate::tui::model::NoticeLevel;
+    use crate::tui::state::chat_store::ChatStore;
     use ratatui::{Terminal, backend::TestBackend};
     use std::time::SystemTime;
     use steer_grpc::client_api::{AssistantContent, Message, MessageData, UserContent};
@@ -1090,7 +1224,7 @@ mod tests {
                 );
 
                 // Measure visible rows
-                let _rows = viewport.measure_visible_rows(area, &theme);
+                let _rows = viewport.measure_visible_rows(area);
                 let total_height = viewport.state.total_content_height;
                 println!("Total content height: {}, viewport height: {}", total_height, area.height);
 
@@ -1183,7 +1317,7 @@ mod tests {
                 None,
             );
 
-            let _rows = viewport.measure_visible_rows(area, &theme);
+            let _rows = viewport.measure_visible_rows(area);
             let total_height = viewport.state.total_content_height;
             println!("Total content height: {}, viewport height: {}", total_height, area.height);
 
@@ -1264,7 +1398,7 @@ mod tests {
         viewport.state.offset = 0;
 
         // Measure visible rows
-        let rows = viewport.measure_visible_rows(area, &theme);
+        let rows = viewport.measure_visible_rows(area);
 
         // Should see all messages if they fit
         assert!(!rows.is_empty(), "Should have visible rows");
@@ -1329,7 +1463,7 @@ mod tests {
         viewport.state.offset = 5;
 
         // Measure visible rows
-        let rows = viewport.measure_visible_rows(area, &theme);
+        let rows = viewport.measure_visible_rows(area);
 
         assert!(!rows.is_empty(), "Should have visible rows");
         match rows[0].kind {
@@ -1373,24 +1507,25 @@ mod tests {
                 let area = f.area();
 
                 let chat_store = create_test_chat_store();
-                viewport.rebuild(
+                viewport.rebuild_for_test(
                     &messages.iter().collect(),
                     area.width,
                     ViewMode::Compact,
                     &theme,
                     &chat_store,
                     None,
+                    2,
                 );
 
-                let _rows = viewport.measure_visible_rows(area, &theme);
+                let _rows = viewport.measure_visible_rows(area);
                 let first_height = viewport.items[0]
                     .cached_heights
                     .get_height(ViewMode::Compact)
                     .unwrap_or(0);
                 assert!(first_height > 0, "First message should have height");
 
-                // Offset to the spacing row immediately after the first item.
-                viewport.state.offset = first_height;
+                // Offset into the spacing segment so we render one gap row and one content row.
+                viewport.state.offset = first_height.saturating_add(1);
 
                 viewport.render(f, area, 0, None, &theme);
             })
@@ -1427,23 +1562,24 @@ mod tests {
         let area = Rect::new(0, 0, 80, 3);
         let chat_store = create_test_chat_store();
 
-        viewport.rebuild(
+        viewport.rebuild_for_test(
             &messages.iter().collect(),
             area.width,
             ViewMode::Compact,
             &theme,
             &chat_store,
             None,
+            2,
         );
 
-        let _rows = viewport.measure_visible_rows(area, &theme);
+        let _rows = viewport.measure_visible_rows(area);
         let first_height = viewport.items[0]
             .cached_heights
             .get_height(ViewMode::Compact)
             .unwrap_or(0);
 
         viewport.state.offset = first_height;
-        let rows = viewport.measure_visible_rows(area, &theme);
+        let rows = viewport.measure_visible_rows(area);
 
         assert!(
             rows.iter().any(|row| matches!(row.kind, RowKind::Gap)),
@@ -1464,16 +1600,17 @@ mod tests {
         let area = Rect::new(0, 0, 80, 10);
         let chat_store = create_test_chat_store();
 
-        viewport.rebuild(
+        viewport.rebuild_for_test(
             &messages.iter().collect(),
             area.width,
             ViewMode::Compact,
             &theme,
             &chat_store,
             None,
+            2,
         );
 
-        let _rows = viewport.measure_visible_rows(area, &theme);
+        let _rows = viewport.measure_visible_rows(area);
         let h1 = viewport.items[0]
             .cached_heights
             .get_height(ViewMode::Compact)
@@ -1482,12 +1619,87 @@ mod tests {
             .cached_heights
             .get_height(ViewMode::Compact)
             .unwrap_or(0);
-        let spacing = theme.message_spacing() as usize;
+        let spacing = 2usize;
 
         assert_eq!(
             viewport.state.total_content_height,
             h1.saturating_add(spacing).saturating_add(h2),
             "Total height should include spacing between message rows"
+        );
+    }
+
+    #[test]
+    fn test_toggle_view_mode_rebuilds_heights_for_mode_specific_widgets() {
+        let mut viewport = ChatViewport::new();
+        let theme = Theme::default();
+        let chat_store = create_test_chat_store();
+        let area = Rect::new(0, 0, 80, 10);
+
+        let items = vec![ChatItem {
+            parent_chat_item_id: None,
+            data: ChatItemData::PendingToolCall {
+                id: "pending_edit".to_string(),
+                tool_call: ToolCall {
+                    id: "call_edit".to_string(),
+                    name: "edit".to_string(),
+                    parameters: serde_json::json!({
+                        "file_path": "/tmp/test.rs",
+                        "old_string": "fn old_name() {\n    println!(\"before\");\n}",
+                        "new_string": "fn new_name() {\n    println!(\"after\");\n    println!(\"extra\");\n}",
+                    }),
+                },
+                ts: time::OffsetDateTime::now_utc(),
+            },
+        }];
+        let raw = items.iter().collect::<Vec<_>>();
+
+        viewport.rebuild(
+            &raw,
+            area.width,
+            ViewMode::Compact,
+            &theme,
+            &chat_store,
+            None,
+        );
+        let compact_height = viewport.state.total_content_height;
+
+        let mut expected = ChatViewport::new();
+        expected.rebuild(
+            &raw,
+            area.width,
+            ViewMode::Detailed,
+            &theme,
+            &chat_store,
+            None,
+        );
+        let detailed_height = expected.state.total_content_height;
+        assert_ne!(
+            compact_height, detailed_height,
+            "Test setup requires compact and detailed heights to differ"
+        );
+
+        viewport.state_mut().toggle_view_mode();
+        viewport.state_mut().scroll_to_bottom();
+        let mode_after_toggle = viewport.state().view_mode;
+        viewport.rebuild(
+            &raw,
+            area.width,
+            mode_after_toggle,
+            &theme,
+            &chat_store,
+            None,
+        );
+
+        assert_eq!(
+            viewport.state.total_content_height, detailed_height,
+            "Toggling view mode should rebuild item heights for the new mode"
+        );
+        assert!(
+            viewport.items[0]
+                .cached_heights
+                .get_height(ViewMode::Detailed)
+                .is_some(),
+            "Detailed height cache should be populated after toggling modes"
         );
     }
 
@@ -1517,19 +1729,136 @@ mod tests {
             None,
         );
 
-        let _rows = viewport.measure_visible_rows(area, &theme);
+        let _rows = viewport.measure_visible_rows(area);
         let max_offset = viewport
             .state
             .total_content_height
             .saturating_sub(area.height as usize);
 
         viewport.state.scroll_to_item(usize::MAX);
-        let _rows = viewport.measure_visible_rows(area, &theme);
+        let _rows = viewport.measure_visible_rows(area);
 
         assert!(
             viewport.state.offset <= max_offset,
             "Offset should stay clamped even for invalid item targets"
         );
+    }
+
+    #[test]
+    fn test_visible_range_tracks_item_rows_only() {
+        let mut viewport = ChatViewport::new();
+        let theme = Theme::default();
+
+        let messages = vec![
+            create_assistant_message("First", "msg1"),
+            create_assistant_message("Second", "msg2"),
+            create_assistant_message("Third", "msg3"),
+        ];
+
+        let area = Rect::new(0, 0, 80, 3);
+        let chat_store = create_test_chat_store();
+
+        viewport.rebuild(
+            &messages.iter().collect(),
+            area.width,
+            ViewMode::Compact,
+            &theme,
+            &chat_store,
+            None,
+        );
+
+        // Offset into the first gap row so the first visible content row is item 1.
+        viewport.state.offset = 1;
+        let rows = viewport.measure_visible_rows(area);
+        assert!(!rows.is_empty(), "Expected visible rows");
+
+        let visible = viewport
+            .state
+            .visible_range
+            .clone()
+            .expect("visible range should be populated");
+        assert_eq!(visible.first_index, 1);
+        assert_eq!(visible.last_index, 1);
+        assert_eq!(visible.first_y, 1);
+        assert_eq!(visible.last_y, 1);
+    }
+
+    #[test]
+    fn test_measure_visible_rows_jumps_to_first_visible_segment() {
+        let mut viewport = ChatViewport::new();
+        let theme = Theme::default();
+
+        let large_content = (0..200)
+            .map(|i| format!("Large line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let messages = vec![
+            create_assistant_message(&large_content, "msg1"),
+            create_assistant_message("Second message", "msg2"),
+            create_assistant_message("Third message", "msg3"),
+        ];
+
+        let area = Rect::new(0, 0, 80, 2);
+        let chat_store = create_test_chat_store();
+
+        viewport.rebuild(
+            &messages.iter().collect(),
+            area.width,
+            ViewMode::Compact,
+            &theme,
+            &chat_store,
+            None,
+        );
+
+        let _rows = viewport.measure_visible_rows(area);
+        let first_height = viewport.items[0]
+            .cached_heights
+            .get_height(ViewMode::Compact)
+            .expect("first item should have cached height");
+
+        // Start exactly at the second item boundary.
+        viewport.state.offset = first_height.saturating_add(1);
+        let rows = viewport.measure_visible_rows(area);
+        let first_item = rows.iter().find_map(|row| match row.kind {
+            RowKind::Item { idx } => Some(idx),
+            RowKind::Gap => None,
+        });
+
+        assert_eq!(first_item, Some(1));
+    }
+
+    #[test]
+    fn test_scroll_to_item_centers_using_indexed_start_positions() {
+        let mut viewport = ChatViewport::new();
+        let theme = Theme::default();
+
+        let messages = vec![
+            create_assistant_message("First", "msg1"),
+            create_assistant_message("Second", "msg2"),
+            create_assistant_message("Third", "msg3"),
+        ];
+
+        let area = Rect::new(0, 0, 80, 4);
+        let chat_store = create_test_chat_store();
+
+        viewport.rebuild_for_test(
+            &messages.iter().collect(),
+            area.width,
+            ViewMode::Compact,
+            &theme,
+            &chat_store,
+            None,
+            2,
+        );
+
+        let _rows = viewport.measure_visible_rows(area);
+        let expected = viewport.item_start_y[1].saturating_sub((area.height as usize) / 2);
+
+        viewport.state.scroll_to_item(1);
+        let _rows = viewport.measure_visible_rows(area);
+
+        assert_eq!(viewport.state.offset, expected);
     }
 
     #[test]
