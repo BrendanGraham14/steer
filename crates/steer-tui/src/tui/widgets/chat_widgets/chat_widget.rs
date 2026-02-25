@@ -13,6 +13,26 @@ use steer_grpc::client_api::{AssistantContent, Message, MessageData, ToolCall, T
 pub trait ChatRenderable: Send + Sync {
     /// Return formatted lines; cache internally on `(width, mode)`.
     fn lines(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> &[Line<'static>];
+
+    /// Return the number of rendered lines for this widget.
+    fn line_count(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> usize {
+        self.lines(width, mode, theme).len()
+    }
+
+    /// Return a bounded slice of rendered lines.
+    fn line_slice(
+        &mut self,
+        width: u16,
+        mode: ViewMode,
+        theme: &Theme,
+        start: usize,
+        end: usize,
+    ) -> &[Line<'static>] {
+        let lines = self.lines(width, mode, theme);
+        let bounded_start = start.min(lines.len());
+        let bounded_end = end.min(lines.len()).max(bounded_start);
+        &lines[bounded_start..bounded_end]
+    }
 }
 
 /// Height cache for efficient scrolling

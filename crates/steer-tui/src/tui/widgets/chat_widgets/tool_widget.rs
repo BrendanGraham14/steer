@@ -3,10 +3,11 @@
 //! This module provides widget implementations that wrap the existing
 //! formatters to render tool calls and results within bounded areas.
 
+use crate::tui::theme::Theme;
 use crate::tui::widgets::chat_list_state::ViewMode;
 use crate::tui::widgets::chat_widgets::chat_widget::ChatRenderable;
 use crate::tui::widgets::formatters;
-use crate::tui::{theme::Theme, widgets::chat_widgets::chat_widget::HeightCache};
+
 use ratatui::text::Line;
 use steer_tools::{ToolCall, ToolResult};
 
@@ -14,9 +15,20 @@ use steer_tools::{ToolCall, ToolResult};
 pub struct ToolWidget {
     tool_call: ToolCall,
     result: Option<ToolResult>,
-    cache: HeightCache,
-    rendered_compact_lines: Option<Vec<Line<'static>>>,
-    rendered_detailed_lines: Option<Vec<Line<'static>>>,
+    compact_cache: RenderCache,
+    detailed_cache: RenderCache,
+}
+
+#[derive(Default)]
+struct RenderCache {
+    key: Option<RenderKey>,
+    lines: Option<Vec<Line<'static>>>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RenderKey {
+    width: u16,
+    theme_name: String,
 }
 
 impl ToolWidget {
@@ -24,98 +36,104 @@ impl ToolWidget {
         Self {
             tool_call,
             result,
-            cache: HeightCache::new(),
-            rendered_compact_lines: None,
-            rendered_detailed_lines: None,
+            compact_cache: RenderCache::default(),
+            detailed_cache: RenderCache::default(),
         }
+    }
+
+    fn render_lines(&self, width: u16, mode: ViewMode, theme: &Theme) -> Vec<Line<'static>> {
+        let formatter = formatters::get_formatter(&self.tool_call.name);
+        let wrap_width = width.saturating_sub(2) as usize;
+
+        let mut lines = match mode {
+            ViewMode::Compact => {
+                formatter.compact(&self.tool_call.parameters, &self.result, wrap_width, theme)
+            }
+            ViewMode::Detailed => {
+                formatter.detailed(&self.tool_call.parameters, &self.result, wrap_width, theme)
+            }
+        };
+
+        Self::prepend_header(&mut lines, &self.tool_call.name, theme);
+        lines
+    }
+
+    fn prepend_header(lines: &mut Vec<Line<'static>>, tool_name: &str, theme: &Theme) {
+        let header = format!("{tool_name} ");
+        if lines.is_empty() {
+            lines.push(Line::from(ratatui::text::Span::styled(
+                header,
+                theme.style(crate::tui::theme::Component::ToolCallHeader),
+            )));
+            return;
+        }
+
+        let mut first_spans = Vec::new();
+        first_spans.push(ratatui::text::Span::styled(
+            header,
+            theme.style(crate::tui::theme::Component::ToolCallHeader),
+        ));
+        first_spans.extend(lines[0].spans.clone());
+        lines[0] = Line::from(first_spans);
     }
 }
 
 impl ChatRenderable for ToolWidget {
     fn lines(&mut self, width: u16, mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
-        if self.rendered_compact_lines.is_some()
-            && self.rendered_detailed_lines.is_some()
-            && self.cache.last_width == width
-        {
-            return match mode {
-                ViewMode::Compact => self.rendered_compact_lines.as_deref().unwrap_or(&[]),
-                ViewMode::Detailed => self.rendered_detailed_lines.as_deref().unwrap_or(&[]),
+        let key = RenderKey {
+            width,
+            theme_name: theme.name.clone(),
+        };
+
+        let needs_render = {
+            let cache = match mode {
+                ViewMode::Compact => &self.compact_cache,
+                ViewMode::Detailed => &self.detailed_cache,
             };
+            cache.key.as_ref() != Some(&key) || cache.lines.is_none()
+        };
+
+        if needs_render {
+            let rendered = self.render_lines(width, mode, theme);
+            let cache = match mode {
+                ViewMode::Compact => &mut self.compact_cache,
+                ViewMode::Detailed => &mut self.detailed_cache,
+            };
+            cache.lines = Some(rendered);
+            cache.key = Some(key);
         }
 
-        let formatter = formatters::get_formatter(&self.tool_call.name);
-        let wrap_width = width.saturating_sub(2) as usize;
-
-        // Render both modes
-        let mut compact_lines =
-            formatter.compact(&self.tool_call.parameters, &self.result, wrap_width, theme);
-        let mut detailed_lines =
-            formatter.detailed(&self.tool_call.parameters, &self.result, wrap_width, theme);
-
-        // Add tool name header to the first line
-        let header = format!("{} ", self.tool_call.name);
-        if compact_lines.is_empty() {
-            compact_lines.push(Line::from(ratatui::text::Span::styled(
-                header.clone(),
-                theme.style(crate::tui::theme::Component::ToolCallHeader),
-            )));
-        } else {
-            // Prepend header to first line
-            let mut first_spans = Vec::new();
-            first_spans.push(ratatui::text::Span::styled(
-                header.clone(),
-                theme.style(crate::tui::theme::Component::ToolCallHeader),
-            ));
-            first_spans.extend(compact_lines[0].spans.clone());
-            compact_lines[0] = Line::from(first_spans);
-        }
-
-        // Do the same for detailed view
-        if detailed_lines.is_empty() {
-            detailed_lines.push(Line::from(ratatui::text::Span::styled(
-                header,
-                theme.style(crate::tui::theme::Component::ToolCallHeader),
-            )));
-        } else {
-            let mut first_spans = Vec::new();
-            first_spans.push(ratatui::text::Span::styled(
-                header,
-                theme.style(crate::tui::theme::Component::ToolCallHeader),
-            ));
-            first_spans.extend(detailed_lines[0].spans.clone());
-            detailed_lines[0] = Line::from(first_spans);
-        }
-
-        self.rendered_compact_lines = Some(compact_lines);
-        self.rendered_detailed_lines = Some(detailed_lines);
-
-        match mode {
-            ViewMode::Compact => self.rendered_compact_lines.as_deref().unwrap_or(&[]),
-            ViewMode::Detailed => self.rendered_detailed_lines.as_deref().unwrap_or(&[]),
-        }
+        let cache = match mode {
+            ViewMode::Compact => &self.compact_cache,
+            ViewMode::Detailed => &self.detailed_cache,
+        };
+        cache.lines.as_deref().unwrap_or(&[])
     }
 }
 
 /// Widget for pending tool calls (no result yet, with header)
 pub struct PendingToolCallWidget {
     tool_call: ToolCall,
-    cache: HeightCache,
-    rendered_lines: Option<Vec<Line<'static>>>,
+    cache: RenderCache,
 }
 
 impl PendingToolCallWidget {
     pub fn new(tool_call: ToolCall) -> Self {
         Self {
             tool_call,
-            cache: HeightCache::new(),
-            rendered_lines: None,
+            cache: RenderCache::default(),
         }
     }
 }
 
 impl ChatRenderable for PendingToolCallWidget {
     fn lines(&mut self, width: u16, _mode: ViewMode, theme: &Theme) -> &[Line<'static>] {
-        if self.rendered_lines.is_none() || self.cache.last_width != width {
+        let key = RenderKey {
+            width,
+            theme_name: theme.name.clone(),
+        };
+
+        if self.cache.key.as_ref() != Some(&key) {
             let formatter = formatters::get_formatter(&self.tool_call.name);
             let wrap_width = width.saturating_sub(2) as usize; // Account for indent inside RowWidget
 
@@ -138,9 +156,11 @@ impl ChatRenderable for PendingToolCallWidget {
                 first_spans.extend(lines[0].spans.clone());
                 lines[0] = Line::from(first_spans);
             }
-            self.rendered_lines = Some(lines);
+            self.cache.lines = Some(lines);
+            self.cache.key = Some(key);
         }
-        self.rendered_lines.as_deref().unwrap_or(&[])
+
+        self.cache.lines.as_deref().unwrap_or(&[])
     }
 }
 
@@ -169,16 +189,75 @@ mod tests {
         let mut widget = ToolWidget::new(tool_call, None);
 
         // Test height calculation
-        let height = widget.lines(80, ViewMode::Compact, &theme).len();
+        let height = widget.line_count(80, ViewMode::Compact, &theme);
         assert!(height > 0);
 
         // Test cache
-        let height2 = widget.lines(80, ViewMode::Compact, &theme).len();
+        let height2 = widget.line_count(80, ViewMode::Compact, &theme);
         assert_eq!(height, height2);
 
         // Test different mode
-        let detailed_height = widget.lines(80, ViewMode::Detailed, &theme).len();
+        let detailed_height = widget.line_count(80, ViewMode::Detailed, &theme);
         assert!(detailed_height >= height); // Detailed should be at least as tall
+    }
+
+    #[test]
+    fn test_tool_widget_only_renders_requested_mode() {
+        let theme = Theme::default();
+        let tool_call = ToolCall {
+            id: "test-id".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({ "command": "echo hi" }),
+        };
+
+        let mut widget = ToolWidget::new(tool_call, None);
+
+        assert!(widget.compact_cache.lines.is_none());
+        assert!(widget.detailed_cache.lines.is_none());
+
+        let _ = widget.lines(80, ViewMode::Compact, &theme);
+        assert!(widget.compact_cache.lines.is_some());
+        assert!(widget.detailed_cache.lines.is_none());
+
+        let _ = widget.lines(80, ViewMode::Detailed, &theme);
+        assert!(widget.detailed_cache.lines.is_some());
+    }
+
+    #[test]
+    fn test_tool_widget_invalidates_cache_on_theme_change() {
+        let mut dark = Theme::default();
+        dark.name = "dark".to_string();
+
+        let mut light = Theme::default();
+        light.name = "light".to_string();
+
+        let tool_call = ToolCall {
+            id: "test-id".to_string(),
+            name: "bash".to_string(),
+            parameters: json!({ "command": "echo hi" }),
+        };
+
+        let mut widget = ToolWidget::new(tool_call, None);
+
+        let _ = widget.lines(80, ViewMode::Compact, &dark);
+        assert_eq!(
+            widget
+                .compact_cache
+                .key
+                .as_ref()
+                .map(|key| key.theme_name.as_str()),
+            Some("dark")
+        );
+
+        let _ = widget.lines(80, ViewMode::Compact, &light);
+        assert_eq!(
+            widget
+                .compact_cache
+                .key
+                .as_ref()
+                .map(|key| key.theme_name.as_str()),
+            Some("light")
+        );
     }
 
     #[test]
@@ -366,7 +445,7 @@ mod tests {
             };
 
             // Test that height calculation works
-            let height = widget.lines(80, ViewMode::Compact, &theme).len();
+            let height = widget.line_count(80, ViewMode::Compact, &theme);
             assert!(height > 0, "Widget {tool_name} should have non-zero height");
         }
     }

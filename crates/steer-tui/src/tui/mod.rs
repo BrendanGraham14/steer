@@ -292,7 +292,6 @@ use crate::tui::state::RemoteProviderRegistry;
 use crate::tui::state::SetupState;
 use crate::tui::state::{ChatStore, LlmUsageState, ToolCallRegistry};
 
-use crate::tui::chat_viewport::ChatViewport;
 use crate::tui::terminal::{SetupGuard, cleanup};
 use crate::tui::ui_layout::UiLayout;
 use crate::tui::widgets::EditSelectionOverlayState;
@@ -310,6 +309,7 @@ pub mod theme;
 pub mod widgets;
 
 mod chat_viewport;
+pub use chat_viewport::ChatViewport;
 pub mod core_commands;
 mod events;
 mod handlers;
@@ -2083,6 +2083,7 @@ impl Tui {
                             match loader.load_theme(&name) {
                                 Ok(new_theme) => {
                                     self.theme = new_theme;
+                                    self.chat_viewport.mark_dirty();
                                     self.push_tui_response(
                                         TuiCommandType::Theme.command_name(),
                                         TuiCommandResponse::Theme { name: name.clone() },

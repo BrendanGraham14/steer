@@ -28,9 +28,13 @@ pub struct ChatListState {
 
 #[derive(Debug, Clone)]
 pub struct VisibleRange {
+    /// Index into flattened viewport items.
     pub first_index: usize,
+    /// Index into flattened viewport items.
     pub last_index: usize,
+    /// Y position relative to viewport origin.
     pub first_y: u16,
+    /// Y position relative to viewport origin.
     pub last_y: u16,
 }
 
