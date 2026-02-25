@@ -60,8 +60,9 @@ How to write an effective sub-agent prompt:
 1. Start with the goal and expected output format
 2. Include concrete context you've already gathered (file paths, symbol names, error messages, constraints, and acceptance criteria) so the sub-agent does not need to re-gather it
 3. Name exactly which files or directories to inspect first when known
-4. State whether the sub-agent should only explore or is expected to edit/build/test
-5. Do NOT include synthetic path headers like `Repo: <path>` or `CWD: <path>`; working-directory context is injected automatically
+4. For paths inside the current repository/workspace, use workspace-relative paths (for example, `src/lib.rs`) instead of absolute paths
+5. State whether the sub-agent should only explore or is expected to edit/build/test
+6. Do NOT include synthetic path headers like `Repo: <path>` or `CWD: <path>`; working-directory context is injected automatically
 
 Example of a strong sub-agent prompt:
   "The login endpoint at `src/api/auth.rs:142` returns 401 for valid tokens because `validate_token` checks expiry with `>` instead of `>=`. Change the comparison to `>=` and verify the existing test in `tests/auth_test.rs` still passes."
