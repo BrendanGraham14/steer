@@ -51,9 +51,7 @@ pub enum EditFailure {
         edit_index: usize,
     },
 
-    #[error(
-        "invalid match selection for edit #{edit_index} in file {file_path}: {message}"
-    )]
+    #[error("invalid match selection for edit #{edit_index} in file {file_path}: {message}")]
     InvalidMatchSelection {
         file_path: String,
         edit_index: usize,

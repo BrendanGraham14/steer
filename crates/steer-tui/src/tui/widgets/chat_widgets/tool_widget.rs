@@ -371,7 +371,7 @@ mod tests {
         let theme = Theme::default();
         let tool_call = ToolCall {
             id: "test-id".to_string(),
-            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+            name: steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
             parameters: json!({
                 "file_path": "/tmp/large.txt"
             }),

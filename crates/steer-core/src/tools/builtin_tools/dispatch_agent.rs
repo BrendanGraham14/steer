@@ -27,7 +27,7 @@ use steer_tools::tools::dispatch_agent::{
     DispatchAgentError, DispatchAgentParams, DispatchAgentTarget, DispatchAgentToolSpec,
     WorkspaceTarget,
 };
-use steer_tools::tools::{GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME};
+use steer_tools::tools::{GREP_TOOL_NAME, LS_TOOL_NAME, READ_FILE_TOOL_NAME};
 use tracing::warn;
 
 use super::{
@@ -100,7 +100,7 @@ New session options:
 - `target: {{ "session": "new", "workspace": {{ "location": "current" }}, "agent": "<id>" }}` selects an agent spec (defaults to "{default_agent}")
 
 {agent_specs_block}"#,
-        VIEW_TOOL_NAME,
+        READ_FILE_TOOL_NAME,
         LS_TOOL_NAME,
         GREP_TOOL_NAME,
         GREP_TOOL_NAME,
@@ -878,7 +878,7 @@ mod tests {
         ));
 
         let visibility = ToolVisibility::Whitelist(HashSet::from([
-            steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+            steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
             steer_tools::tools::TODO_READ_TOOL_NAME.to_string(),
         ]));
 
@@ -888,7 +888,7 @@ mod tests {
 
         let mut expected = vec![
             steer_tools::tools::TODO_READ_TOOL_NAME.to_string(),
-            steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+            steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
         ];
         expected.sort_unstable();
 
@@ -1327,7 +1327,7 @@ mod tests {
             id: agent_id.clone(),
             name: "allowlist test".to_string(),
             description: "allowlist test".to_string(),
-            tools: vec![VIEW_TOOL_NAME.to_string()],
+            tools: vec![READ_FILE_TOOL_NAME.to_string()],
             mcp_access: McpAccessPolicy::Allowlist(vec!["allowed-server".to_string()]),
             model: None,
         };
@@ -1419,7 +1419,7 @@ mod tests {
             id: agent_id.clone(),
             name: "inherit model test".to_string(),
             description: "inherit model test".to_string(),
-            tools: vec![VIEW_TOOL_NAME.to_string()],
+            tools: vec![READ_FILE_TOOL_NAME.to_string()],
             mcp_access: McpAccessPolicy::None,
             model: None,
         };
@@ -1503,7 +1503,7 @@ mod tests {
             id: agent_id.clone(),
             name: "spec model test".to_string(),
             description: "spec model test".to_string(),
-            tools: vec![VIEW_TOOL_NAME.to_string()],
+            tools: vec![READ_FILE_TOOL_NAME.to_string()],
             mcp_access: McpAccessPolicy::None,
             model: Some(spec_model.clone()),
         };
@@ -1583,11 +1583,11 @@ mod tests {
         session_config.policy_overrides = SessionPolicyOverrides {
             default_model: None,
             tool_visibility: Some(ToolVisibility::Whitelist(HashSet::from([
-                VIEW_TOOL_NAME.to_string()
+                READ_FILE_TOOL_NAME.to_string(),
             ]))),
             approval_policy: ToolApprovalPolicyOverrides {
                 preapproved: ApprovalRulesOverrides {
-                    tools: HashSet::from([VIEW_TOOL_NAME.to_string()]),
+                    tools: HashSet::from([READ_FILE_TOOL_NAME.to_string()]),
                     per_tool: HashMap::new(),
                 },
             },

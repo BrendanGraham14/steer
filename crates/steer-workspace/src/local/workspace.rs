@@ -59,7 +59,7 @@ fn resolve_path(base: &Path, path: &str) -> PathBuf {
 }
 
 #[derive(Error, Debug)]
-enum ViewError {
+enum ReadFileError {
     #[error("Failed to open file '{path}': {source}")]
     FileOpen {
         path: String,
@@ -100,16 +100,16 @@ enum LsError {
     },
 }
 
-async fn view_file_internal(
+async fn read_file_internal(
     file_path: &Path,
     offset: Option<u64>,
     limit: Option<u64>,
     raw: Option<bool>,
     cancellation_token: &CancellationToken,
-) -> std::result::Result<FileContentResult, ViewError> {
+) -> std::result::Result<FileContentResult, ReadFileError> {
     let mut file = tokio::fs::File::open(file_path)
         .await
-        .map_err(|e| ViewError::FileOpen {
+        .map_err(|e| ReadFileError::FileOpen {
             path: file_path.display().to_string(),
             source: e,
         })?;
@@ -117,7 +117,7 @@ async fn view_file_internal(
     let file_size = file
         .metadata()
         .await
-        .map_err(|e| ViewError::Metadata {
+        .map_err(|e| ReadFileError::Metadata {
             path: file_path.display().to_string(),
             source: e,
         })?
@@ -135,7 +135,7 @@ async fn view_file_internal(
 
         loop {
             if cancellation_token.is_cancelled() {
-                return Err(ViewError::Cancelled);
+                return Err(ReadFileError::Cancelled);
             }
 
             let mut line = String::new();
@@ -159,7 +159,7 @@ async fn view_file_internal(
                     }
                     current_line_num += 1;
                 }
-                Err(e) => return Err(ViewError::ReadLine { source: e }),
+                Err(e) => return Err(ReadFileError::ReadLine { source: e }),
             }
         }
 
@@ -183,13 +183,13 @@ async fn view_file_internal(
 
         loop {
             if cancellation_token.is_cancelled() {
-                return Err(ViewError::Cancelled);
+                return Err(ReadFileError::Cancelled);
             }
 
             let n = file
                 .read(&mut chunk)
                 .await
-                .map_err(|e| ViewError::Read { source: e })?;
+                .map_err(|e| ReadFileError::Read { source: e })?;
             if n == 0 {
                 break;
             }
@@ -207,12 +207,12 @@ async fn view_file_internal(
 
         while bytes_read < read_size {
             if cancellation_token.is_cancelled() {
-                return Err(ViewError::Cancelled);
+                return Err(ReadFileError::Cancelled);
             }
             let n = file
                 .read(&mut buffer[bytes_read..])
                 .await
-                .map_err(|e| ViewError::Read { source: e })?;
+                .map_err(|e| ReadFileError::Read { source: e })?;
             if n == 0 {
                 break;
             }
@@ -1030,7 +1030,7 @@ impl Workspace for LocalWorkspace {
         ctx: &WorkspaceOpContext,
     ) -> WorkspaceResult<FileContentResult> {
         let abs_path = resolve_path(&self.path, &request.file_path);
-        view_file_internal(
+        read_file_internal(
             &abs_path,
             request.offset,
             request.limit,
