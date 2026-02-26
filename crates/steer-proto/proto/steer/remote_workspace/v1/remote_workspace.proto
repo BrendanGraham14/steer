@@ -297,9 +297,23 @@ message AstGrepRequest {
   optional string path = 5;
 }
 
+message EditMatchExactlyOne {}
+
+message EditMatchFirst {}
+
+message EditMatchAll {}
+
+message EditMatchNth { uint64 match_index = 1; }
+
 message EditOperation {
   string old_string = 1;
   string new_string = 2;
+  oneof match_selection {
+    EditMatchExactlyOne exactly_one = 3;
+    EditMatchFirst first = 4;
+    EditMatchAll all = 5;
+    EditMatchNth nth = 6;
+  }
 }
 
 message ApplyEditsRequest {

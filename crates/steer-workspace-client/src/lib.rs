@@ -10,17 +10,18 @@ use steer_proto::remote_workspace::v1::{
     GlobRequest as ProtoGlobRequest, GrepRequest as ProtoGrepRequest,
     ListDirectoryRequest as ProtoListDirectoryRequest, ListFilesRequest,
     ReadFileRequest as ProtoReadFileRequest, WriteFileRequest as ProtoWriteFileRequest,
+    edit_operation::MatchSelection as ProtoEditMatchSelection,
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
 use steer_tools::result::{
     EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
 };
 use steer_workspace::{
-    ApplyEditsRequest, AstGrepRequest, EnvironmentInfo, GitCommitSummary, GitHead, GitStatus,
-    GitStatusEntry, GitStatusSummary, GlobRequest, GrepRequest, JjChange, JjChangeType,
-    JjCommitSummary, JjStatus, ListDirectoryRequest, ReadFileRequest, RemoteAuth, Result, VcsInfo,
-    VcsKind, VcsStatus, Workspace, WorkspaceError, WorkspaceMetadata, WorkspaceOpContext,
-    WorkspaceType, WriteFileRequest,
+    ApplyEditsRequest, AstGrepRequest, EditMatchSelection, EnvironmentInfo, GitCommitSummary,
+    GitHead, GitStatus, GitStatusEntry, GitStatusSummary, GlobRequest, GrepRequest, JjChange,
+    JjChangeType, JjCommitSummary, JjStatus, ListDirectoryRequest, ReadFileRequest, RemoteAuth,
+    Result, VcsInfo, VcsKind, VcsStatus, Workspace, WorkspaceError, WorkspaceMetadata,
+    WorkspaceOpContext, WorkspaceType, WriteFileRequest,
 };
 
 const GRPC_MAX_MESSAGE_SIZE_BYTES: usize = 32 * 1024 * 1024;
@@ -484,11 +485,39 @@ impl Workspace for RemoteWorkspace {
         let edits = request
             .edits
             .into_iter()
-            .map(|edit| ProtoEditOperation {
-                old_string: edit.old_string,
-                new_string: edit.new_string,
+            .map(|edit| {
+                let match_selection = match edit.match_selection {
+                    Some(EditMatchSelection::ExactlyOne) => {
+                        Some(ProtoEditMatchSelection::ExactlyOne(
+                            steer_proto::remote_workspace::v1::EditMatchExactlyOne {},
+                        ))
+                    }
+                    Some(EditMatchSelection::First) => Some(ProtoEditMatchSelection::First(
+                        steer_proto::remote_workspace::v1::EditMatchFirst {},
+                    )),
+                    Some(EditMatchSelection::All) => Some(ProtoEditMatchSelection::All(
+                        steer_proto::remote_workspace::v1::EditMatchAll {},
+                    )),
+                    Some(EditMatchSelection::Nth { match_index }) => {
+                        let match_index = match_index.ok_or_else(|| {
+                            WorkspaceError::Status(
+                                "match_index is required when match_selection is nth".to_string(),
+                            )
+                        })?;
+                        Some(ProtoEditMatchSelection::Nth(
+                            steer_proto::remote_workspace::v1::EditMatchNth { match_index },
+                        ))
+                    }
+                    None => None,
+                };
+
+                Ok(ProtoEditOperation {
+                    old_string: edit.old_string,
+                    new_string: edit.new_string,
+                    match_selection,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         let request = tonic::Request::new(ProtoApplyEditsRequest {
             file_path: request.file_path,
             edits,

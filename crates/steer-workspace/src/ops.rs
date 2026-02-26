@@ -52,10 +52,21 @@ pub struct AstGrepRequest {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum EditMatchSelection {
+    ExactlyOne,
+    First,
+    All,
+    Nth { match_index: Option<u64> },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditOperation {
     pub old_string: String,
     pub new_string: String,
+    pub match_selection: Option<EditMatchSelection>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,4 +79,35 @@ pub struct ApplyEditsRequest {
 pub struct WriteFileRequest {
     pub file_path: String,
     pub content: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EditMatchSelection;
+
+    #[test]
+    fn test_edit_match_selection_partial_eq() {
+        assert_eq!(
+            EditMatchSelection::ExactlyOne,
+            EditMatchSelection::ExactlyOne
+        );
+        assert_eq!(EditMatchSelection::First, EditMatchSelection::First);
+        assert_eq!(EditMatchSelection::All, EditMatchSelection::All);
+        assert_eq!(
+            EditMatchSelection::Nth {
+                match_index: Some(2)
+            },
+            EditMatchSelection::Nth {
+                match_index: Some(2)
+            }
+        );
+        assert_ne!(
+            EditMatchSelection::Nth {
+                match_index: Some(1)
+            },
+            EditMatchSelection::Nth {
+                match_index: Some(2)
+            }
+        );
+    }
 }
