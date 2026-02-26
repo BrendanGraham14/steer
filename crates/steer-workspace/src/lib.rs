@@ -10,7 +10,7 @@ mod workspace_registry;
 // Re-export main types
 pub use config::{RemoteAuth, WorkspaceConfig};
 pub use error::{
-    EnvironmentManagerError, EnvironmentManagerResult, Result, WorkspaceError,
+    EditMatchPreview, EnvironmentManagerError, EnvironmentManagerResult, Result, WorkspaceError,
     WorkspaceManagerError, WorkspaceManagerResult,
 };
 pub use local::LocalEnvironmentManager;
@@ -21,7 +21,7 @@ pub use manager::{
     RepoManager, WorkspaceCreateStrategy, WorkspaceManager,
 };
 pub use ops::{
-    ApplyEditsRequest, AstGrepRequest, EditOperation, GlobRequest, GrepRequest,
+    ApplyEditsRequest, AstGrepRequest, EditMatchSelection, EditOperation, GlobRequest, GrepRequest,
     ListDirectoryRequest, ReadFileRequest, WorkspaceOpContext, WriteFileRequest,
 };
 pub use result::{

@@ -1,6 +1,7 @@
 use steer_remote_workspace::proto::{
+    ApplyEditsRequest, EditMatchAll, EditMatchExactlyOne, EditMatchNth, EditOperation,
     ExecuteToolRequest, GetAgentInfoRequest, GetToolSchemasRequest, HealthRequest, HealthStatus,
-    ListDirectoryRequest, ReadFileRequest, WriteFileRequest,
+    ListDirectoryRequest, ReadFileRequest, WriteFileRequest, edit_operation,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceTrait,
 };
 use steer_remote_workspace::remote_workspace_service::RemoteWorkspaceService;
@@ -112,6 +113,166 @@ async fn test_list_directory() {
     assert!(response.is_ok());
     let list = response.unwrap().into_inner();
     assert!(list.entries.iter().any(|e| e.path == "file.txt"));
+}
+
+#[tokio::test]
+async fn test_apply_edits_supports_match_mode_all() {
+    let temp_dir = tempdir().unwrap();
+    let service = RemoteWorkspaceService::new(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
+
+    let file_path = temp_dir.path().join("multi.txt");
+    std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+    let edit_request = Request::new(ApplyEditsRequest {
+        file_path: file_path.to_string_lossy().to_string(),
+        edits: vec![EditOperation {
+            old_string: "repeat".to_string(),
+            new_string: "done".to_string(),
+            match_selection: Some(edit_operation::MatchSelection::All(EditMatchAll {})),
+        }],
+    });
+
+    let edit_response = service.apply_edits(edit_request).await;
+    assert!(edit_response.is_ok());
+    let edit_result = edit_response.unwrap().into_inner();
+    assert_eq!(edit_result.changes_made, 2);
+
+    let read_request = Request::new(ReadFileRequest {
+        file_path: file_path.to_string_lossy().to_string(),
+        offset: None,
+        limit: None,
+        raw: Some(true),
+    });
+    let read_response = service.read_file(read_request).await;
+    assert!(read_response.is_ok());
+    let content = read_response.unwrap().into_inner();
+    assert_eq!(content.content, "done\ndone\n");
+}
+
+#[tokio::test]
+async fn test_apply_edits_supports_match_mode_nth_and_match_index() {
+    let temp_dir = tempdir().unwrap();
+    let service = RemoteWorkspaceService::new(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
+
+    let file_path = temp_dir.path().join("multi.txt");
+    std::fs::write(&file_path, "repeat\nrepeat\nrepeat\n").unwrap();
+
+    let edit_request = Request::new(ApplyEditsRequest {
+        file_path: file_path.to_string_lossy().to_string(),
+        edits: vec![EditOperation {
+            old_string: "repeat".to_string(),
+            new_string: "done".to_string(),
+            match_selection: Some(edit_operation::MatchSelection::Nth(EditMatchNth {
+                match_index: 2,
+            })),
+        }],
+    });
+
+    let edit_response = service.apply_edits(edit_request).await;
+    assert!(edit_response.is_ok());
+    let edit_result = edit_response.unwrap().into_inner();
+    assert_eq!(edit_result.changes_made, 1);
+
+    let read_request = Request::new(ReadFileRequest {
+        file_path: file_path.to_string_lossy().to_string(),
+        offset: None,
+        limit: None,
+        raw: Some(true),
+    });
+    let read_response = service.read_file(read_request).await;
+    assert!(read_response.is_ok());
+    let content = read_response.unwrap().into_inner();
+    assert_eq!(content.content, "repeat\ndone\nrepeat\n");
+}
+
+#[tokio::test]
+async fn test_apply_edits_supports_match_selection_exactly_one() {
+    let temp_dir = tempdir().unwrap();
+    let service = RemoteWorkspaceService::new(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
+
+    let file_path = temp_dir.path().join("multi.txt");
+    std::fs::write(&file_path, "repeat\n").unwrap();
+
+    let edit_request = Request::new(ApplyEditsRequest {
+        file_path: file_path.to_string_lossy().to_string(),
+        edits: vec![EditOperation {
+            old_string: "repeat".to_string(),
+            new_string: "done".to_string(),
+            match_selection: Some(edit_operation::MatchSelection::ExactlyOne(
+                EditMatchExactlyOne {},
+            )),
+        }],
+    });
+
+    let response = service
+        .apply_edits(edit_request)
+        .await
+        .expect("exactly_one selector should be valid");
+    assert_eq!(response.into_inner().changes_made, 1);
+}
+
+#[tokio::test]
+async fn test_apply_edits_nth_requires_match_index_over_grpc() {
+    let temp_dir = tempdir().unwrap();
+    let service = RemoteWorkspaceService::new(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
+
+    let file_path = temp_dir.path().join("multi.txt");
+    std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+    let edit_request = Request::new(ApplyEditsRequest {
+        file_path: file_path.to_string_lossy().to_string(),
+        edits: vec![EditOperation {
+            old_string: "repeat".to_string(),
+            new_string: "done".to_string(),
+            match_selection: Some(edit_operation::MatchSelection::Nth(EditMatchNth {
+                match_index: 0,
+            })),
+        }],
+    });
+
+    let err = service
+        .apply_edits(edit_request)
+        .await
+        .expect_err("nth index 0 should fail");
+    assert_eq!(err.code(), tonic::Code::Internal);
+    assert!(err.message().contains("must be 1 or greater"));
+}
+
+#[tokio::test]
+async fn test_apply_edits_nth_rejects_out_of_range_match_index_over_grpc() {
+    let temp_dir = tempdir().unwrap();
+    let service = RemoteWorkspaceService::new(temp_dir.path().to_path_buf())
+        .await
+        .unwrap();
+
+    let file_path = temp_dir.path().join("multi.txt");
+    std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+    let edit_request = Request::new(ApplyEditsRequest {
+        file_path: file_path.to_string_lossy().to_string(),
+        edits: vec![EditOperation {
+            old_string: "repeat".to_string(),
+            new_string: "done".to_string(),
+            match_selection: Some(edit_operation::MatchSelection::Nth(EditMatchNth {
+                match_index: 3,
+            })),
+        }],
+    });
+
+    let err = service
+        .apply_edits(edit_request)
+        .await
+        .expect_err("nth out of range should fail");
+    assert_eq!(err.code(), tonic::Code::Internal);
+    assert!(err.message().contains("out of range"));
 }
 
 #[tokio::test]

@@ -4,8 +4,10 @@ use crate::tools::capability::Capabilities;
 use async_trait::async_trait;
 use steer_tools::result::{EditResult, MultiEditResult};
 use steer_tools::tools::edit::multi_edit::{MultiEditError, MultiEditParams, MultiEditToolSpec};
-use steer_tools::tools::edit::{EditError, EditFailure, EditParams, EditToolSpec};
-use steer_workspace::{ApplyEditsRequest, EditOperation, WorkspaceOpContext};
+use steer_tools::tools::edit::{
+    EditError, EditFailure, EditMatchPreview, EditParams, EditToolSpec,
+};
+use steer_workspace::{ApplyEditsRequest, EditMatchSelection, EditOperation, WorkspaceOpContext};
 
 pub struct EditTool;
 
@@ -20,10 +22,12 @@ Before using this tool:
 
 To make a file edit, provide the following:
 1. file_path: The absolute path to the file to modify (must be absolute, not relative)
-2. old_string: The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)
+2. old_string: The text to replace (must match the file contents exactly, including all whitespace and indentation)
 3. new_string: The edited text to replace the old_string
+4. Optional match_mode: `exactly_one` (default), `first`, `all`, or `nth`
+5. Optional match_index: 1-based index used only when match_mode is `nth`
 
-The tool will replace ONE occurrence of old_string with new_string in the specified file.
+By default (`match_mode = exactly_one`), the tool replaces ONE occurrence of old_string with new_string in the specified file.
 
 CRITICAL REQUIREMENTS FOR USING THIS TOOL:
 
@@ -76,6 +80,16 @@ impl BuiltinTool for EditTool {
             edits: vec![EditOperation {
                 old_string: params.old_string,
                 new_string: params.new_string,
+                match_selection: params.match_mode.map(|mode| match mode {
+                    steer_tools::tools::edit::EditMatchMode::ExactlyOne => {
+                        EditMatchSelection::ExactlyOne
+                    }
+                    steer_tools::tools::edit::EditMatchMode::First => EditMatchSelection::First,
+                    steer_tools::tools::edit::EditMatchMode::All => EditMatchSelection::All,
+                    steer_tools::tools::edit::EditMatchMode::Nth => EditMatchSelection::Nth {
+                        match_index: params.match_index,
+                    },
+                }),
             }],
         };
         let op_ctx =
@@ -96,7 +110,7 @@ impl BuiltinTool for MultiEditTool {
     type Output = MultiEditResult;
     type Spec = MultiEditToolSpec;
 
-    const DESCRIPTION: &'static str = "This is a tool for making multiple edits to a single file in one operation. Prefer this tool over the edit_file tool when you need to make multiple edits to the same file. Edits are applied sequentially in the provided order, and each old_string must match exactly one location against the latest file content after prior edits.";
+    const DESCRIPTION: &'static str = "This is a tool for making multiple edits to a single file in one operation. Prefer this tool over the edit_file tool when you need to make multiple edits to the same file. Edits are applied sequentially in the provided order against the latest file content after prior edits. Each edit supports optional `match_mode`: `exactly_one` (default), `first`, `all`, or `nth` (requires 1-based `match_index`).";
     const REQUIRES_APPROVAL: bool = true;
     const REQUIRED_CAPABILITIES: Capabilities = Capabilities::WORKSPACE;
 
@@ -113,6 +127,16 @@ impl BuiltinTool for MultiEditTool {
                 .map(|e| EditOperation {
                     old_string: e.old_string,
                     new_string: e.new_string,
+                    match_selection: e.match_mode.map(|mode| match mode {
+                        steer_tools::tools::edit::EditMatchMode::ExactlyOne => {
+                            EditMatchSelection::ExactlyOne
+                        }
+                        steer_tools::tools::edit::EditMatchMode::First => EditMatchSelection::First,
+                        steer_tools::tools::edit::EditMatchMode::All => EditMatchSelection::All,
+                        steer_tools::tools::edit::EditMatchMode::Nth => EditMatchSelection::Nth {
+                            match_index: e.match_index,
+                        },
+                    }),
                 })
                 .collect(),
         };
@@ -161,14 +185,34 @@ fn map_edit_failure(failure: steer_workspace::error::EditFailure) -> EditFailure
             file_path,
             edit_index,
         },
+        steer_workspace::error::EditFailure::InvalidMatchSelection {
+            file_path,
+            edit_index,
+            message,
+        } => EditFailure::InvalidMatchSelection {
+            file_path,
+            edit_index,
+            message,
+        },
         steer_workspace::error::EditFailure::NonUniqueMatch {
             file_path,
             edit_index,
             occurrences,
+            match_previews,
+            omitted_matches,
         } => EditFailure::NonUniqueMatch {
             file_path,
             edit_index,
             occurrences,
+            match_previews: match_previews
+                .into_iter()
+                .map(|preview| EditMatchPreview {
+                    line_number: preview.line_number,
+                    column_number: preview.column_number,
+                    snippet: preview.snippet,
+                })
+                .collect(),
+            omitted_matches,
         },
     }
 }

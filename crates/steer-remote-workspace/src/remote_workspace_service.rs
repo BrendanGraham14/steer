@@ -5,7 +5,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use steer_workspace::local::LocalWorkspace;
-use steer_workspace::{VcsInfo, VcsKind, VcsStatus, Workspace, WorkspaceError, WorkspaceOpContext};
+use steer_workspace::{
+    EditMatchSelection, VcsInfo, VcsKind, VcsStatus, Workspace, WorkspaceError, WorkspaceOpContext,
+};
 
 use crate::proto::{
     ApplyEditsRequest as GrpcApplyEditsRequest, AstGrepRequest as GrpcAstGrepRequest,
@@ -14,7 +16,7 @@ use crate::proto::{
     GetToolSchemasResponse, GlobRequest as GrpcGlobRequest, GrepRequest as GrpcGrepRequest,
     HealthRequest, HealthResponse, HealthStatus, ListDirectoryRequest as GrpcListDirectoryRequest,
     ListFilesRequest, ListFilesResponse, ReadFileRequest as GrpcReadFileRequest,
-    WriteFileRequest as GrpcWriteFileRequest,
+    WriteFileRequest as GrpcWriteFileRequest, edit_operation::MatchSelection as GrpcMatchSelection,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
 };
 use steer_proto::common::v1::{
@@ -536,9 +538,22 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
         let edits = req
             .edits
             .into_iter()
-            .map(|edit| steer_workspace::EditOperation {
-                old_string: edit.old_string,
-                new_string: edit.new_string,
+            .map(|edit| {
+                let match_selection = match edit.match_selection {
+                    Some(GrpcMatchSelection::ExactlyOne(_)) => Some(EditMatchSelection::ExactlyOne),
+                    Some(GrpcMatchSelection::First(_)) => Some(EditMatchSelection::First),
+                    Some(GrpcMatchSelection::All(_)) => Some(EditMatchSelection::All),
+                    Some(GrpcMatchSelection::Nth(nth)) => Some(EditMatchSelection::Nth {
+                        match_index: Some(nth.match_index),
+                    }),
+                    None => None,
+                };
+
+                steer_workspace::EditOperation {
+                    old_string: edit.old_string,
+                    new_string: edit.new_string,
+                    match_selection,
+                }
             })
             .collect::<Vec<_>>();
 

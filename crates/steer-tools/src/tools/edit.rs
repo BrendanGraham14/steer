@@ -5,6 +5,17 @@ use thiserror::Error;
 use crate::ToolSpec;
 use crate::error::{ToolExecutionError, WorkspaceOpError};
 use crate::result::{EditResult, MultiEditResult};
+pub use steer_workspace::EditMatchPreview;
+use steer_workspace::error::non_unique_match_preview_suffix;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EditMatchMode {
+    ExactlyOne,
+    First,
+    All,
+    Nth,
+}
 
 pub const EDIT_TOOL_NAME: &str = "edit_file";
 
@@ -41,12 +52,26 @@ pub enum EditFailure {
     },
 
     #[error(
-        "found {occurrences} matches for edit #{edit_index} in file {file_path}; old_string must match exactly once"
+        "invalid match selection for edit #{edit_index} in file {file_path}: {message}"
+    )]
+    InvalidMatchSelection {
+        file_path: String,
+        edit_index: usize,
+        message: String,
+    },
+
+    #[error(
+        "found {occurrences} matches for edit #{edit_index} in file {file_path}; old_string must match exactly once{preview_suffix}",
+        preview_suffix = non_unique_match_preview_suffix(match_previews, *omitted_matches)
     )]
     NonUniqueMatch {
         file_path: String,
         edit_index: usize,
         occurrences: usize,
+        #[serde(default)]
+        match_previews: Vec<EditMatchPreview>,
+        #[serde(default)]
+        omitted_matches: usize,
     },
 }
 
@@ -62,10 +87,14 @@ pub enum EditError {
 
 #[derive(Deserialize, Serialize, Debug, JsonSchema, Clone)]
 pub struct SingleEditOperation {
-    /// The exact string to find and replace. Must be non-empty and match exactly one location.
+    /// The exact string to find and replace. Must be non-empty and match according to `match_mode`.
     pub old_string: String,
     /// The string to replace `old_string` with.
     pub new_string: String,
+    /// Optional match mode for this edit. Defaults to `exactly_one` when omitted.
+    pub match_mode: Option<EditMatchMode>,
+    /// Optional 1-based match index used when `match_mode` is `nth`.
+    pub match_index: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -76,6 +105,10 @@ pub struct EditParams {
     pub old_string: String,
     /// The string to replace `old_string` with.
     pub new_string: String,
+    /// Optional match mode for this edit. Defaults to `exactly_one` when omitted.
+    pub match_mode: Option<EditMatchMode>,
+    /// Optional 1-based match index used when `match_mode` is `nth`.
+    pub match_index: Option<u64>,
 }
 
 pub mod multi_edit {

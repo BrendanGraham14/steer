@@ -1,5 +1,40 @@
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub fn non_unique_match_preview_suffix(
+    match_previews: &[EditMatchPreview],
+    omitted_matches: usize,
+) -> String {
+    if match_previews.is_empty() {
+        return String::new();
+    }
+
+    let mut parts = match_previews
+        .iter()
+        .map(|preview| {
+            format!(
+                "line {}:{} `{}`",
+                preview.line_number, preview.column_number, preview.snippet
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if omitted_matches > 0 {
+        parts.push(format!("and {omitted_matches} more"));
+    }
+
+    format!("; matches: {}", parts.join("; "))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct EditMatchPreview {
+    pub line_number: usize,
+    pub column_number: usize,
+    pub snippet: String,
+}
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "code", content = "details", rename_all = "snake_case")]
@@ -19,12 +54,26 @@ pub enum EditFailure {
     },
 
     #[error(
-        "found {occurrences} matches for edit #{edit_index} in file {file_path}; old_string must match exactly once"
+        "invalid match selection for edit #{edit_index} in file {file_path}: {message}"
+    )]
+    InvalidMatchSelection {
+        file_path: String,
+        edit_index: usize,
+        message: String,
+    },
+
+    #[error(
+        "found {occurrences} matches for edit #{edit_index} in file {file_path}; old_string must match exactly once{preview_suffix}",
+        preview_suffix = non_unique_match_preview_suffix(match_previews, *omitted_matches)
     )]
     NonUniqueMatch {
         file_path: String,
         edit_index: usize,
         occurrences: usize,
+        #[serde(default)]
+        match_previews: Vec<EditMatchPreview>,
+        #[serde(default)]
+        omitted_matches: usize,
     },
 }
 

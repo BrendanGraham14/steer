@@ -11,10 +11,10 @@ use tokio::task;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::error::{EditFailure, Result as WorkspaceResult, WorkspaceError};
+use crate::error::{EditFailure, EditMatchPreview, Result as WorkspaceResult, WorkspaceError};
 use crate::ops::{
-    ApplyEditsRequest, AstGrepRequest, GlobRequest, GrepRequest, ListDirectoryRequest,
-    ReadFileRequest, WorkspaceOpContext, WriteFileRequest,
+    ApplyEditsRequest, AstGrepRequest, EditMatchSelection, GlobRequest, GrepRequest,
+    ListDirectoryRequest, ReadFileRequest, WorkspaceOpContext, WriteFileRequest,
 };
 use crate::result::{
     EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
@@ -678,6 +678,194 @@ impl LanguageHelpers for SupportLang {
     }
 }
 
+const MAX_NON_UNIQUE_MATCH_PREVIEWS: usize = 5;
+const MAX_MATCH_PREVIEW_SNIPPET_CHARS: usize = 120;
+
+#[derive(Debug, Clone, Copy)]
+struct EditMatchLocation {
+    start: usize,
+    end: usize,
+}
+
+fn find_match_locations(content: &str, pattern: &str) -> Vec<EditMatchLocation> {
+    content
+        .match_indices(pattern)
+        .map(|(start, _)| EditMatchLocation {
+            start,
+            end: start + pattern.len(),
+        })
+        .collect()
+}
+
+fn line_bounds_for_index(content: &str, index: usize) -> (usize, usize) {
+    let line_start = content[..index].rfind('\n').map_or(0, |pos| pos + 1);
+    let line_end = content[index..]
+        .find('\n')
+        .map_or(content.len(), |pos| index + pos);
+    (line_start, line_end)
+}
+
+fn line_number_for_index(content: &str, index: usize) -> usize {
+    content[..index]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1
+}
+
+fn truncate_preview_snippet(snippet: &str, max_chars: usize) -> String {
+    if snippet.chars().count() <= max_chars {
+        return snippet.to_string();
+    }
+
+    let mut truncated = snippet
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
+fn build_match_previews(
+    content: &str,
+    match_locations: &[EditMatchLocation],
+) -> (Vec<EditMatchPreview>, usize) {
+    let previews = match_locations
+        .iter()
+        .take(MAX_NON_UNIQUE_MATCH_PREVIEWS)
+        .map(|location| {
+            let (line_start, line_end) = line_bounds_for_index(content, location.start);
+            let line_content = content[line_start..line_end].trim_end();
+            EditMatchPreview {
+                line_number: line_number_for_index(content, location.start),
+                column_number: content[line_start..location.start].chars().count() + 1,
+                snippet: truncate_preview_snippet(line_content, MAX_MATCH_PREVIEW_SNIPPET_CHARS),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    (
+        previews,
+        match_locations
+            .len()
+            .saturating_sub(MAX_NON_UNIQUE_MATCH_PREVIEWS),
+    )
+}
+
+fn non_unique_match_error(
+    file_path: &Path,
+    edit_index: usize,
+    match_locations: &[EditMatchLocation],
+    content: &str,
+) -> WorkspaceError {
+    let (match_previews, omitted_matches) = build_match_previews(content, match_locations);
+    WorkspaceError::Edit(EditFailure::NonUniqueMatch {
+        file_path: file_path.display().to_string(),
+        edit_index,
+        occurrences: match_locations.len(),
+        match_previews,
+        omitted_matches,
+    })
+}
+
+fn invalid_match_selection_error(
+    file_path: &Path,
+    edit_index: usize,
+    message: impl Into<String>,
+) -> WorkspaceError {
+    WorkspaceError::Edit(EditFailure::InvalidMatchSelection {
+        file_path: file_path.display().to_string(),
+        edit_index,
+        message: message.into(),
+    })
+}
+
+fn select_match_indices(
+    match_selection: EditMatchSelection,
+    match_locations: &[EditMatchLocation],
+    content: &str,
+    file_path: &Path,
+    edit_index: usize,
+) -> WorkspaceResult<Vec<usize>> {
+    match match_selection {
+        EditMatchSelection::ExactlyOne => {
+            if match_locations.len() == 1 {
+                Ok(vec![0])
+            } else {
+                Err(non_unique_match_error(
+                    file_path,
+                    edit_index,
+                    match_locations,
+                    content,
+                ))
+            }
+        }
+        EditMatchSelection::First => Ok(vec![0]),
+        EditMatchSelection::All => Ok((0..match_locations.len()).collect()),
+        EditMatchSelection::Nth { match_index } => {
+            let Some(raw_index) = match_index else {
+                return Err(invalid_match_selection_error(
+                    file_path,
+                    edit_index,
+                    "match_index is required when match_selection is nth",
+                ));
+            };
+
+            if raw_index == 0 {
+                return Err(invalid_match_selection_error(
+                    file_path,
+                    edit_index,
+                    "match_index must be 1 or greater",
+                ));
+            }
+
+            let zero_based_index = usize::try_from(raw_index.saturating_sub(1)).map_err(|_| {
+                invalid_match_selection_error(file_path, edit_index, "match_index is too large")
+            })?;
+
+            if zero_based_index >= match_locations.len() {
+                return Err(invalid_match_selection_error(
+                    file_path,
+                    edit_index,
+                    format!(
+                        "match_index {} is out of range; found {} matches",
+                        raw_index,
+                        match_locations.len()
+                    ),
+                ));
+            }
+
+            Ok(vec![zero_based_index])
+        }
+    }
+}
+
+fn apply_selected_replacements(
+    content: &str,
+    match_locations: &[EditMatchLocation],
+    selected_indices: &[usize],
+    replacement: &str,
+) -> String {
+    let mut sorted_indices = selected_indices.to_vec();
+    sorted_indices.sort_unstable();
+
+    let mut updated_content = String::with_capacity(content.len());
+    let mut cursor = 0usize;
+
+    for selected_index in sorted_indices {
+        let Some(location) = match_locations.get(selected_index) else {
+            continue;
+        };
+
+        updated_content.push_str(&content[cursor..location.start]);
+        updated_content.push_str(replacement);
+        cursor = location.end;
+    }
+
+    updated_content.push_str(&content[cursor..]);
+    updated_content
+}
+
 async fn perform_edit_operations(
     file_path: &Path,
     operations: &[crate::ops::EditOperation],
@@ -725,24 +913,33 @@ async fn perform_edit_operations(
         }
 
         let edit_index = index + 1;
-        let occurrences = current_content.matches(&edit_op.old_string).count();
-        if occurrences == 0 {
+        let match_locations = find_match_locations(&current_content, &edit_op.old_string);
+        if match_locations.is_empty() {
             return Err(WorkspaceError::Edit(EditFailure::StringNotFound {
                 file_path: file_path.display().to_string(),
                 edit_index,
             }));
         }
 
-        if occurrences > 1 {
-            return Err(WorkspaceError::Edit(EditFailure::NonUniqueMatch {
-                file_path: file_path.display().to_string(),
-                edit_index,
-                occurrences,
-            }));
-        }
+        let match_selection = edit_op
+            .match_selection
+            .clone()
+            .unwrap_or(EditMatchSelection::ExactlyOne);
+        let selected_indices = select_match_indices(
+            match_selection,
+            &match_locations,
+            &current_content,
+            file_path,
+            edit_index,
+        )?;
 
-        current_content = current_content.replacen(&edit_op.old_string, &edit_op.new_string, 1);
-        edits_applied_count += 1;
+        current_content = apply_selected_replacements(
+            &current_content,
+            &match_locations,
+            &selected_indices,
+            &edit_op.new_string,
+        );
+        edits_applied_count += selected_indices.len();
     }
 
     Ok((current_content, edits_applied_count))
@@ -1376,6 +1573,7 @@ mod tests {
                     edits: vec![crate::EditOperation {
                         old_string: String::new(),
                         new_string: "replacement".to_string(),
+                        match_selection: None,
                     }],
                 },
                 &context,
@@ -1407,6 +1605,7 @@ mod tests {
                     edits: vec![crate::EditOperation {
                         old_string: "missing".to_string(),
                         new_string: "replacement".to_string(),
+                        match_selection: None,
                     }],
                 },
                 &context,
@@ -1437,6 +1636,7 @@ mod tests {
                     edits: vec![crate::EditOperation {
                         old_string: "repeat".to_string(),
                         new_string: "done".to_string(),
+                        match_selection: None,
                     }],
                 },
                 &context,
@@ -1449,8 +1649,218 @@ mod tests {
             WorkspaceError::Edit(EditFailure::NonUniqueMatch {
                 edit_index: 1,
                 occurrences: 2,
+                ref match_previews,
+                omitted_matches: 0,
+                ..
+            }) if match_previews.len() == 2
+                && match_previews[0].line_number == 1
+                && match_previews[0].column_number == 1
+                && match_previews[0].snippet == "repeat"
+                && match_previews[1].line_number == 2
+                && match_previews[1].column_number == 1
+                && match_previews[1].snippet == "repeat"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_with_match_mode_first_replaces_first_match_only() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+        let context = WorkspaceOpContext::new("test-edit-first", CancellationToken::new());
+        let result = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: "repeat".to_string(),
+                        new_string: "done".to_string(),
+                        match_selection: Some(EditMatchSelection::First),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect("first match mode should succeed");
+
+        assert_eq!(result.changes_made, 1);
+        let updated = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(updated, "done\nrepeat\n");
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_with_match_mode_all_replaces_all_matches() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+        let context = WorkspaceOpContext::new("test-edit-all", CancellationToken::new());
+        let result = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: "repeat".to_string(),
+                        new_string: "done".to_string(),
+                        match_selection: Some(EditMatchSelection::All),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect("all match mode should succeed");
+
+        assert_eq!(result.changes_made, 2);
+        let updated = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(updated, "done\ndone\n");
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_with_match_mode_nth_replaces_requested_match() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "repeat\nrepeat\nrepeat\n").unwrap();
+
+        let context = WorkspaceOpContext::new("test-edit-nth", CancellationToken::new());
+        let result = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: "repeat".to_string(),
+                        new_string: "done".to_string(),
+                        match_selection: Some(EditMatchSelection::Nth {
+                            match_index: Some(2),
+                        }),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect("nth match mode should succeed");
+
+        assert_eq!(result.changes_made, 1);
+        let updated = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(updated, "repeat\ndone\nrepeat\n");
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_with_match_mode_exactly_one_explicit_matches_default_behavior() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+        let context =
+            WorkspaceOpContext::new("test-edit-exactly-one-explicit", CancellationToken::new());
+        let err = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: "repeat".to_string(),
+                        new_string: "done".to_string(),
+                        match_selection: Some(EditMatchSelection::ExactlyOne),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect_err("explicit exactly_one should fail on non-unique matches");
+
+        assert!(matches!(
+            err,
+            WorkspaceError::Edit(EditFailure::NonUniqueMatch {
+                edit_index: 1,
+                occurrences: 2,
                 ..
             })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_rejects_invalid_nth_selection_without_match_index() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+        let context =
+            WorkspaceOpContext::new("test-edit-nth-missing-index", CancellationToken::new());
+        let err = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: "repeat".to_string(),
+                        new_string: "done".to_string(),
+                        match_selection: Some(EditMatchSelection::Nth { match_index: None }),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect_err("nth without match_index should fail");
+
+        assert!(matches!(
+            err,
+            WorkspaceError::Edit(EditFailure::InvalidMatchSelection {
+                edit_index: 1,
+                ref message,
+                ..
+            }) if message.contains("match_index is required")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_apply_edits_rejects_out_of_range_nth_selection_index() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "repeat\nrepeat\n").unwrap();
+
+        let context =
+            WorkspaceOpContext::new("test-edit-nth-out-of-range", CancellationToken::new());
+        let err = workspace
+            .apply_edits(
+                ApplyEditsRequest {
+                    file_path: file_path.display().to_string(),
+                    edits: vec![crate::EditOperation {
+                        old_string: "repeat".to_string(),
+                        new_string: "done".to_string(),
+                        match_selection: Some(EditMatchSelection::Nth {
+                            match_index: Some(3),
+                        }),
+                    }],
+                },
+                &context,
+            )
+            .await
+            .expect_err("nth out of range should fail");
+
+        assert!(matches!(
+            err,
+            WorkspaceError::Edit(EditFailure::InvalidMatchSelection {
+                edit_index: 1,
+                ref message,
+                ..
+            }) if message.contains("out of range")
         ));
     }
 
