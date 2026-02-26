@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.16.1...steer-v0.17.0) - 2026-02-26
+
+### Fixed
+
+- *(grpc)* increase message size limit for large sessions
+
+### Other
+
+- *(docs, cli)* [**breaking**] remove deprecated system-prompt flag and refresh readme
+
 ## [0.16.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.15.0...steer-v0.16.0) - 2026-02-21
 
 ### Other
