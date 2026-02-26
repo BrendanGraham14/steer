@@ -1668,8 +1668,7 @@ impl Tui {
                 editing_message_id.as_deref(),
             );
 
-            self.chat_viewport
-                .render(f, layout.chat, spinner_state, None, &self.theme);
+            self.chat_viewport.render(f, layout.chat, &self.theme);
 
             let input_panel = InputPanel::new(InputPanelParams {
                 input_mode,
