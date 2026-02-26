@@ -15,6 +15,7 @@ use ratatui::{
     layout::Rect,
     text::{Line, Span},
 };
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use steer_grpc::client_api::{AssistantContent, Message, MessageData, UserContent};
@@ -230,7 +231,7 @@ impl ChatViewport {
     /// Diff raw ChatItems; rebuild only when dirty / width or mode changed.
     pub fn rebuild(
         &mut self,
-        raw: &Vec<&ChatItem>,
+        raw: &[&ChatItem],
         width: u16,
         mode: ViewMode,
         theme: &Theme,
@@ -238,7 +239,29 @@ impl ChatViewport {
         editing_message_id: Option<&str>,
     ) {
         self.rebuild_with_context(
-            raw,
+            Some(raw),
+            width,
+            mode,
+            RebuildContext {
+                theme,
+                chat_store,
+                editing_message_id,
+                spacing: theme.message_spacing(),
+            },
+        );
+    }
+
+    /// Rebuild from ChatStore directly to avoid allocating a temporary item vector per frame.
+    pub fn rebuild_from_store(
+        &mut self,
+        width: u16,
+        mode: ViewMode,
+        theme: &Theme,
+        chat_store: &ChatStore,
+        editing_message_id: Option<&str>,
+    ) {
+        self.rebuild_with_context(
+            None,
             width,
             mode,
             RebuildContext {
@@ -253,7 +276,7 @@ impl ChatViewport {
     #[cfg(test)]
     fn rebuild_for_test(
         &mut self,
-        raw: &Vec<&ChatItem>,
+        raw: &[&ChatItem],
         width: u16,
         mode: ViewMode,
         theme: &Theme,
@@ -262,7 +285,7 @@ impl ChatViewport {
         spacing: u16,
     ) {
         self.rebuild_with_context(
-            raw,
+            Some(raw),
             width,
             mode,
             RebuildContext {
@@ -276,7 +299,7 @@ impl ChatViewport {
 
     fn rebuild_with_context(
         &mut self,
-        raw: &Vec<&ChatItem>,
+        raw: Option<&[&ChatItem]>,
         width: u16,
         mode: ViewMode,
         context: RebuildContext<'_>,
@@ -303,33 +326,56 @@ impl ChatViewport {
         self.last_rebuild_mode = mode;
         self.state.view_mode = mode;
 
-        // Apply filtering based on active_message_id
-        let filtered_items = if let Some(active_id) = &chat_store.active_message_id() {
-            // Build lineage set by following parent_message_id chain
+        if !self.dirty {
+            if width_changed || mode_changed {
+                for item in &mut self.items {
+                    item.cached_heights.invalidate(width_changed, mode_changed);
+                }
+            }
+
+            self.rebuild_segment_index(width, mode, spacing as usize, theme);
+            self.state.total_content_height = self.total_content_height;
+            self.state.visible_range = None;
+            return;
+        }
+
+        let raw_items: Cow<'_, [&ChatItem]> = match raw {
+            Some(raw) => Cow::Borrowed(raw),
+            None => Cow::Owned(chat_store.iter_items().collect()),
+        };
+
+        let edited_message_ids = build_edited_message_ids(chat_store);
+
+        // Flatten raw items into 1:1 widget items.
+        let flattened = if let Some(active_id) = &chat_store.active_message_id() {
+            // Build lineage set by following parent_message_id chain.
             let lineage = build_lineage_set(active_id, chat_store);
 
             // Include pre-compaction history by stitching in ancestors of compaction heads.
             let visible_messages = build_visible_message_set(&lineage, chat_store);
 
             // Filter items to only show those in the visible message set or attached to it.
-            raw.iter()
+            let filtered_items = raw_items
+                .iter()
                 .filter(|item| is_visible(item, &visible_messages, chat_store))
                 .copied()
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+
+            Self::flatten_items(
+                &filtered_items,
+                &edited_message_ids,
+                editing_message_id,
+                chat_store,
+            )
         } else {
-            // No active branch - show everything
-            raw.clone()
+            // No active branch - show everything.
+            Self::flatten_items(
+                &raw_items,
+                &edited_message_ids,
+                editing_message_id,
+                chat_store,
+            )
         };
-
-        let edited_message_ids = build_edited_message_ids(chat_store);
-
-        // Flatten raw items into 1:1 widget items
-        let flattened = Self::flatten_items(
-            &filtered_items,
-            &edited_message_ids,
-            editing_message_id,
-            chat_store,
-        );
 
         // Build a map of existing widgets by ID for reuse
         let mut existing_widgets: HashMap<String, WidgetItem> = HashMap::new();
@@ -1104,7 +1150,7 @@ mod tests {
                 // Rebuild viewport with messages
                 let chat_store = create_test_chat_store();
                 viewport.rebuild(
-                    &messages.iter().collect(),
+                    &messages.iter().collect::<Vec<_>>(),
                     area.width,
                     ViewMode::Compact,
                     &theme,
@@ -1179,7 +1225,7 @@ mod tests {
                 // Rebuild viewport
                 let chat_store = create_test_chat_store();
                 viewport.rebuild(
-                    &messages.iter().collect(),
+                    &messages.iter().collect::<Vec<_>>(),
                     area.width,
                     ViewMode::Compact,
                     &theme,
@@ -1273,7 +1319,7 @@ mod tests {
             // Rebuild viewport
             let chat_store = create_test_chat_store();
             viewport.rebuild(
-                &messages.iter().collect(),
+                &messages.iter().collect::<Vec<_>>(),
                 area.width,
                 ViewMode::Compact,
                 &theme,
@@ -1350,7 +1396,7 @@ mod tests {
 
         // Rebuild viewport
         viewport.rebuild(
-            &messages.iter().collect(),
+            &messages.iter().collect::<Vec<_>>(),
             area.width,
             ViewMode::Compact,
             &theme,
@@ -1402,7 +1448,7 @@ mod tests {
 
         // Rebuild viewport
         viewport.rebuild(
-            &messages.iter().collect(),
+            &messages.iter().collect::<Vec<_>>(),
             area.width,
             ViewMode::Compact,
             &theme,
@@ -1472,7 +1518,7 @@ mod tests {
 
                 let chat_store = create_test_chat_store();
                 viewport.rebuild_for_test(
-                    &messages.iter().collect(),
+                    &messages.iter().collect::<Vec<_>>(),
                     area.width,
                     ViewMode::Compact,
                     &theme,
@@ -1527,7 +1573,7 @@ mod tests {
         let chat_store = create_test_chat_store();
 
         viewport.rebuild_for_test(
-            &messages.iter().collect(),
+            &messages.iter().collect::<Vec<_>>(),
             area.width,
             ViewMode::Compact,
             &theme,
@@ -1565,7 +1611,7 @@ mod tests {
         let chat_store = create_test_chat_store();
 
         viewport.rebuild_for_test(
-            &messages.iter().collect(),
+            &messages.iter().collect::<Vec<_>>(),
             area.width,
             ViewMode::Compact,
             &theme,
@@ -1685,7 +1731,7 @@ mod tests {
         let chat_store = create_test_chat_store();
 
         viewport.rebuild(
-            &messages.iter().collect(),
+            &messages.iter().collect::<Vec<_>>(),
             area.width,
             ViewMode::Compact,
             &theme,
@@ -1723,7 +1769,7 @@ mod tests {
         let chat_store = create_test_chat_store();
 
         viewport.rebuild(
-            &messages.iter().collect(),
+            &messages.iter().collect::<Vec<_>>(),
             area.width,
             ViewMode::Compact,
             &theme,
@@ -1767,7 +1813,7 @@ mod tests {
         let chat_store = create_test_chat_store();
 
         viewport.rebuild(
-            &messages.iter().collect(),
+            &messages.iter().collect::<Vec<_>>(),
             area.width,
             ViewMode::Compact,
             &theme,
@@ -1807,7 +1853,7 @@ mod tests {
         let chat_store = create_test_chat_store();
 
         viewport.rebuild_for_test(
-            &messages.iter().collect(),
+            &messages.iter().collect::<Vec<_>>(),
             area.width,
             ViewMode::Compact,
             &theme,

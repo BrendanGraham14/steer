@@ -219,7 +219,7 @@ fn bench_chat_viewport_steady_scroll_flat(c: &mut Criterion) {
                         terminal
                             .draw(|f| {
                                 let area = f.area();
-                                viewport.render(f, area, 0, None, &theme);
+                                viewport.render(f, area, &theme);
                             })
                             .expect("prime viewport frame");
 
@@ -238,7 +238,7 @@ fn bench_chat_viewport_steady_scroll_flat(c: &mut Criterion) {
                             terminal
                                 .draw(|f| {
                                     let area = f.area();
-                                    viewport.render(f, area, 0, None, &theme);
+                                    viewport.render(f, area, &theme);
                                 })
                                 .expect("draw benchmark frame");
                         }
@@ -324,7 +324,7 @@ fn bench_chat_viewport_steady_scroll_rich_markdown(c: &mut Criterion) {
                         terminal
                             .draw(|f| {
                                 let area = f.area();
-                                viewport.render(f, area, 0, None, &theme);
+                                viewport.render(f, area, &theme);
                             })
                             .expect("prime viewport frame");
 
@@ -343,7 +343,7 @@ fn bench_chat_viewport_steady_scroll_rich_markdown(c: &mut Criterion) {
                             terminal
                                 .draw(|f| {
                                     let area = f.area();
-                                    viewport.render(f, area, 0, None, &theme);
+                                    viewport.render(f, area, &theme);
                                 })
                                 .expect("draw benchmark frame");
                         }
@@ -423,7 +423,7 @@ fn bench_chat_viewport_steady_scroll_variable_length(c: &mut Criterion) {
                         terminal
                             .draw(|f| {
                                 let area = f.area();
-                                viewport.render(f, area, 0, None, &theme);
+                                viewport.render(f, area, &theme);
                             })
                             .expect("prime viewport frame");
 
@@ -442,7 +442,7 @@ fn bench_chat_viewport_steady_scroll_variable_length(c: &mut Criterion) {
                             terminal
                                 .draw(|f| {
                                     let area = f.area();
-                                    viewport.render(f, area, 0, None, &theme);
+                                    viewport.render(f, area, &theme);
                                 })
                                 .expect("draw benchmark frame");
                         }
