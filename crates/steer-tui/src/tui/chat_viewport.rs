@@ -12,7 +12,7 @@ use crate::tui::{
 };
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::Rect,
     text::{Line, Span},
 };
 use std::collections::{HashMap, HashSet};
@@ -645,48 +645,7 @@ impl ChatViewport {
         rows
     }
 
-    /// Prepare visible widgets by updating hover/spinner states
-    fn prepare_visible_widgets(
-        &mut self,
-        rows: &[RowMetrics],
-        hovered: Option<&str>,
-        spinner: usize,
-        theme: &Theme,
-    ) {
-        for row in rows {
-            let idx = match row.kind {
-                RowKind::Item { idx } => idx,
-                RowKind::Gap => continue,
-            };
-            let widget_item = &mut self.items[idx];
-            let is_hovered = hovered.is_some_and(|h| h == widget_item.id);
-
-            // Only recreate widget if hover state changed or it needs animation
-            let needs_animation = match &widget_item.item {
-                FlattenedItem::ToolInteraction { result: None, .. } => true,
-                FlattenedItem::Meta { item, .. } => matches!(
-                    &item.data,
-                    ChatItemData::PendingToolCall { .. } | ChatItemData::InFlightOperation { .. }
-                ),
-                _ => false,
-            };
-
-            if is_hovered || needs_animation {
-                // Recreate the widget with current hover/spinner state
-                widget_item.widget =
-                    create_widget_for_flattened_item(&widget_item.item, theme, is_hovered, spinner);
-            }
-        }
-    }
-
-    pub fn render(
-        &mut self,
-        f: &mut Frame,
-        area: Rect,
-        spinner: usize,
-        hovered: Option<&str>,
-        theme: &Theme,
-    ) {
+    pub fn render(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
         if self.items.is_empty() {
             return;
         }
@@ -704,56 +663,61 @@ impl ChatViewport {
             return;
         }
 
-        // Prepare visible widgets (update hover/spinner states)
-        self.prepare_visible_widgets(&rows, hovered, spinner, theme);
+        let mut y = area.y;
+        let bottom = area.y.saturating_add(area.height);
 
-        // Build constraints for ratatui Layout
-        let mut constraints = Vec::with_capacity(rows.len());
-
+        // Render each visible row directly with a running y cursor.
         for row in &rows {
-            constraints.push(Constraint::Length(row.render_h as u16));
-        }
+            if y >= bottom {
+                break;
+            }
 
-        let rects = Layout::vertical(constraints).split(area);
-        let mut rect_iter = rects.iter();
+            let remaining = bottom.saturating_sub(y);
+            let row_height = (row.render_h as u16).min(remaining);
+            if row_height == 0 {
+                continue;
+            }
 
-        // Render each visible row
-        for row in &rows {
-            if let Some(rect) = rect_iter.next() {
-                match row.kind {
-                    RowKind::Item { idx } => {
-                        let widget_item = &mut self.items[idx];
+            let rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: row_height,
+            };
 
-                        let start = row.first_visible_line;
-                        let end = start.saturating_add(row.render_h);
-                        let lines = widget_item.widget.line_slice(
-                            rect.width,
-                            self.state.view_mode,
-                            theme,
-                            start,
-                            end,
-                        );
-                        let buf = f.buffer_mut();
-                        for (row_idx, line) in lines.iter().enumerate() {
-                            let y = rect.y + row_idx as u16;
-                            buf.set_line(rect.x, y, line, rect.width);
-                        }
+            match row.kind {
+                RowKind::Item { idx } => {
+                    let widget_item = &mut self.items[idx];
+
+                    let start = row.first_visible_line;
+                    let end = start.saturating_add(rect.height as usize);
+                    let lines = widget_item.widget.line_slice(
+                        rect.width,
+                        self.state.view_mode,
+                        theme,
+                        start,
+                        end,
+                    );
+                    let buf = f.buffer_mut();
+                    for (row_idx, line) in lines.iter().enumerate() {
+                        let line_y = rect.y + row_idx as u16;
+                        buf.set_line(rect.x, line_y, line, rect.width);
                     }
-                    RowKind::Gap => {
-                        if rect.width > 0 && rect.height > 0 {
-                            let gap_style = theme.style(Component::ChatListBackground);
-                            let gap_line = Line::from(Span::styled(
-                                " ".repeat(rect.width as usize),
-                                gap_style,
-                            ));
-                            let buf = f.buffer_mut();
-                            for y in 0..rect.height {
-                                buf.set_line(rect.x, rect.y + y, &gap_line, rect.width);
-                            }
+                }
+                RowKind::Gap => {
+                    if rect.width > 0 && rect.height > 0 {
+                        let gap_style = theme.style(Component::ChatListBackground);
+                        let gap_line =
+                            Line::from(Span::styled(" ".repeat(rect.width as usize), gap_style));
+                        let buf = f.buffer_mut();
+                        for dy in 0..rect.height {
+                            buf.set_line(rect.x, rect.y + dy, &gap_line, rect.width);
                         }
                     }
                 }
             }
+
+            y = y.saturating_add(row_height);
         }
     }
 }
@@ -1149,7 +1113,7 @@ mod tests {
                 );
 
                 // Render the viewport
-                viewport.render(f, area, 0, None, &theme);
+                viewport.render(f, area, &theme);
             })
             .unwrap();
 
@@ -1240,7 +1204,7 @@ mod tests {
                 viewport.state.scroll_to_bottom();
 
                 // Render
-                viewport.render(f, area, 0, None, &theme);
+                viewport.render(f, area, &theme);
             })
 .unwrap();
 
@@ -1333,7 +1297,7 @@ mod tests {
             viewport.state.scroll_to_bottom();
 
             // Render
-            viewport.render(f, area, 0, None, &theme);
+            viewport.render(f, area, &theme);
         })
         .unwrap();
 
@@ -1527,7 +1491,7 @@ mod tests {
                 // Offset into the spacing segment so we render one gap row and one content row.
                 viewport.state.offset = first_height.saturating_add(1);
 
-                viewport.render(f, area, 0, None, &theme);
+                viewport.render(f, area, &theme);
             })
             .unwrap();
 
