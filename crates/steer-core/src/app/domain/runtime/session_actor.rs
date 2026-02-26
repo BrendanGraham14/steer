@@ -920,7 +920,7 @@ fn drop_stale_read_file_results(messages: &mut Vec<crate::app::conversation::Mes
         };
 
         match metadata.name.as_str() {
-            steer_tools::tools::VIEW_TOOL_NAME
+            steer_tools::tools::READ_FILE_TOOL_NAME
                 if matches!(result, crate::app::conversation::ToolResult::FileContent(_)) =>
             {
                 read_results_by_path
@@ -1008,7 +1008,7 @@ fn collect_tool_call_metadata(
             };
 
             let file_path = match tool_call.name.as_str() {
-                steer_tools::tools::VIEW_TOOL_NAME
+                steer_tools::tools::READ_FILE_TOOL_NAME
                 | steer_tools::tools::EDIT_TOOL_NAME
                 | steer_tools::tools::MULTI_EDIT_TOOL_NAME
                 | steer_tools::tools::REPLACE_TOOL_NAME => tool_call
@@ -1359,7 +1359,7 @@ mod tests {
                                 matches!(
                                     block,
                                     AssistantContent::ToolCall { tool_call, .. }
-                                        if tool_call.name == steer_tools::tools::VIEW_TOOL_NAME
+                                        if tool_call.name == steer_tools::tools::READ_FILE_TOOL_NAME
                                 )
                             })
                             .count(),
@@ -1372,7 +1372,7 @@ mod tests {
                     content: vec![AssistantContent::ToolCall {
                         tool_call: ToolCall {
                             id: format!("simulated_read_{read_call_count}"),
-                            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                            name: steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
                             parameters: json!({
                                 "file_path": self.file_path,
                                 "offset": read_call_count * 2000 + 1,
@@ -1780,7 +1780,7 @@ mod tests {
                 data: MessageData::Assistant {
                     content: vec![AssistantContent::ToolCall {
                         tool_call: ToolCall {
-                            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                            name: steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
                             parameters: json!({"file_path": "/tmp/a.rs", "offset": 1, "limit": 50}),
                             id: "read-a-1".to_string(),
                         },
@@ -1809,7 +1809,7 @@ mod tests {
                 data: MessageData::Assistant {
                     content: vec![AssistantContent::ToolCall {
                         tool_call: ToolCall {
-                            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                            name: steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
                             parameters: json!({"file_path": "/tmp/a.rs", "offset": 20, "limit": 50}),
                             id: "read-a-2".to_string(),
                         },
@@ -1872,7 +1872,7 @@ mod tests {
                 data: MessageData::Assistant {
                     content: vec![AssistantContent::ToolCall {
                         tool_call: ToolCall {
-                            name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                            name: steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
                             parameters: json!({"file_path": "/tmp/a.rs", "offset": 1, "limit": 200}),
                             id: "read-a-3".to_string(),
                         },
@@ -1945,7 +1945,7 @@ mod tests {
                         },
                         AssistantContent::ToolCall {
                             tool_call: ToolCall {
-                                name: steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+                                name: steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
                                 parameters: json!({"file_path": "/tmp/a.rs"}),
                                 id: "read-1".to_string(),
                             },

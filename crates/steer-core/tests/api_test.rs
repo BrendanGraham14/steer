@@ -13,7 +13,7 @@ use steer_core::test_utils;
 use steer_core::tools::ToolRegistry;
 use steer_core::tools::builtin_tools::{
     AstGrepTool, BashTool, DispatchAgentTool, EditTool, FetchTool, GlobTool, GrepTool, LsTool,
-    MultiEditTool, ReplaceTool, TodoReadTool, TodoWriteTool, ViewTool,
+    MultiEditTool, ReadFileTool, ReplaceTool, TodoReadTool, TodoWriteTool,
 };
 use steer_core::tools::capability::Capabilities;
 use steer_core::tools::{DispatchAgentParams, DispatchAgentTarget, WorkspaceTarget};
@@ -118,7 +118,7 @@ async fn default_tool_schemas() -> Vec<Tool> {
     registry.register_builtin(GrepTool);
     registry.register_builtin(GlobTool);
     registry.register_builtin(LsTool);
-    registry.register_builtin(ViewTool);
+    registry.register_builtin(ReadFileTool);
     registry.register_builtin(BashTool);
     registry.register_builtin(EditTool);
     registry.register_builtin(MultiEditTool);

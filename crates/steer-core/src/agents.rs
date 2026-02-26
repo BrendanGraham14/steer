@@ -9,7 +9,8 @@ use crate::config::model::ModelId;
 use steer_tools::tools::edit::multi_edit::MULTI_EDIT_TOOL_NAME;
 use steer_tools::tools::replace::REPLACE_TOOL_NAME;
 use steer_tools::tools::{
-    BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME,
+    BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
+    READ_FILE_TOOL_NAME,
 };
 
 pub const DEFAULT_AGENT_SPEC_ID: &str = "explore";
@@ -134,16 +135,21 @@ pub fn agent_specs_prompt() -> String {
 }
 
 fn default_agent_specs() -> Vec<AgentSpec> {
-    let explore_tools = vec![GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, VIEW_TOOL_NAME]
-        .into_iter()
-        .map(|tool| tool.to_string())
-        .collect();
+    let explore_tools = vec![
+        GLOB_TOOL_NAME,
+        GREP_TOOL_NAME,
+        LS_TOOL_NAME,
+        READ_FILE_TOOL_NAME,
+    ]
+    .into_iter()
+    .map(|tool| tool.to_string())
+    .collect();
 
     let build_tools = vec![
         GLOB_TOOL_NAME,
         GREP_TOOL_NAME,
         LS_TOOL_NAME,
-        VIEW_TOOL_NAME,
+        READ_FILE_TOOL_NAME,
         EDIT_TOOL_NAME,
         MULTI_EDIT_TOOL_NAME,
         REPLACE_TOOL_NAME,

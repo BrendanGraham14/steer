@@ -15,7 +15,7 @@ const EDIT_DESCRIPTION: &str = r"This is a tool for editing files. For moving or
 
 Before using this tool:
 
-1. Use the View tool to understand the file's contents and context
+1. Use the read_file tool to understand the file's contents and context
 
 2. Verify the directory path is correct:
  - Use the LS tool to verify the parent directory exists and is the correct location

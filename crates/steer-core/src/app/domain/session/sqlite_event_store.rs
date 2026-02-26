@@ -981,8 +981,8 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use steer_tools::error::{ToolError, ToolExecutionError, WorkspaceOpError};
     use steer_tools::result::ToolResult;
+    use steer_tools::tools::read_file::ReadFileError;
     use steer_tools::tools::todo::{TodoItem, TodoPriority, TodoStatus};
-    use steer_tools::tools::view::ViewError;
 
     const PNG_1X1_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2N8AAAAASUVORK5CYII=";
 
@@ -1137,9 +1137,9 @@ mod tests {
 
         store.create_session(session_id).await.unwrap();
 
-        let tool_error = ToolError::Execution(ToolExecutionError::View(ViewError::Workspace(
-            WorkspaceOpError::NotFound,
-        )));
+        let tool_error = ToolError::Execution(ToolExecutionError::ReadFile(
+            ReadFileError::Workspace(WorkspaceOpError::NotFound),
+        ));
         let message = Message {
             timestamp: 0,
             id: "tool-msg-1".to_string(),
@@ -1173,9 +1173,9 @@ mod tests {
 
         store.create_session(session_id).await.unwrap();
 
-        let tool_error = ToolError::Execution(ToolExecutionError::View(ViewError::Workspace(
-            WorkspaceOpError::NotFound,
-        )));
+        let tool_error = ToolError::Execution(ToolExecutionError::ReadFile(
+            ReadFileError::Workspace(WorkspaceOpError::NotFound),
+        ));
         let event = SessionEvent::ToolCallCompleted {
             id: ToolCallId::new(),
             name: "read_file".to_string(),

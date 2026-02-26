@@ -7,11 +7,11 @@ use ratatui::{
 use serde_json::Value;
 use std::path::Path;
 use steer_grpc::client_api::ToolResult;
-use steer_tools::tools::view::ViewParams;
+use steer_tools::tools::read_file::ReadFileParams;
 
-pub struct ViewFormatter;
+pub struct ReadFileFormatter;
 
-impl ToolFormatter for ViewFormatter {
+impl ToolFormatter for ReadFileFormatter {
     fn compact(
         &self,
         params: &Value,
@@ -21,9 +21,9 @@ impl ToolFormatter for ViewFormatter {
     ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
-        let Ok(params) = serde_json::from_value::<ViewParams>(params.clone()) else {
+        let Ok(params) = serde_json::from_value::<ReadFileParams>(params.clone()) else {
             return vec![Line::from(Span::styled(
-                "Invalid view params",
+                "Invalid read_file params",
                 theme.style(Component::ErrorText),
             ))];
         };
@@ -52,7 +52,7 @@ impl ToolFormatter for ViewFormatter {
         }
 
         // Add count info from results
-        let info = extract_view_info(result);
+        let info = extract_read_file_info(result);
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
             format!("({info})"),
@@ -76,7 +76,7 @@ impl ToolFormatter for ViewFormatter {
     }
 }
 
-fn extract_view_info(result: &Option<ToolResult>) -> String {
+fn extract_read_file_info(result: &Option<ToolResult>) -> String {
     match result {
         Some(ToolResult::FileContent(file_content)) => {
             let line_count = file_content.content.lines().count();

@@ -7,8 +7,8 @@ use steer_core::app::domain::types::SessionId;
 use steer_core::tools::{DISPATCH_AGENT_TOOL_NAME, FETCH_TOOL_NAME};
 use steer_tools::tools::{
     BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
-    MULTI_EDIT_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME,
-    VIEW_TOOL_NAME,
+    MULTI_EDIT_TOOL_NAME, READ_FILE_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME,
+    TODO_WRITE_TOOL_NAME,
 };
 
 use super::Command;
@@ -138,7 +138,7 @@ impl HeadlessCommand {
                 GREP_TOOL_NAME,
                 GLOB_TOOL_NAME,
                 LS_TOOL_NAME,
-                VIEW_TOOL_NAME,
+                READ_FILE_TOOL_NAME,
                 EDIT_TOOL_NAME,
                 MULTI_EDIT_TOOL_NAME,
                 REPLACE_TOOL_NAME,

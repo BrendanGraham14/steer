@@ -17,8 +17,8 @@ use steer_auth_plugin::{
 };
 use steer_tools::tools::{
     AST_GREP_TOOL_NAME, BASH_TOOL_NAME, DISPATCH_AGENT_TOOL_NAME, EDIT_TOOL_NAME, FETCH_TOOL_NAME,
-    GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, MULTI_EDIT_TOOL_NAME, REPLACE_TOOL_NAME,
-    TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, VIEW_TOOL_NAME,
+    GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, MULTI_EDIT_TOOL_NAME, READ_FILE_TOOL_NAME,
+    REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME,
 };
 
 mod callback_server;
@@ -132,7 +132,7 @@ You are running Codex inside Steer, an open-source terminal coding assistant.
 - read_plan does NOT exist. Use `{TODO_READ_TOOL_NAME}` instead.
 
 ### Steer tool names
-- File: `{VIEW_TOOL_NAME}`, `{REPLACE_TOOL_NAME}`, `{EDIT_TOOL_NAME}`, `{MULTI_EDIT_TOOL_NAME}`
+- File: `{READ_FILE_TOOL_NAME}`, `{REPLACE_TOOL_NAME}`, `{EDIT_TOOL_NAME}`, `{MULTI_EDIT_TOOL_NAME}`
 - Search: `{GREP_TOOL_NAME}` (text), `{AST_GREP_TOOL_NAME}` (syntax), `{GLOB_TOOL_NAME}` (paths), `{LS_TOOL_NAME}` (list directories)
 - Exec: `{BASH_TOOL_NAME}`
 - Web: `{FETCH_TOOL_NAME}`
@@ -142,7 +142,7 @@ You are running Codex inside Steer, an open-source terminal coding assistant.
 Tool names are case-sensitive; use exact casing.
 
 ### File path rules
-- `{VIEW_TOOL_NAME}`, `{REPLACE_TOOL_NAME}`, `{EDIT_TOOL_NAME}`, `{MULTI_EDIT_TOOL_NAME}`, and `{LS_TOOL_NAME}` require absolute paths.
+- `{READ_FILE_TOOL_NAME}`, `{REPLACE_TOOL_NAME}`, `{EDIT_TOOL_NAME}`, `{MULTI_EDIT_TOOL_NAME}`, and `{LS_TOOL_NAME}` require absolute paths.
 
 ### Edit semantics
 - `{EDIT_TOOL_NAME}` uses exact string replacement (empty `old_string` creates a file).

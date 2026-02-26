@@ -4,16 +4,16 @@ use super::workspace_op_error;
 use crate::tools::builtin_tool::{BuiltinTool, BuiltinToolContext, BuiltinToolError};
 use crate::tools::capability::Capabilities;
 use steer_tools::result::FileContentResult;
-use steer_tools::tools::view::{ViewError, ViewParams, ViewToolSpec};
+use steer_tools::tools::read_file::{ReadFileError, ReadFileParams, ReadFileToolSpec};
 use steer_workspace::{ReadFileRequest, WorkspaceOpContext};
 
-pub struct ViewTool;
+pub struct ReadFileTool;
 
 #[async_trait]
-impl BuiltinTool for ViewTool {
-    type Params = ViewParams;
+impl BuiltinTool for ReadFileTool {
+    type Params = ReadFileParams;
     type Output = FileContentResult;
-    type Spec = ViewToolSpec;
+    type Spec = ReadFileToolSpec;
 
     const DESCRIPTION: &'static str = concat!(
         "Reads a file from the local filesystem. The file_path parameter must be an absolute path, not a relative path.\n",
@@ -29,7 +29,7 @@ impl BuiltinTool for ViewTool {
         &self,
         params: Self::Params,
         ctx: &BuiltinToolContext,
-    ) -> Result<Self::Output, BuiltinToolError<ViewError>> {
+    ) -> Result<Self::Output, BuiltinToolError<ReadFileError>> {
         let request = ReadFileRequest {
             file_path: params.file_path,
             offset: params.offset,
@@ -42,6 +42,8 @@ impl BuiltinTool for ViewTool {
             .workspace
             .read_file(request, &op_ctx)
             .await
-            .map_err(|e| BuiltinToolError::execution(ViewError::Workspace(workspace_op_error(e))))
+            .map_err(|e| {
+                BuiltinToolError::execution(ReadFileError::Workspace(workspace_op_error(e)))
+            })
     }
 }

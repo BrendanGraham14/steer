@@ -6,9 +6,9 @@ pub mod fetch;
 pub mod glob;
 pub mod grep;
 pub mod ls;
+pub mod read_file;
 pub mod replace;
 pub mod todo;
-pub mod view;
 
 pub use astgrep::AstGrepTool;
 pub use bash::BashTool;
@@ -18,9 +18,9 @@ pub use fetch::FetchTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
 pub use ls::LsTool;
+pub use read_file::ReadFileTool;
 pub use replace::ReplaceTool;
 pub use todo::{TodoReadTool, TodoWriteTool};
-pub use view::ViewTool;
 
 use crate::session::state::ToolVisibility;
 
@@ -38,7 +38,7 @@ pub(crate) const ALL_BUILTIN_TOOL_NAMES: &[&str] = &[
     steer_tools::tools::REPLACE_TOOL_NAME,
     steer_tools::tools::TODO_READ_TOOL_NAME,
     steer_tools::tools::TODO_WRITE_TOOL_NAME,
-    steer_tools::tools::VIEW_TOOL_NAME,
+    steer_tools::tools::READ_FILE_TOOL_NAME,
 ];
 
 pub(crate) fn register_builtin_tools(registry: &mut super::ToolRegistry) {
@@ -76,9 +76,9 @@ pub(crate) fn register_builtin_tools_for_visibility(
     register_if_visible(
         registry,
         visibility,
-        steer_tools::tools::VIEW_TOOL_NAME,
+        steer_tools::tools::READ_FILE_TOOL_NAME,
         |registry| {
-            registry.register_builtin(ViewTool);
+            registry.register_builtin(ReadFileTool);
         },
     );
     register_if_visible(
@@ -201,7 +201,7 @@ pub const READ_ONLY_TOOL_NAMES: &[&str] = &[
     steer_tools::tools::AST_GREP_TOOL_NAME,
     steer_tools::tools::GLOB_TOOL_NAME,
     steer_tools::tools::LS_TOOL_NAME,
-    steer_tools::tools::VIEW_TOOL_NAME,
+    steer_tools::tools::READ_FILE_TOOL_NAME,
     steer_tools::tools::TODO_READ_TOOL_NAME,
     // This mutates only the session todo list and is intentionally auto-approved.
     steer_tools::tools::TODO_WRITE_TOOL_NAME,
@@ -230,7 +230,7 @@ mod tests {
     fn register_builtin_tools_for_visibility_honors_whitelist() {
         let mut registry = crate::tools::ToolRegistry::new();
         let visibility = ToolVisibility::Whitelist(HashSet::from([
-            steer_tools::tools::VIEW_TOOL_NAME.to_string(),
+            steer_tools::tools::READ_FILE_TOOL_NAME.to_string(),
             steer_tools::tools::TODO_READ_TOOL_NAME.to_string(),
         ]));
 
@@ -241,7 +241,7 @@ mod tests {
 
         let mut expected = vec![
             steer_tools::tools::TODO_READ_TOOL_NAME,
-            steer_tools::tools::VIEW_TOOL_NAME,
+            steer_tools::tools::READ_FILE_TOOL_NAME,
         ];
         expected.sort_unstable();
 

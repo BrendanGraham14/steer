@@ -182,7 +182,7 @@ mod tests {
     use steer_tools::tools::replace::REPLACE_TOOL_NAME;
     use steer_tools::tools::{
         BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
-        VIEW_TOOL_NAME,
+        READ_FILE_TOOL_NAME,
     };
     use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
@@ -263,7 +263,7 @@ mod tests {
             GLOB_TOOL_NAME,
             GREP_TOOL_NAME,
             LS_TOOL_NAME,
-            VIEW_TOOL_NAME,
+            READ_FILE_TOOL_NAME,
             EDIT_TOOL_NAME,
             MULTI_EDIT_TOOL_NAME,
             REPLACE_TOOL_NAME,
@@ -311,7 +311,7 @@ mod tests {
 
         let parent_session_id = crate::app::domain::types::SessionId::new();
         let allowed_tools = vec![
-            VIEW_TOOL_NAME.to_string(),
+            READ_FILE_TOOL_NAME.to_string(),
             "mcp__alpha__allowed".to_string(),
         ];
         let system_prompt = "subagent system".to_string();
