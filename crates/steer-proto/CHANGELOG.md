@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.16.1...steer-proto-v0.17.0) - 2026-02-26
+
+### Added
+
+- *(tools)* add raw reads and typed edit failures
+- *(grpc,tui)* propagate processing operation kind for notifications
+
 ## [0.16.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.15.0...steer-proto-v0.16.0) - 2026-02-21
 
 ### Added

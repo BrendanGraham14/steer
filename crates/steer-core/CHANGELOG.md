@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.16.1...steer-core-v0.17.0) - 2026-02-26
+
+### Added
+
+- *(tools)* strengthen workspace isolation guidance for editing sub-agents
+- *(tools)* add raw reads and typed edit failures
+
+### Fixed
+
+- *(tools)* require relative repo paths in dispatch_agent prompts
+- *(tools)* reject empty grep patterns
+
 ## [0.16.1](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.16.0...steer-core-v0.16.1) - 2026-02-23
 
 ### Added
