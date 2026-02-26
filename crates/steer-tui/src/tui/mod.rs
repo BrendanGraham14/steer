@@ -24,7 +24,7 @@ use crate::tui::update::UpdateStatus;
 use crate::error::{Error, Result};
 use crate::notifications::{NotificationManager, NotificationManagerHandle};
 use crate::tui::commands::registry::CommandRegistry;
-use crate::tui::model::{ChatItem, NoticeLevel, TuiCommandResponse};
+use crate::tui::model::{NoticeLevel, TuiCommandResponse};
 use crate::tui::theme::Theme;
 use futures::{FutureExt, StreamExt};
 use image::ImageFormat;
@@ -1643,9 +1643,6 @@ impl Tui {
                 self.last_revision = current_revision;
             }
 
-            // Get chat items from the chat store
-            let chat_items: Vec<&ChatItem> = self.chat_store.as_items();
-
             let terminal_size = f.area();
 
             let queue_preview = self.queued_head.as_ref().map(|item| item.content.as_str());
@@ -1659,8 +1656,7 @@ impl Tui {
             let layout = UiLayout::compute(terminal_size, input_area_height, &self.theme);
             layout.prepare_background(f, &self.theme);
 
-            self.chat_viewport.rebuild(
-                &chat_items,
+            self.chat_viewport.rebuild_from_store(
                 layout.chat.width,
                 self.chat_viewport.state().view_mode,
                 &self.theme,
