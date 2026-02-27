@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2](https://github.com/BrendanGraham14/steer/compare/steer-auth-openai-v0.16.1...steer-auth-openai-v0.16.2) - 2026-02-27
+
+### Other
+
+- *(tools)* rename view modules and symbols to read_file
+
 ## [0.13.1](https://github.com/BrendanGraham14/steer/compare/steer-auth-openai-v0.12.0...steer-auth-openai-v0.13.1) - 2026-02-17
 
 ### Other

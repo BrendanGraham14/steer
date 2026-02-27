@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.16.1...steer-tui-v0.16.2) - 2026-02-27
+
+### Other
+
+- *(tools)* rename view modules and symbols to read_file
+- *(tui)* skip redundant viewport rebuild work
+- *(tui)* optimize chat viewport render path
+- *(tui)* optimize chat viewport rendering and expand perf benches
+
 ## [0.16.1](https://github.com/BrendanGraham14/steer/compare/steer-tui-v0.16.0...steer-tui-v0.16.1) - 2026-02-23
 
 ### Added
