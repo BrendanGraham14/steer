@@ -89,20 +89,20 @@ steer
 /auth
 ```
 
-### Catalogs
+### Config Files
 
-Catalogs are TOML files that define both model providers and models. Steer ships with a built-in default catalog and will also auto-discover:
-- ./.steer/catalog.toml (project-level)
-- <user config dir>/catalog.toml (user-level; platform-specific)
-  - macOS: ~/Library/Application Support/steer/catalog.toml
-  - Linux: ~/.config/steer/catalog.toml
-  - Windows: %APPDATA%\steer\catalog.toml
+Steer reads config from two places, the project-level `.steer/` directory in your current working directory and the following user-level directory:
 
-For session config, Steer will auto-discover:
-- ./.steer/session.toml (project-level)
-- <user config dir>/session.toml (user-level; same user config dir as above)
+| Platform | User-level config directory              |
+| -------- | ---------------------------------------- |
+| macOS    | `~/Library/Application Support/steer/`   |
+| Linux    | `~/.config/steer/`                       |
+| Windows  | `%APPDATA%\steer\`                       |
 
-You can add more with --catalog (repeatable). Later catalogs override earlier entries. Note: project configs live under ./.steer (e.g., ./.steer/session.toml, ./.steer/catalog.toml).
+Both config directories can contain the same two config files:
+
+- `catalog.toml` - Defines model providers and models. Steer always includes a built-in catalog, auto-discovers project/user catalogs, and accepts additional `--catalog <PATH>` files (repeatable). Later catalogs override earlier ones.
+- `session.toml` - Defines defaults for new sessions. Auto-discovery order is project first, then user config, and first existing file wins. Override discovery with `--session-config <PATH>`.
 
 ### gRPC server / remote mode
 
