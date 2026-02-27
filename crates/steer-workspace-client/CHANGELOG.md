@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2](https://github.com/BrendanGraham14/steer/compare/steer-workspace-client-v0.16.1...steer-workspace-client-v0.16.2) - 2026-02-27
+
+### Other
+
+- *(edit)* model match selection as ADT across workspace and remote proto
+
 ## [0.15.0](https://github.com/BrendanGraham14/steer/compare/steer-workspace-client-v0.14.2...steer-workspace-client-v0.15.0) - 2026-02-20
 
 ### Other
