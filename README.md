@@ -1,8 +1,21 @@
 # Steer
 
-Steer is an AI coding agent written in Rust.
+Steer is an AI coding agent.
 
-It includes a TUI, supports headless execution, and exposes a gRPC interface for programmatic usage.
+## Features
+
+- **Multi-provider** — Anthropic (Claude), OpenAI (Codex/GPT), Google (Gemini), xAI (Grok); extended thinking support
+- **Rich TUI** — syntax-highlighted chat, vim editing mode, themeable, terminal notifications
+- **Headless & server modes** — pipe prompts via stdin for scripting/CI; standalone gRPC server for remote/distributed usage
+- **Built-in tools** — grep, ast-grep, file editing, bash, web fetch, sub-agents, and more
+- **MCP extensibility** — connect external tool servers over stdio, TCP, Unix socket, or HTTP
+- **Sub-agents** — dispatch focused child agents for exploration or parallel work, optionally in isolated jj/git worktrees
+- **Session persistence** — resume conversations; SQLite-backed session storage
+- **Workspace-aware** — git and jj (Jujutsu) integration; tracks VCS state per session
+- **Tool approval system** — normal/plan/yolo agent modes; pre-approve tools and bash patterns in config
+- **Auto-compaction** — automatically summarizes context when the window fills up
+- **Configurable** — TOML-based catalogs, session configs, preferences, and custom slash commands
+- **Auth** — API keys, OAuth (ChatGPT/Codex), OS-native keyring storage
 
 https://github.com/user-attachments/assets/5a31ccc9-6a96-4005-ab5a-ae3aa7ae34c4
 
