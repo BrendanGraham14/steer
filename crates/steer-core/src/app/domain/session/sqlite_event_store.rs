@@ -528,6 +528,36 @@ impl EventStore for SqliteEventStore {
         Ok(events)
     }
 
+    async fn load_events_for_runtime(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<(u64, SessionEvent)>, EventStoreError> {
+        let mut events = self.load_events(session_id).await?;
+        let Some(media_root) = &self.media_root else {
+            return Ok(events);
+        };
+
+        let session_prefix = format!("{session_id}/");
+
+        for (_, event) in &mut events {
+            match event {
+                SessionEvent::UserMessageAdded { message }
+                | SessionEvent::MessageUpdated { message }
+                | SessionEvent::AssistantMessageAdded { message, .. } => {
+                    convert_message_session_files_to_data_urls(
+                        message,
+                        media_root,
+                        &session_prefix,
+                        session_id,
+                    )?;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(events)
+    }
+
     async fn load_events_after(
         &self,
         session_id: SessionId,
@@ -966,6 +996,148 @@ fn decode_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
     Ok((mime_type, decoded))
 }
 
+fn mime_type_from_extension(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "bmp" => Some("image/bmp"),
+        "tiff" | "tif" => Some("image/tiff"),
+        "heic" => Some("image/heic"),
+        "heif" => Some("image/heif"),
+        _ => None,
+    }
+}
+
+fn image_content_from_session_file(
+    image: &ImageContent,
+    relative_path: &str,
+    media_root: &Path,
+    session_prefix: &str,
+    session_id: SessionId,
+) -> Result<ImageContent, EventStoreError> {
+    validate_session_relative_path(session_id, relative_path)?;
+    if !relative_path.starts_with(session_prefix) {
+        return Err(EventStoreError::serialization(format!(
+            "Session file path must be scoped to session {session_id}: {relative_path}"
+        )));
+    }
+
+    let full_path = media_root.join(relative_path);
+    let bytes = std::fs::read(&full_path).map_err(|e| {
+        EventStoreError::database(format!(
+            "Failed to read image session file '{}': {e}",
+            full_path.display()
+        ))
+    })?;
+
+    let mime_type = if !image.mime_type.trim().is_empty() {
+        image.mime_type.clone()
+    } else if let Some(inferred) = mime_type_from_extension(&full_path) {
+        inferred.to_string()
+    } else {
+        return Err(EventStoreError::serialization(format!(
+            "Unsupported session image extension for '{}': cannot infer MIME type",
+            full_path.display()
+        )));
+    };
+
+    if !mime_type.starts_with("image/") {
+        return Err(EventStoreError::serialization(format!(
+            "Session image '{}' has unsupported MIME type '{}'",
+            full_path.display(),
+            mime_type
+        )));
+    }
+
+    let data_url = format!(
+        "data:{};base64,{}",
+        mime_type,
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    );
+
+    Ok(ImageContent {
+        mime_type,
+        source: ImageSource::DataUrl { data_url },
+        width: image.width,
+        height: image.height,
+        bytes: Some(bytes.len() as u64),
+        sha256: image.sha256.clone(),
+    })
+}
+
+fn normalize_user_content_session_files(
+    content: &mut [UserContent],
+    media_root: &Path,
+    session_prefix: &str,
+    session_id: SessionId,
+) -> Result<(), EventStoreError> {
+    for block in content {
+        if let UserContent::Image { image } = block
+            && let ImageSource::SessionFile { relative_path } = &image.source
+        {
+            *image = image_content_from_session_file(
+                image,
+                relative_path,
+                media_root,
+                session_prefix,
+                session_id,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn normalize_assistant_content_session_files(
+    content: &mut [AssistantContent],
+    media_root: &Path,
+    session_prefix: &str,
+    session_id: SessionId,
+) -> Result<(), EventStoreError> {
+    for block in content {
+        if let AssistantContent::Image { image } = block
+            && let ImageSource::SessionFile { relative_path } = &image.source
+        {
+            *image = image_content_from_session_file(
+                image,
+                relative_path,
+                media_root,
+                session_prefix,
+                session_id,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn convert_message_session_files_to_data_urls(
+    message: &mut Message,
+    media_root: &Path,
+    session_prefix: &str,
+    session_id: SessionId,
+) -> Result<(), EventStoreError> {
+    match &mut message.data {
+        MessageData::User { content } => {
+            normalize_user_content_session_files(content, media_root, session_prefix, session_id)?;
+        }
+        MessageData::Assistant { content } => {
+            normalize_assistant_content_session_files(
+                content,
+                media_root,
+                session_prefix,
+                session_id,
+            )?;
+        }
+        MessageData::Tool { .. } => {}
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1027,6 +1199,17 @@ mod tests {
                 content: vec![UserContent::Text {
                     text: text.to_string(),
                 }],
+            },
+        }
+    }
+
+    fn assistant_image_message(message_id: &str, image: ImageContent) -> Message {
+        Message {
+            timestamp: 0,
+            id: message_id.to_string(),
+            parent_message_id: None,
+            data: MessageData::Assistant {
+                content: vec![AssistantContent::Image { image }],
             },
         }
     }
@@ -1689,6 +1872,129 @@ mod tests {
                 assert!(message.contains("MIME type mismatch"));
             }
             other => panic!("expected serialization error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_runtime_load_converts_user_session_file_to_data_url() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("events.sqlite");
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let event = SessionEvent::UserMessageAdded {
+            message: user_image_message(
+                "user-msg",
+                ImageContent {
+                    mime_type: "image/png".to_string(),
+                    source: ImageSource::DataUrl {
+                        data_url: sample_png_data_url(),
+                    },
+                    width: Some(1),
+                    height: Some(1),
+                    bytes: None,
+                    sha256: None,
+                },
+            ),
+        };
+
+        store.append(session_id, &event).await.unwrap();
+
+        let raw_events = store.load_events(session_id).await.unwrap();
+        let raw_image = match &raw_events[0].1 {
+            SessionEvent::UserMessageAdded { message } => match &message.data {
+                MessageData::User { content } => match content.first() {
+                    Some(UserContent::Image { image }) => image,
+                    other => panic!("expected user image content, got {other:?}"),
+                },
+                other => panic!("expected user message data, got {other:?}"),
+            },
+            other => panic!("expected user message event, got {other:?}"),
+        };
+        assert!(matches!(raw_image.source, ImageSource::SessionFile { .. }));
+
+        let runtime_events = store.load_events_for_runtime(session_id).await.unwrap();
+        let runtime_image = match &runtime_events[0].1 {
+            SessionEvent::UserMessageAdded { message } => match &message.data {
+                MessageData::User { content } => match content.first() {
+                    Some(UserContent::Image { image }) => image,
+                    other => panic!("expected user image content, got {other:?}"),
+                },
+                other => panic!("expected user message data, got {other:?}"),
+            },
+            other => panic!("expected user message event, got {other:?}"),
+        };
+
+        match &runtime_image.source {
+            ImageSource::DataUrl { data_url } => {
+                assert!(data_url.starts_with("data:image/png;base64,"));
+            }
+            other => panic!("expected runtime data URL image, got {other:?}"),
+        }
+        assert_eq!(runtime_image.width, Some(1));
+        assert_eq!(runtime_image.height, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_runtime_load_converts_assistant_session_file_to_data_url() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("events.sqlite");
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+        let session_id = SessionId::new();
+
+        store.create_session(session_id).await.unwrap();
+
+        let event = SessionEvent::AssistantMessageAdded {
+            message: assistant_image_message(
+                "assistant-msg",
+                ImageContent {
+                    mime_type: "image/png".to_string(),
+                    source: ImageSource::DataUrl {
+                        data_url: sample_png_data_url(),
+                    },
+                    width: None,
+                    height: None,
+                    bytes: None,
+                    sha256: None,
+                },
+            ),
+            model: builtin::claude_sonnet_4_5(),
+        };
+
+        store.append(session_id, &event).await.unwrap();
+
+        let raw_events = store.load_events(session_id).await.unwrap();
+        let raw_image = match &raw_events[0].1 {
+            SessionEvent::AssistantMessageAdded { message, .. } => match &message.data {
+                MessageData::Assistant { content } => match content.first() {
+                    Some(AssistantContent::Image { image }) => image,
+                    other => panic!("expected assistant image content, got {other:?}"),
+                },
+                other => panic!("expected assistant message data, got {other:?}"),
+            },
+            other => panic!("expected assistant message event, got {other:?}"),
+        };
+        assert!(matches!(raw_image.source, ImageSource::SessionFile { .. }));
+
+        let runtime_events = store.load_events_for_runtime(session_id).await.unwrap();
+        let runtime_image = match &runtime_events[0].1 {
+            SessionEvent::AssistantMessageAdded { message, .. } => match &message.data {
+                MessageData::Assistant { content } => match content.first() {
+                    Some(AssistantContent::Image { image }) => image,
+                    other => panic!("expected assistant image content, got {other:?}"),
+                },
+                other => panic!("expected assistant message data, got {other:?}"),
+            },
+            other => panic!("expected assistant message event, got {other:?}"),
+        };
+
+        match &runtime_image.source {
+            ImageSource::DataUrl { data_url } => {
+                assert!(data_url.starts_with("data:image/png;base64,"));
+            }
+            other => panic!("expected runtime data URL image, got {other:?}"),
         }
     }
 }

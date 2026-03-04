@@ -71,6 +71,13 @@ pub trait EventStore: Send + Sync {
         session_id: SessionId,
     ) -> Result<Vec<(u64, SessionEvent)>, EventStoreError>;
 
+    async fn load_events_for_runtime(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<(u64, SessionEvent)>, EventStoreError> {
+        self.load_events(session_id).await
+    }
+
     async fn load_events_after(
         &self,
         session_id: SessionId,

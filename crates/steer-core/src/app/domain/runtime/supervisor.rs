@@ -272,7 +272,7 @@ impl RuntimeSupervisor {
             });
         }
 
-        let events = self.event_store.load_events(session_id).await?;
+        let events = self.event_store.load_events_for_runtime(session_id).await?;
 
         let mut state = AppState::new(session_id);
         for (_, event) in &events {
