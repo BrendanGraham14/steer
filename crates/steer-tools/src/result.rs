@@ -358,23 +358,12 @@ impl ToolResult {
                 }
             }
             ToolResult::TodoRead(r) => {
-                if r.todos.is_empty() {
-                    "No todos found.".to_string()
-                } else {
-                    format!(
-                        "Remember to continue to update and read from the todo list as you make progress. Here is the current list:\n{}",
-                        serde_json::to_string_pretty(&r.todos)
-                            .unwrap_or_else(|_| "Failed to format todos".to_string())
-                    )
-                }
+                serde_json::to_string_pretty(&r.todos)
+                    .unwrap_or_else(|_| "Failed to format todos".to_string())
             }
             ToolResult::TodoWrite(r) => {
-                format!(
-                    "Todos have been {:?} successfully. Ensure that you continue to read and update the todo list as you work on tasks.\n{}",
-                    r.operation,
-                    serde_json::to_string_pretty(&r.todos)
-                        .unwrap_or_else(|_| "Failed to format todos".to_string())
-                )
+                serde_json::to_string_pretty(&r.todos)
+                    .unwrap_or_else(|_| "Failed to format todos".to_string())
             }
             ToolResult::Fetch(r) => {
                 format!("Fetched content from {}:\n{}", r.url, r.content)

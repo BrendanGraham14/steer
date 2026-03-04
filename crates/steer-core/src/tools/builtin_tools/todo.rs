@@ -7,46 +7,47 @@ use steer_tools::tools::todo::TodoWriteFileOperation;
 use steer_tools::tools::todo::read::{TodoReadError, TodoReadParams, TodoReadToolSpec};
 use steer_tools::tools::todo::write::{TodoWriteError, TodoWriteParams, TodoWriteToolSpec};
 
-const TODO_READ_DESCRIPTION: &str = r#"Use this tool to read the current to-do list for the session. This tool should be used proactively and frequently to ensure that you are aware of
-the status of the current task list. You should make use of this tool as often as possible, especially in the following situations:
-- At the beginning of conversations to see what's pending
-- Before starting new tasks to prioritize work
-- When the user asks about previous tasks or plans
-- Whenever you're uncertain about what to do next
-- After completing tasks to update your understanding of remaining work
-- After every few messages to ensure you're on track
+const TODO_READ_DESCRIPTION: &str = r"Use this tool to read the current session todo list when task tracking is relevant.
+
+When this tool is helpful:
+- At the start of complex or multi-step tasks (to see if a list already exists)
+- Before giving progress updates or status summaries
+- After completing todo items to verify what remains
+- When the user asks about plans, priorities, or previous tasks
+
+When this tool is usually unnecessary:
+- Simple one-step tasks
+- Purely conversational requests
+- Repeated polling when no task state has changed
 
 Usage:
-- This tool takes in no parameters. So leave the input blank or empty. DO NOT include a dummy object, placeholder string or a key like "input" or "empty". LEAVE IT BLANK.
-- Returns a list of todo items with their status, priority, and content
-- Use this information to track progress and plan next steps
-- If no todos exist yet, an empty list will be returned"#;
+- This tool takes no parameters.
+- Returns todo items with status, priority, content, and id.
+- If no todos exist yet, it returns an empty list.";
 
-const TODO_WRITE_DESCRIPTION: &str = r"Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
+const TODO_WRITE_DESCRIPTION: &str = r"Use this tool to create or update a structured task list when it adds clear value for the current coding session.
 
-When to Use This Tool:
-1. Complex multi-step tasks - When a task requires 3 or more distinct steps
-2. Non-trivial tasks - Tasks requiring careful planning
-3. User explicitly requests todo list
-4. User provides multiple tasks
-5. After receiving new instructions
-6. After completing a task - Mark it complete
+When to use this tool:
+1. Complex tasks with multiple meaningful steps
+2. Work that benefits from explicit ordering or checkpoints
+3. Cases where the user asks for a plan or todo tracking
+4. Long-running tasks where periodic progress updates are useful
 
-When NOT to Use This Tool:
+When not to use this tool:
 1. Single, straightforward tasks
-2. Trivial tasks
-3. Tasks completed in less than 3 steps
-4. Purely conversational requests
+2. Trivial or purely conversational requests
+3. Work that will be completed in one short response
+4. Frequent micro-updates that do not change task state
 
-Task States:
+Task states:
 - pending: Task not yet started
-- in_progress: Currently working on (limit to ONE at a time)
+- in_progress: Task currently being worked on (prefer one active item)
 - completed: Task finished successfully
 
-Task Management:
-- Update status in real-time
-- Mark tasks complete IMMEDIATELY after finishing
-- Only have ONE task in_progress at any time";
+Task management:
+- Keep tasks concise and outcome-oriented
+- Update statuses when progress meaningfully changes
+- Mark tasks completed once done and keep the list tidy";
 
 pub struct TodoReadTool;
 
