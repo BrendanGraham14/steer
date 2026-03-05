@@ -82,7 +82,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.3-codex"
+id = "gpt-5.4-2026-03-05"
 recommended = false
 parameters = { max_output_tokens = 128000 }
 
@@ -115,7 +115,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.3-codex"
+id = "gpt-5.4-2026-03-05"
 recommended = false
 parameters = { max_output_tokens = 128000 }
 
@@ -128,12 +128,12 @@ parameters = { max_output_tokens = 4096 }
     let (_tmp, path) = write_catalog(catalog).expect("write catalog");
     let (client, setup) = setup_client(vec![path]).await.expect("setup client");
 
-    let resolved = resolve_with_fallback(&client, Some("codex"))
+    let resolved = resolve_with_fallback(&client, Some("gpt"))
         .await
         .expect("resolve model");
     assert_eq!(
         resolved,
-        ModelId::new(ProviderId::from("openai"), "gpt-5.3-codex")
+        ModelId::new(ProviderId::from("openai"), "gpt-5.4-2026-03-05")
     );
 
     shutdown(setup).await;
@@ -150,7 +150,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.3-codex"
+id = "gpt-5.4-2026-03-05"
 recommended = false
 parameters = { max_output_tokens = 128000 }
 

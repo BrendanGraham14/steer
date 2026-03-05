@@ -71,9 +71,9 @@ fn generate_model_constants(out_dir: &Path, models: &[ModelData]) -> std::io::Re
         }
     }
 
-    // Generate DEFAULT_MODEL constant - hardcoded to codex
+    // Generate DEFAULT_MODEL constant - hardcoded to gpt
     output
-        .push_str("\n// Default model\n#[inline]\npub fn default_model() -> ModelId { codex() }\n");
+        .push_str("\n// Default model\n#[inline]\npub fn default_model() -> ModelId { gpt() }\n");
 
     let dest_file = out_dir.join("generated_model_ids.rs");
     fs::write(&dest_file, output)?;
