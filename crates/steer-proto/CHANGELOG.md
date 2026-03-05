@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.17.0...steer-proto-v0.18.0) - 2026-03-05
+
+### Other
+
+- *(edit)* model match selection as ADT across workspace and remote proto
+
 ## [0.17.0](https://github.com/BrendanGraham14/steer/compare/steer-proto-v0.16.1...steer-proto-v0.17.0) - 2026-02-26
 
 ### Added

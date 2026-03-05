@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.17.0...steer-v0.18.0) - 2026-03-05
+
+### Other
+
+- *(readme)* feature listing
+- Rewrite the Catalog section of README.md ([#243](https://github.com/BrendanGraham14/steer/pull/243))
+- *(tools)* rename view modules and symbols to read_file
+
 ## [0.17.0](https://github.com/BrendanGraham14/steer/compare/steer-v0.16.1...steer-v0.17.0) - 2026-02-26
 
 ### Fixed
