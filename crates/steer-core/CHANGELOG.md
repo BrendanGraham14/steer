@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.19.0...steer-core-v0.19.1) - 2026-03-08
+
+### Fixed
+
+- convert session file images to data URLs when loading events for runtime
+
 ## [0.19.0](https://github.com/BrendanGraham14/steer/compare/steer-core-v0.18.0...steer-core-v0.19.0) - 2026-03-06
 
 ### Added
