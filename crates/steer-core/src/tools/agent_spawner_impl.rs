@@ -182,7 +182,7 @@ mod tests {
     use steer_tools::tools::replace::REPLACE_TOOL_NAME;
     use steer_tools::tools::{
         BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
-        READ_FILE_TOOL_NAME,
+        READ_FILE_TOOL_NAME, WC_TOOL_NAME,
     };
     use tempfile::TempDir;
     use tokio_util::sync::CancellationToken;
@@ -264,6 +264,7 @@ mod tests {
             GREP_TOOL_NAME,
             LS_TOOL_NAME,
             READ_FILE_TOOL_NAME,
+            WC_TOOL_NAME,
             EDIT_TOOL_NAME,
             MULTI_EDIT_TOOL_NAME,
             REPLACE_TOOL_NAME,

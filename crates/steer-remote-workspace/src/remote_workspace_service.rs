@@ -16,14 +16,15 @@ use crate::proto::{
     GetToolSchemasResponse, GlobRequest as GrpcGlobRequest, GrepRequest as GrpcGrepRequest,
     HealthRequest, HealthResponse, HealthStatus, ListDirectoryRequest as GrpcListDirectoryRequest,
     ListFilesRequest, ListFilesResponse, ReadFileRequest as GrpcReadFileRequest,
-    WriteFileRequest as GrpcWriteFileRequest, edit_operation::MatchSelection as GrpcMatchSelection,
+    WcRequest as GrpcWcRequest, WriteFileRequest as GrpcWriteFileRequest,
+    edit_operation::MatchSelection as GrpcMatchSelection,
     remote_workspace_service_server::RemoteWorkspaceService as RemoteWorkspaceServiceServer,
 };
 use steer_proto::common::v1::{
     ColumnRange as ProtoColumnRange, EditResult as ProtoEditResult,
     FileContentResult as ProtoFileContentResult, FileEntry as ProtoFileEntry,
     FileListResult as ProtoFileListResult, GlobResult as ProtoGlobResult,
-    SearchMatch as ProtoSearchMatch, SearchResult as ProtoSearchResult,
+    SearchMatch as ProtoSearchMatch, SearchResult as ProtoSearchResult, WcResult as ProtoWcResult,
 };
 
 /// Remote workspace service that exposes workspace operations over gRPC.
@@ -245,6 +246,15 @@ impl RemoteWorkspaceService {
         ProtoGlobResult {
             matches: glob_result.matches.clone(),
             pattern: glob_result.pattern.clone(),
+        }
+    }
+
+    fn wc_result_to_proto(wc: &steer_workspace::WcResult) -> ProtoWcResult {
+        ProtoWcResult {
+            file_path: wc.file_path.clone(),
+            lines: wc.lines,
+            words: wc.words,
+            bytes: wc.bytes,
         }
     }
 }
@@ -525,6 +535,24 @@ impl RemoteWorkspaceServiceServer for RemoteWorkspaceService {
             .map_err(|e| Status::internal(format!("AstGrep failed: {e}")))?;
 
         Ok(Response::new(Self::search_result_to_proto(&result)))
+    }
+
+    async fn wc(&self, request: Request<GrpcWcRequest>) -> Result<Response<ProtoWcResult>, Status> {
+        let req = request.into_inner();
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let _guard = cancellation_token.clone().drop_guard();
+        let context = WorkspaceOpContext::new("wc", cancellation_token);
+        let params = steer_workspace::WcRequest {
+            file_path: req.file_path,
+        };
+
+        let result = self
+            .workspace
+            .wc(params, &context)
+            .await
+            .map_err(|e| Status::internal(format!("Wc failed: {e}")))?;
+
+        Ok(Response::new(Self::wc_result_to_proto(&result)))
     }
 
     async fn apply_edits(

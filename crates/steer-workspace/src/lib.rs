@@ -22,10 +22,11 @@ pub use manager::{
 };
 pub use ops::{
     ApplyEditsRequest, AstGrepRequest, EditMatchSelection, EditOperation, GlobRequest, GrepRequest,
-    ListDirectoryRequest, ReadFileRequest, WorkspaceOpContext, WriteFileRequest,
+    ListDirectoryRequest, ReadFileRequest, WcRequest, WorkspaceOpContext, WriteFileRequest,
 };
 pub use result::{
-    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
+    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch,
+    SearchResult, WcResult,
 };
 
 // Module with the trait and core types
@@ -76,6 +77,9 @@ pub trait Workspace: Send + Sync + std::fmt::Debug {
 
     /// Apply glob patterns.
     async fn glob(&self, request: GlobRequest, ctx: &WorkspaceOpContext) -> Result<GlobResult>;
+
+    /// Line, word, and byte counts for a file (POSIX-style `wc`).
+    async fn wc(&self, request: WcRequest, ctx: &WorkspaceOpContext) -> Result<WcResult>;
 
     /// Text search (grep-style).
     async fn grep(&self, request: GrepRequest, ctx: &WorkspaceOpContext) -> Result<SearchResult>;

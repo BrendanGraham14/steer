@@ -9,6 +9,7 @@ pub mod ls;
 pub mod read_file;
 pub mod replace;
 pub mod todo;
+pub mod wc;
 
 pub use astgrep::AstGrepTool;
 pub use bash::BashTool;
@@ -21,6 +22,7 @@ pub use ls::LsTool;
 pub use read_file::ReadFileTool;
 pub use replace::ReplaceTool;
 pub use todo::{TodoReadTool, TodoWriteTool};
+pub use wc::WcTool;
 
 use crate::session::state::ToolVisibility;
 
@@ -39,6 +41,7 @@ pub(crate) const ALL_BUILTIN_TOOL_NAMES: &[&str] = &[
     steer_tools::tools::TODO_READ_TOOL_NAME,
     steer_tools::tools::TODO_WRITE_TOOL_NAME,
     steer_tools::tools::READ_FILE_TOOL_NAME,
+    steer_tools::tools::WC_TOOL_NAME,
 ];
 
 pub(crate) fn register_builtin_tools(registry: &mut super::ToolRegistry) {
@@ -79,6 +82,14 @@ pub(crate) fn register_builtin_tools_for_visibility(
         steer_tools::tools::READ_FILE_TOOL_NAME,
         |registry| {
             registry.register_builtin(ReadFileTool);
+        },
+    );
+    register_if_visible(
+        registry,
+        visibility,
+        steer_tools::tools::WC_TOOL_NAME,
+        |registry| {
+            registry.register_builtin(WcTool);
         },
     );
     register_if_visible(
@@ -202,6 +213,7 @@ pub const READ_ONLY_TOOL_NAMES: &[&str] = &[
     steer_tools::tools::GLOB_TOOL_NAME,
     steer_tools::tools::LS_TOOL_NAME,
     steer_tools::tools::READ_FILE_TOOL_NAME,
+    steer_tools::tools::WC_TOOL_NAME,
     steer_tools::tools::TODO_READ_TOOL_NAME,
     // This mutates only the session todo list and is intentionally auto-approved.
     steer_tools::tools::TODO_WRITE_TOOL_NAME,

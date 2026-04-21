@@ -10,7 +10,7 @@ use steer_tools::tools::edit::multi_edit::MULTI_EDIT_TOOL_NAME;
 use steer_tools::tools::replace::REPLACE_TOOL_NAME;
 use steer_tools::tools::{
     BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME,
-    READ_FILE_TOOL_NAME,
+    READ_FILE_TOOL_NAME, WC_TOOL_NAME,
 };
 
 pub const DEFAULT_AGENT_SPEC_ID: &str = "explore";
@@ -140,6 +140,7 @@ fn default_agent_specs() -> Vec<AgentSpec> {
         GREP_TOOL_NAME,
         LS_TOOL_NAME,
         READ_FILE_TOOL_NAME,
+        WC_TOOL_NAME,
     ]
     .into_iter()
     .map(|tool| tool.to_string())
@@ -150,6 +151,7 @@ fn default_agent_specs() -> Vec<AgentSpec> {
         GREP_TOOL_NAME,
         LS_TOOL_NAME,
         READ_FILE_TOOL_NAME,
+        WC_TOOL_NAME,
         EDIT_TOOL_NAME,
         MULTI_EDIT_TOOL_NAME,
         REPLACE_TOOL_NAME,

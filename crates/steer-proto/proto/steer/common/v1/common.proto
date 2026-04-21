@@ -65,6 +65,14 @@ message GlobResult {
   string pattern = 2;
 }
 
+// Word count (POSIX-style wc) for a single file
+message WcResult {
+  string file_path = 1;
+  uint64 lines = 2;
+  uint64 words = 3;
+  uint64 bytes = 4;
+}
+
 // Todo list result
 message TodoListResult {
   repeated TodoItem todos = 1;

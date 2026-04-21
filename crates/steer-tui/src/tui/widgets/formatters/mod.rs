@@ -19,6 +19,7 @@ pub mod ls;
 pub mod read_file;
 pub mod replace;
 pub mod todo;
+pub mod wc;
 
 // Import the formatters
 use self::astgrep::AstGrepFormatter;
@@ -35,6 +36,7 @@ use self::replace::ReplaceFormatter;
 
 use self::read_file::ReadFileFormatter;
 use self::todo::{TodoReadFormatter, TodoWriteFormatter};
+use self::wc::WcFormatter;
 
 /// Trait for formatting tool calls and results
 pub trait ToolFormatter: Send + Sync {
@@ -67,7 +69,7 @@ static FORMATTERS: LazyLock<HashMap<&'static str, Box<dyn ToolFormatter>>> = Laz
     use steer_tools::tools::{
         AST_GREP_TOOL_NAME, BASH_TOOL_NAME, DISPATCH_AGENT_TOOL_NAME, EDIT_TOOL_NAME,
         FETCH_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, READ_FILE_TOOL_NAME,
-        REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, edit,
+        REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, WC_TOOL_NAME, edit,
     };
 
     let mut map: HashMap<&'static str, Box<dyn ToolFormatter>> = HashMap::new();
@@ -77,6 +79,7 @@ static FORMATTERS: LazyLock<HashMap<&'static str, Box<dyn ToolFormatter>>> = Laz
     map.insert(LS_TOOL_NAME, Box::new(LsFormatter));
     map.insert(GLOB_TOOL_NAME, Box::new(GlobFormatter));
     map.insert(READ_FILE_TOOL_NAME, Box::new(ReadFileFormatter));
+    map.insert(WC_TOOL_NAME, Box::new(WcFormatter));
     map.insert(EDIT_TOOL_NAME, Box::new(EditFormatter));
     map.insert(
         edit::multi_edit::MULTI_EDIT_TOOL_NAME,

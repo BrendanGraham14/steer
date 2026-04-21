@@ -887,6 +887,7 @@ message ToolResult {
     steer.common.v1.TodoWriteResult todo_write = 8;
     FetchResult fetch = 9;
     AgentResult agent = 10;
+    steer.common.v1.WcResult wc = 11;
     ExternalResult external = 50;
     ToolError error = 99;
   }

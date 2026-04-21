@@ -37,6 +37,11 @@ pub struct GlobRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WcRequest {
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrepRequest {
     pub pattern: String,
     pub include: Option<String>,

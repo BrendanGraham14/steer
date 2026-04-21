@@ -136,6 +136,12 @@ fn steer_tools_result_to_proto(
             matches: r.matches.clone(),
             pattern: r.pattern.clone(),
         }),
+        CoreResult::Wc(r) => ProtoResult::Wc(common::WcResult {
+            file_path: r.file_path.clone(),
+            lines: r.lines,
+            words: r.words,
+            bytes: r.bytes,
+        }),
         CoreResult::TodoRead(r) => ProtoResult::TodoRead(common::TodoListResult {
             todos: r.todos.iter().map(convert_todo_item_to_proto).collect(),
         }),
@@ -229,7 +235,7 @@ fn proto_to_steer_tools_result(
     use steer_tools::result::{
         AgentResult, BashResult, EditResult, ExternalResult, FetchResult, FileContentResult,
         FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult, TodoListResult,
-        TodoWriteResult, ToolResult,
+        TodoWriteResult, ToolResult, WcResult,
     };
 
     let result = proto_result
@@ -291,6 +297,12 @@ fn proto_to_steer_tools_result(
         ProtoResult::Glob(r) => ToolResult::Glob(GlobResult {
             matches: r.matches,
             pattern: r.pattern,
+        }),
+        ProtoResult::Wc(r) => ToolResult::Wc(WcResult {
+            file_path: r.file_path,
+            lines: r.lines,
+            words: r.words,
+            bytes: r.bytes,
         }),
         ProtoResult::TodoRead(r) => ToolResult::TodoRead(TodoListResult {
             todos: r

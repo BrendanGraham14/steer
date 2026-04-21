@@ -5,7 +5,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 pub use steer_workspace::result::{
-    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
+    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch,
+    SearchResult, WcResult,
 };
 
 /// Core enum for all tool results
@@ -18,6 +19,7 @@ pub enum ToolResult {
     Edit(EditResult),
     Bash(BashResult),
     Glob(GlobResult),
+    Wc(WcResult),
     TodoRead(TodoListResult),
     TodoWrite(TodoWriteResult),
     Fetch(FetchResult),
@@ -115,6 +117,7 @@ impl ToolOutput for FileContentResult {}
 impl ToolOutput for EditResult {}
 impl ToolOutput for BashResult {}
 impl ToolOutput for GlobResult {}
+impl ToolOutput for WcResult {}
 impl ToolOutput for TodoListResult {}
 impl ToolOutput for TodoWriteResult {}
 impl ToolOutput for MultiEditResult {}
@@ -183,6 +186,12 @@ impl From<BashResult> for ToolResult {
 impl From<GlobResult> for ToolResult {
     fn from(r: GlobResult) -> Self {
         Self::Glob(r)
+    }
+}
+
+impl From<WcResult> for ToolResult {
+    fn from(r: WcResult) -> Self {
+        Self::Wc(r)
     }
 }
 
@@ -357,14 +366,16 @@ impl ToolResult {
                     r.matches.join("\n")
                 }
             }
-            ToolResult::TodoRead(r) => {
-                serde_json::to_string_pretty(&r.todos)
-                    .unwrap_or_else(|_| "Failed to format todos".to_string())
+            ToolResult::Wc(r) => {
+                format!(
+                    "{}: {} lines, {} words, {} bytes",
+                    r.file_path, r.lines, r.words, r.bytes
+                )
             }
-            ToolResult::TodoWrite(r) => {
-                serde_json::to_string_pretty(&r.todos)
-                    .unwrap_or_else(|_| "Failed to format todos".to_string())
-            }
+            ToolResult::TodoRead(r) => serde_json::to_string_pretty(&r.todos)
+                .unwrap_or_else(|_| "Failed to format todos".to_string()),
+            ToolResult::TodoWrite(r) => serde_json::to_string_pretty(&r.todos)
+                .unwrap_or_else(|_| "Failed to format todos".to_string()),
             ToolResult::Fetch(r) => {
                 format!("Fetched content from {}:\n{}", r.url, r.content)
             }
@@ -386,6 +397,7 @@ impl ToolResult {
             ToolResult::Edit(_) => "Edit",
             ToolResult::Bash(_) => "Bash",
             ToolResult::Glob(_) => "Glob",
+            ToolResult::Wc(_) => "Wc",
             ToolResult::TodoRead(_) => "TodoRead",
             ToolResult::TodoWrite(_) => "TodoWrite",
             ToolResult::Fetch(_) => "Fetch",

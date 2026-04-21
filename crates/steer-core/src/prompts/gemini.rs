@@ -2,7 +2,7 @@ use crate::prompts::{FALLBACK_MEMORY_FILE_NAME, PRIMARY_MEMORY_FILE_NAME};
 use crate::tools::DISPATCH_AGENT_TOOL_NAME;
 use steer_tools::tools::{
     AST_GREP_TOOL_NAME, BASH_TOOL_NAME, EDIT_TOOL_NAME, GLOB_TOOL_NAME, GREP_TOOL_NAME,
-    LS_TOOL_NAME, READ_FILE_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME,
+    LS_TOOL_NAME, READ_FILE_TOOL_NAME, REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, WC_TOOL_NAME,
 };
 
 /// Returns the Gemini-specific system prompt
@@ -54,11 +54,12 @@ When you discover useful commands or conventions, ask user if you should add the
 - {AST_GREP_TOOL_NAME}: Code structure searches (`function $FUNC($$$ARGS) {{ $$$ }}`)
 - {GREP_TOOL_NAME}: Text searches
 - {GLOB_TOOL_NAME}: File pattern matching
+- {WC_TOOL_NAME}: Line/word/byte counts for one file (POSIX-style wc)
 - {DISPATCH_AGENT_TOOL_NAME}: Complex file searches
 - Make parallel tool calls when possible
 
 ## Safety & Conventions  
-- Read-only tools auto-run: {READ_FILE_TOOL_NAME}, {GREP_TOOL_NAME}, {LS_TOOL_NAME}, {GLOB_TOOL_NAME}, {TODO_READ_TOOL_NAME}
+- Read-only tools auto-run: {READ_FILE_TOOL_NAME}, {WC_TOOL_NAME}, {GREP_TOOL_NAME}, {LS_TOOL_NAME}, {GLOB_TOOL_NAME}, {TODO_READ_TOOL_NAME}
 - Mutating tools need approval: {EDIT_TOOL_NAME}, {REPLACE_TOOL_NAME}, {BASH_TOOL_NAME}
 - Check existing imports/dependencies before using libraries
 - Follow security best practices
@@ -74,7 +75,7 @@ When you discover useful commands or conventions, ask user if you should add the
 - **Synthetic messages**: Ignore "[Request interrupted...]" messages. Never generate them.
 - **Proactiveness**: Act when asked, but don't surprise user with unsolicited actions
 - **No summaries**: After completing work, stop. Don't explain what you did unless asked.
-- **Tool approval system:** Read-only tools run automatically ({READ_FILE_TOOL_NAME}, {GREP_TOOL_NAME}, {LS_TOOL_NAME}, {GLOB_TOOL_NAME}, fetch, {TODO_READ_TOOL_NAME}). Mutating tools ({EDIT_TOOL_NAME}, {REPLACE_TOOL_NAME}, {BASH_TOOL_NAME}, etc.) ask for confirmation the first time; choose always to remember the decision for the rest of the session. Headless mode pre-approves every built-in tool for convenience.
+- **Tool approval system:** Read-only tools run automatically ({READ_FILE_TOOL_NAME}, {WC_TOOL_NAME}, {GREP_TOOL_NAME}, {LS_TOOL_NAME}, {GLOB_TOOL_NAME}, fetch, {TODO_READ_TOOL_NAME}). Mutating tools ({EDIT_TOOL_NAME}, {REPLACE_TOOL_NAME}, {BASH_TOOL_NAME}, etc.) ask for confirmation the first time; choose always to remember the decision for the rest of the session. Headless mode pre-approves every built-in tool for convenience.
 
 ## Interaction Details
 - **Help Command:** The user can use '/help' to display help information.

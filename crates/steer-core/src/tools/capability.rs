@@ -29,7 +29,7 @@ bitflags! {
         /// Network access for external HTTP requests.
         const NETWORK = 1 << 3;
 
-        /// Convenience: basic workspace tools (grep, view, glob, ls)
+        /// Convenience: basic workspace tools (grep, view, glob, ls, wc)
         const BASIC = Self::WORKSPACE.bits();
 
         /// Convenience: tools that need to spawn agents

@@ -277,6 +277,7 @@ impl Message {
                     ToolResult::Edit(_) => "Edit Result",
                     ToolResult::Bash(_) => "Bash Result",
                     ToolResult::Glob(_) => "Glob Result",
+                    ToolResult::Wc(_) => "Word Count",
                     ToolResult::TodoRead(_) => "Todo List",
                     ToolResult::TodoWrite(_) => "Todo Update",
                     ToolResult::Fetch(_) => "Fetch Result",

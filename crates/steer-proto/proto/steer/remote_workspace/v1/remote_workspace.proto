@@ -38,6 +38,9 @@ service RemoteWorkspaceService {
   // Glob search
   rpc Glob(GlobRequest) returns (steer.common.v1.GlobResult);
 
+  // Line / word / byte counts for a file (POSIX-style wc)
+  rpc Wc(WcRequest) returns (steer.common.v1.WcResult);
+
   // Text search (grep)
   rpc Grep(GrepRequest) returns (steer.common.v1.SearchResult);
 
@@ -281,6 +284,10 @@ message ListDirectoryRequest {
 message GlobRequest {
   string pattern = 1;
   optional string path = 2;
+}
+
+message WcRequest {
+  string file_path = 1;
 }
 
 message GrepRequest {

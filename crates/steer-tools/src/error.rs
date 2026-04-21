@@ -5,11 +5,11 @@ use thiserror::Error;
 use crate::tools::{
     AST_GREP_TOOL_NAME, BASH_TOOL_NAME, DISPATCH_AGENT_TOOL_NAME, EDIT_TOOL_NAME, FETCH_TOOL_NAME,
     GLOB_TOOL_NAME, GREP_TOOL_NAME, LS_TOOL_NAME, MULTI_EDIT_TOOL_NAME, READ_FILE_TOOL_NAME,
-    REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, astgrep::AstGrepError,
-    bash::BashError, dispatch_agent::DispatchAgentError, edit::EditError,
+    REPLACE_TOOL_NAME, TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME, WC_TOOL_NAME,
+    astgrep::AstGrepError, bash::BashError, dispatch_agent::DispatchAgentError, edit::EditError,
     edit::multi_edit::MultiEditError, fetch::FetchError, glob::GlobError, grep::GrepError,
     ls::LsError, read_file::ReadFileError, replace::ReplaceError, todo::read::TodoReadError,
-    todo::write::TodoWriteError,
+    todo::write::TodoWriteError, wc::WcError,
 };
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -83,6 +83,8 @@ pub enum ToolExecutionError {
     #[error("{0}")]
     ReadFile(ReadFileError),
     #[error("{0}")]
+    Wc(WcError),
+    #[error("{0}")]
     DispatchAgent(DispatchAgentError),
 
     #[error("{tool_name} failed: {message}")]
@@ -104,6 +106,7 @@ impl ToolExecutionError {
             ToolExecutionError::TodoRead(_) => TODO_READ_TOOL_NAME,
             ToolExecutionError::TodoWrite(_) => TODO_WRITE_TOOL_NAME,
             ToolExecutionError::ReadFile(_) => READ_FILE_TOOL_NAME,
+            ToolExecutionError::Wc(_) => WC_TOOL_NAME,
             ToolExecutionError::DispatchAgent(_) => DISPATCH_AGENT_TOOL_NAME,
             ToolExecutionError::External { tool_name, .. } => tool_name.as_str(),
         }
@@ -175,6 +178,7 @@ mod tests {
         assert_workspace_error_roundtrip(LsError::Workspace(workspace_error.clone()));
         assert_workspace_error_roundtrip(ReplaceError::Workspace(workspace_error.clone()));
         assert_workspace_error_roundtrip(ReadFileError::Workspace(workspace_error.clone()));
+        assert_workspace_error_roundtrip(WcError::Workspace(workspace_error.clone()));
         assert_workspace_error_roundtrip(DispatchAgentError::Workspace(workspace_error));
     }
 }

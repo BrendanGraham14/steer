@@ -56,3 +56,15 @@ pub struct GlobResult {
     pub matches: Vec<String>,
     pub pattern: String,
 }
+
+/// Result for POSIX-style `wc` on a single file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WcResult {
+    pub file_path: String,
+    /// Number of newline (LF) bytes in the file.
+    pub lines: u64,
+    /// Number of whitespace-delimited words (ASCII whitespace; UTF-8 safe on raw bytes).
+    pub words: u64,
+    /// File size in bytes.
+    pub bytes: u64,
+}

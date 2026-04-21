@@ -9,18 +9,20 @@ use steer_proto::remote_workspace::v1::{
     EditOperation as ProtoEditOperation, GetEnvironmentInfoRequest, GetEnvironmentInfoResponse,
     GlobRequest as ProtoGlobRequest, GrepRequest as ProtoGrepRequest,
     ListDirectoryRequest as ProtoListDirectoryRequest, ListFilesRequest,
-    ReadFileRequest as ProtoReadFileRequest, WriteFileRequest as ProtoWriteFileRequest,
+    ReadFileRequest as ProtoReadFileRequest, WcRequest as ProtoWcRequest,
+    WriteFileRequest as ProtoWriteFileRequest,
     edit_operation::MatchSelection as ProtoEditMatchSelection,
     remote_workspace_service_client::RemoteWorkspaceServiceClient,
 };
 use steer_tools::result::{
-    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
+    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch,
+    SearchResult, WcResult,
 };
 use steer_workspace::{
     ApplyEditsRequest, AstGrepRequest, EditMatchSelection, EnvironmentInfo, GitCommitSummary,
     GitHead, GitStatus, GitStatusEntry, GitStatusSummary, GlobRequest, GrepRequest, JjChange,
     JjChangeType, JjCommitSummary, JjStatus, ListDirectoryRequest, ReadFileRequest, RemoteAuth,
-    Result, VcsInfo, VcsKind, VcsStatus, Workspace, WorkspaceError, WorkspaceMetadata,
+    Result, VcsInfo, VcsKind, VcsStatus, WcRequest, Workspace, WorkspaceError, WorkspaceMetadata,
     WorkspaceOpContext, WorkspaceType, WriteFileRequest,
 };
 
@@ -92,6 +94,15 @@ fn convert_glob_result(proto_result: steer_proto::common::v1::GlobResult) -> Glo
     GlobResult {
         matches: proto_result.matches,
         pattern: proto_result.pattern,
+    }
+}
+
+fn convert_wc_result(proto_result: steer_proto::common::v1::WcResult) -> WcResult {
+    WcResult {
+        file_path: proto_result.file_path,
+        lines: proto_result.lines,
+        words: proto_result.words,
+        bytes: proto_result.bytes,
     }
 }
 
@@ -438,6 +449,19 @@ impl Workspace for RemoteWorkspace {
             .map_err(|e| WorkspaceError::Status(format!("Failed to glob: {e}")))?
             .into_inner();
         Ok(convert_glob_result(response))
+    }
+
+    async fn wc(&self, request: WcRequest, _ctx: &WorkspaceOpContext) -> Result<WcResult> {
+        let mut client = self.client.clone();
+        let request = tonic::Request::new(ProtoWcRequest {
+            file_path: request.file_path,
+        });
+        let response = client
+            .wc(request)
+            .await
+            .map_err(|e| WorkspaceError::Status(format!("Failed to wc: {e}")))?
+            .into_inner();
+        Ok(convert_wc_result(response))
     }
 
     async fn grep(&self, request: GrepRequest, _ctx: &WorkspaceOpContext) -> Result<SearchResult> {

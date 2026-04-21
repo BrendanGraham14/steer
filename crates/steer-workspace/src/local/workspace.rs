@@ -14,10 +14,11 @@ use tracing::info;
 use crate::error::{EditFailure, EditMatchPreview, Result as WorkspaceResult, WorkspaceError};
 use crate::ops::{
     ApplyEditsRequest, AstGrepRequest, EditMatchSelection, GlobRequest, GrepRequest,
-    ListDirectoryRequest, ReadFileRequest, WorkspaceOpContext, WriteFileRequest,
+    ListDirectoryRequest, ReadFileRequest, WcRequest, WorkspaceOpContext, WriteFileRequest,
 };
 use crate::result::{
-    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch, SearchResult,
+    EditResult, FileContentResult, FileEntry, FileListResult, GlobResult, SearchMatch,
+    SearchResult, WcResult,
 };
 use crate::{CachedEnvironment, EnvironmentInfo, Workspace, WorkspaceMetadata, WorkspaceType};
 
@@ -56,6 +57,87 @@ fn resolve_path(base: &Path, path: &str) -> PathBuf {
     } else {
         base.join(path)
     }
+}
+
+fn wc_scan_chunk(
+    buffer: &[u8],
+    mut lines: u64,
+    mut words: u64,
+    mut in_word: bool,
+) -> (u64, u64, bool) {
+    for &b in buffer {
+        if b == b'\n' {
+            lines += 1;
+        }
+        if b.is_ascii_whitespace() {
+            if in_word {
+                words += 1;
+            }
+            in_word = false;
+        } else {
+            in_word = true;
+        }
+    }
+    (lines, words, in_word)
+}
+
+async fn wc_file_internal(
+    file_path: &Path,
+    cancellation_token: &CancellationToken,
+) -> std::result::Result<WcResult, String> {
+    if cancellation_token.is_cancelled() {
+        return Err("Operation cancelled".to_string());
+    }
+
+    let meta = tokio::fs::metadata(file_path)
+        .await
+        .map_err(|e| format!("Failed to stat '{}': {e}", file_path.display()))?;
+
+    if !meta.is_file() {
+        return Err(format!(
+            "wc requires a regular file (got directory or special file): {}",
+            file_path.display()
+        ));
+    }
+
+    let bytes = meta.len();
+    let mut file = tokio::fs::File::open(file_path)
+        .await
+        .map_err(|e| format!("Failed to open '{}': {e}", file_path.display()))?;
+
+    let mut lines = 0u64;
+    let mut words = 0u64;
+    let mut in_word = false;
+    let mut buf = [0u8; 8192];
+
+    loop {
+        if cancellation_token.is_cancelled() {
+            return Err("Operation cancelled".to_string());
+        }
+
+        let n = file
+            .read(&mut buf)
+            .await
+            .map_err(|e| format!("Failed to read '{}': {e}", file_path.display()))?;
+        if n == 0 {
+            break;
+        }
+        let (nl, nw, iw) = wc_scan_chunk(&buf[..n], lines, words, in_word);
+        lines = nl;
+        words = nw;
+        in_word = iw;
+    }
+
+    if in_word {
+        words += 1;
+    }
+
+    Ok(WcResult {
+        file_path: file_path.display().to_string(),
+        lines,
+        words,
+        bytes,
+    })
 }
 
 #[derive(Error, Debug)]
@@ -1112,6 +1194,19 @@ impl Workspace for LocalWorkspace {
         })
     }
 
+    async fn wc(&self, request: WcRequest, ctx: &WorkspaceOpContext) -> WorkspaceResult<WcResult> {
+        if ctx.cancellation_token.is_cancelled() {
+            return Err(WorkspaceError::ToolExecution(
+                "Operation cancelled".to_string(),
+            ));
+        }
+
+        let abs_path = resolve_path(&self.path, &request.file_path);
+        wc_file_internal(&abs_path, &ctx.cancellation_token)
+            .await
+            .map_err(WorkspaceError::Io)
+    }
+
     async fn grep(
         &self,
         request: GrepRequest,
@@ -1420,6 +1515,29 @@ mod tests {
             .unwrap();
 
         assert_eq!(workspace.working_directory(), temp_dir.path());
+    }
+
+    #[tokio::test]
+    async fn test_wc_counts_newlines_words_and_bytes() {
+        let temp_dir = tempdir().unwrap();
+        let workspace = LocalWorkspace::with_path(temp_dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let file_path = temp_dir.path().join("sample.txt");
+        std::fs::write(&file_path, "hello world\nfoo").unwrap();
+        let ctx = WorkspaceOpContext::new("wc-test", CancellationToken::new());
+        let r = workspace
+            .wc(
+                WcRequest {
+                    file_path: file_path.to_string_lossy().to_string(),
+                },
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.lines, 1);
+        assert_eq!(r.words, 3);
+        assert_eq!(r.bytes, 15);
     }
 
     #[tokio::test]

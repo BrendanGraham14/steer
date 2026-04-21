@@ -9,6 +9,7 @@ pub mod ls;
 pub mod read_file;
 pub mod replace;
 pub mod todo;
+pub mod wc;
 
 pub use astgrep::AST_GREP_TOOL_NAME;
 pub use bash::BASH_TOOL_NAME;
@@ -22,3 +23,4 @@ pub use read_file::READ_FILE_TOOL_NAME;
 pub use replace::REPLACE_TOOL_NAME;
 pub use todo::read::TODO_READ_TOOL_NAME;
 pub use todo::write::TODO_WRITE_TOOL_NAME;
+pub use wc::WC_TOOL_NAME;
