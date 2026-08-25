@@ -1620,6 +1620,7 @@ mod tests {
 
         let model_id = crate::config::model::builtin::default_model();
         let provider_id = model_id.provider.clone();
+        let expected_context_window_tokens = api_client.model_context_window_tokens(&model_id);
         api_client.insert_test_provider(provider_id, Arc::new(StubProviderWithUsage));
 
         let mut actor =
@@ -1654,7 +1655,7 @@ mod tests {
             } => {
                 assert_eq!(completed_op_id, op_id);
                 assert_eq!(usage, Some(TokenUsage::new(11, 13, 24)));
-                assert_eq!(context_window_tokens, Some(400_000));
+                assert_eq!(context_window_tokens, expected_context_window_tokens);
                 assert!(configured_max_output_tokens.is_some());
                 assert!(matches!(
                     content.as_slice(),

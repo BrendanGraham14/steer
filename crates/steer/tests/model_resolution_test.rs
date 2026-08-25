@@ -82,7 +82,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.4-2026-03-05"
+id = "gpt-5.4"
 recommended = false
 parameters = { max_output_tokens = 128000 }
 
@@ -115,7 +115,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.4-2026-03-05"
+id = "gpt-5.4"
 recommended = false
 parameters = { max_output_tokens = 128000 }
 
@@ -133,7 +133,7 @@ parameters = { max_output_tokens = 4096 }
         .expect("resolve model");
     assert_eq!(
         resolved,
-        ModelId::new(ProviderId::from("openai"), "gpt-5.4-2026-03-05")
+        ModelId::new(ProviderId::from("openai"), "gpt-5.4")
     );
 
     shutdown(setup).await;
@@ -150,7 +150,7 @@ auth_schemes = ["api-key"]
 
 [[models]]
 provider = "openai"
-id = "gpt-5.4-2026-03-05"
+id = "gpt-5.4"
 recommended = false
 parameters = { max_output_tokens = 128000 }
 
